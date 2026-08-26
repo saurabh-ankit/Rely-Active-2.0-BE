@@ -1,6 +1,7 @@
 import type { NextFunction, Request, Response } from "express";
-import { ValidationError as SequelizeValidationError } from "sequelize";
+import { QueryFailedError } from "typeorm";
 
+import { env } from "../config/env";
 import { logger } from "../config/logger";
 import { AppError } from "../utils/appError";
 import { errorResponse } from "../utils/response";
@@ -16,7 +17,6 @@ export function notFoundHandler(req: Request, res: Response) {
     );
 }
 
- 
 export function errorHandler(
   err: any,
   req: Request,
@@ -36,32 +36,29 @@ export function errorHandler(
       .json(errorResponse(err.message, err.code, err.details));
   }
 
-  if (err instanceof SequelizeValidationError) {
-    logger.warn(err.message, { requestId });
-    return res.status(400).json(
-      errorResponse(
-        "Database validation error",
-        "DB_VALIDATION",
-        err.errors.map(e => ({ path: e.path, message: e.message }))
-      )
-    );
-  }
-
-  if (err?.name === "SequelizeUniqueConstraintError") {
-    logger.warn(err.message, { requestId });
-    return res
-      .status(409)
-      .json(
-        errorResponse("A record with this value already exists", "CONFLICT")
-      );
+  if (err instanceof QueryFailedError) {
+    const dbErr = err as any;
+    if (dbErr.code === "ER_DUP_ENTRY") {
+      logger.warn(err.message, { requestId });
+      return res
+        .status(409)
+        .json(
+          errorResponse("A record with this value already exists", "CONFLICT")
+        );
+    }
+    logger.error(err.message, { requestId, stack: err.stack });
+    const detailMsg = !env.isProduction
+      ? `Database query failed: ${err.message}`
+      : "Database query failed";
+    return res.status(500).json(errorResponse(detailMsg, "DB_ERROR"));
   }
 
   logger.error(err?.message ?? "Unexpected error", {
     requestId,
     stack: err?.stack,
   });
-
-  return res
-    .status(500)
-    .json(errorResponse("Internal server error", "INTERNAL"));
+  const internalMsg = !env.isProduction
+    ? (err?.message ?? "Internal server error")
+    : "Internal server error";
+  return res.status(500).json(errorResponse(internalMsg, "INTERNAL"));
 }

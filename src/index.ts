@@ -1,10 +1,12 @@
+import "reflect-metadata";
 import { createApp } from "./app";
-import { connectDatabase, sequelize } from "./config/db";
+import { AppDataSource, connectDatabase } from "./config/db";
 import { env } from "./config/env";
 import { logger } from "./config/logger";
 
 async function main() {
   await connectDatabase();
+  logger.info("✅ Database connected via TypeORM", { scope: "bootstrap" });
 
   const app = createApp();
   const server = app.listen(env.port, () => {
@@ -24,7 +26,7 @@ async function main() {
 
     server.close(async () => {
       try {
-        await sequelize.close();
+        await AppDataSource.destroy();
         logger.info("Shutdown complete", { scope: "bootstrap" });
         process.exit(0);
       } catch (err) {
@@ -33,7 +35,6 @@ async function main() {
       }
     });
 
-    // Force-exit if connections don't drain in time.
     setTimeout(() => {
       logger.error("Forced shutdown after timeout", { scope: "bootstrap" });
       process.exit(1);
@@ -45,7 +46,6 @@ async function main() {
 }
 
 main().catch(err => {
-   
   console.error("❌ Failed to start server:", err);
   process.exit(1);
 });

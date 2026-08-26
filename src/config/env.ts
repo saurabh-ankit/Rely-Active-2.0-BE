@@ -11,23 +11,32 @@ const envSchema = z.object({
 
   CORS_ORIGINS: z
     .string()
-    .min(1, "CORS_ORIGINS must list at least one allowed origin")
+    .default("http://localhost:5173,http://localhost:3000")
     .transform(value => value.split(",").map(origin => origin.trim())),
 
-  DB_HOST: z.string().min(1),
+  // MySQL Database Configuration
+  DB_HOST: z.string().default("localhost"),
   DB_PORT: z.coerce.number().int().positive().default(3306),
-  DB_USER: z.string().min(1),
-  DB_PASS: z.string().min(1),
-  DB_NAME: z.string().min(1),
+  DB_USER: z.string().default("root"),
+  DB_PASS: z.string().default("password"),
+  DB_NAME: z.string().default("rely_active_2_0"),
 
+  // Redis Configuration
   REDIS_HOST: z.string().default("localhost"),
   REDIS_PORT: z.coerce.number().int().positive().default(6379),
-  REDIS_PASSWORD: z.string().optional(),
+  REDIS_PASSWORD: z.string().optional().default(""),
   REDIS_DB: z.coerce.number().int().nonnegative().default(0),
 
+  // Rely Master SSO & JWT Security
+  JWT_SECRET: z.string().default("rely_master_sso_super_secret_jwt_key_2026"),
+  JWT_EXPIRES_IN: z.string().default("1d"),
+  SSO_MASTER_URL: z.string().default("http://localhost:3000"),
+
+  // Rate Limiting
   RATE_LIMIT_WINDOW_MS: z.coerce.number().int().positive().default(60_000),
   RATE_LIMIT_MAX: z.coerce.number().int().positive().default(100),
 
+  // Winston Logger
   LOG_LEVEL: z.enum(["error", "warn", "info", "http", "debug"]).default("info"),
 });
 
@@ -35,7 +44,6 @@ function loadEnv() {
   const parsed = envSchema.safeParse(process.env);
 
   if (!parsed.success) {
-     
     console.error(
       "❌ Invalid environment configuration:\n" +
         parsed.error.issues
@@ -66,6 +74,11 @@ function loadEnv() {
       password: data.REDIS_PASSWORD,
       db: data.REDIS_DB,
     }),
+    jwt: Object.freeze({
+      secret: data.JWT_SECRET,
+      expiresIn: data.JWT_EXPIRES_IN,
+    }),
+    ssoMasterUrl: data.SSO_MASTER_URL,
     rateLimit: Object.freeze({
       windowMs: data.RATE_LIMIT_WINDOW_MS,
       max: data.RATE_LIMIT_MAX,

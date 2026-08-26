@@ -50,4 +50,10 @@ export class AppError extends Error {
   static internal(message = "Internal server error"): AppError {
     return new AppError(500, message, { code: "INTERNAL" });
   }
+
+  static tenantIsolation(
+    message = "Cross-tenant access violation detected"
+  ): AppError {
+    return new AppError(403, message, { code: "TENANT_VIOLATION" });
+  }
 }
