@@ -1,5 +1,6 @@
 import { Router } from 'express'
 import { authRouter } from './auth.routes.js'
+import companyRouter from './company.routes.js'
 import { exampleRouter } from './example.routes.js'
 
 export const apiRouter = Router()
@@ -8,3 +9,4 @@ apiRouter.get('/', (_request, response) =>
 )
 apiRouter.use('/auth', authRouter)
 apiRouter.use('/examples', exampleRouter)
+apiRouter.use('/company', companyRouter)

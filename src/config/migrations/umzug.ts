@@ -3,7 +3,6 @@ import { fileURLToPath } from 'node:url'
 import { SequelizeStorage, Umzug } from 'umzug'
 import type { UmzugStorage } from 'umzug'
 import sequelize from '../db/index.js'
-import { logger } from '../logger.js'
 
 const currentDirectory = path.dirname(fileURLToPath(import.meta.url))
 const runtimeExtension = path.extname(fileURLToPath(import.meta.url))
@@ -35,12 +34,7 @@ export const umzug = new Umzug({
   },
   context: sequelize.getQueryInterface(),
   storage,
-  logger: {
-    debug: (message) => logger.debug(message),
-    info: (message) => logger.info(message),
-    warn: (message) => logger.warn(message),
-    error: (message) => logger.error(message),
-  },
+  logger: undefined,
 })
 
 export type Migration = typeof umzug._types.migration

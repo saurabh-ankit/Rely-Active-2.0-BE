@@ -1,20 +1,16 @@
 import sequelize from '../db/index.js'
-import { logger } from '../logger.js'
 import { umzug } from './umzug.js'
 
 async function authenticate() {
   await sequelize.authenticate()
-  logger.info('Database connection authenticated')
 }
 
 export async function runMigrations() {
   await authenticate()
   const pending = await umzug.pending()
   if (pending.length === 0) {
-    logger.info('No pending migrations')
     return []
   }
-  logger.info({ migrations: pending.map(({ name }) => name) }, 'Running pending migrations')
   return umzug.up()
 }
 

@@ -56,13 +56,20 @@ async function main() {
   try {
     switch (command) {
       case 'up':
-      case 'migrate':
-        printMigrations('Executed', await runMigrations())
+      case 'migrate': {
+        const executed = await runMigrations()
+        console.log('🚀 Migration running finished successfully!')
+        printMigrations('Executed', executed)
+        console.log('✨ All migrations finished!')
         break
+      }
       case 'down':
-      case 'undo':
-        printMigrations('Rolled back', await rollbackLastMigration())
+      case 'undo': {
+        const rolledBack = await rollbackLastMigration()
+        console.log('🔄 Rollback finished successfully!')
+        printMigrations('Rolled back', rolledBack)
         break
+      }
       case 'status': {
         const status = await getMigrationStatus()
         printMigrations('Executed', status.executed)
@@ -85,7 +92,7 @@ async function main() {
         throw new Error(`Unknown migration command: ${command}`)
     }
   } catch (error) {
-    console.error('Migration command failed:', error)
+    console.error('❌ Migration command failed:', error)
     process.exitCode = 1
   } finally {
     await sequelize.close().catch((error: unknown) => {

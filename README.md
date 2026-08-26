@@ -12,20 +12,64 @@ pnpm install
 pnpm dev
 ```
 
-Foundation routes are `GET /health`, `GET /api/v1`, `/api/v1/auth`, and `/api/v1/examples`. The example repository is intentionally in-memory; connect persistence when the first Active domain is introduced.
+Foundation routes are `GET /health`, `GET /api/v1`, `/api/v1/auth`, `/api/v1/examples`, and `/api/v1/company`.
 
-## Database migrations
+## Database Connections & Server Startup Logs
 
-Umzug uses the configured MySQL `DATABASE_URL`, Sequelize's query interface, migration files in `src/migrations`, and the `sequelize_meta` tracking table.
-Migration identities are stored without `.ts` or `.js`; existing Assist-style metadata names with either extension remain recognized and rollback-compatible.
+When starting the server with `pnpm dev` / `npm run dev`, the server logs explicit status notifications:
+
+- `✅ Database connected successfully!` when MySQL connection is authenticated.
+- `✅ Database models synchronized successfully!` when Sequelize models sync.
+- `🚀 Server started running on port http://localhost:3002` when Express & Socket.io server starts listening.
+
+## Database Migrations & Model Policy
+
+> **Mandatory Rule**: Every time a new domain model is created in `src/models`, a corresponding migration file **MUST** be created under `src/migrations/`.
+
+### Migration Running Console Notifications
+
+When running migrations (`pnpm migrate:up`), explicit console notifications are output:
+
+- `✅ Database connected successfully for migrations!`
+- `📌 Found X pending migration(s). Running migrations...`
+- `🚀 Migration running finished successfully!`
+- `✨ All migrations finished!`
+
+### Migration Commands
 
 ```bash
+# Create a new migration for a model (kebab-case name)
+pnpm migrate:create -- create-my-new-table
+
+# Check migration status (executed vs pending)
 pnpm migrate:status
+
+# Run all pending migrations
 pnpm migrate:up
+
+# Rollback last executed migration
 pnpm migrate:down
-pnpm migrate:create -- add-community-table
 ```
 
-Migration names must use kebab-case. Every migration must provide reversible `up` and `down` functions.
+### Company Migration File
 
-Run `pnpm format:check`, `pnpm lint`, `pnpm typecheck`, `pnpm test`, and `pnpm build` before pushing. Husky runs lint-staged on commit and the verification suite on push.
+- `src/migrations/20260826153000-create-company-tables.ts`: Creates `company` and `company_custom_fields` tables in MySQL with full schema definitions, foreign keys, comments, and soft-delete flags.
+
+## Company Domain API
+
+Company management has been aligned with Rely-Assist fields and Sequelize TypeScript models (`Company` & `CompanyCustomField`).
+
+### Endpoints
+
+- `POST /api/v1/company`: Create company record with multipart file uploads (`document`, `accountant_signature`, `documents` for custom fields) and JSON `customFields`.
+- `GET /api/v1/company`: Fetch all active companies including associated custom fields.
+- `GET /api/v1/company/:id`: Fetch company by ID with custom fields.
+- `PUT /api/v1/company/:id`: Update company details, bank details, accountant signature, documents, and custom fields.
+- `DELETE /api/v1/company/:id`: Soft-delete company record.
+- `GET /api/v1/company/company-setup/status`: Check company setup status (`needsSetup`, `setupStep`, `message`, `hasCompany`, `hasLocation`).
+
+## Static Media Uploads
+
+Uploaded files (documents, logos, signatures) are stored in `uploads/` directory and served statically under `/uploads/filename`.
+
+Run `pnpm format:check`, `pnpm lint`, `pnpm typecheck`, `pnpm test`, and `pnpm build` before pushing.
