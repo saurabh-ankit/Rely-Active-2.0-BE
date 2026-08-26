@@ -1,5 +1,5 @@
 import type { RequestHandler } from 'express'
-import { loginSchema } from '../../validations/auth/login.validation.js'
+import { loginSchema } from '../../validations/login.validation.js'
 
 export const login: RequestHandler = (request, response, next) => {
   try {

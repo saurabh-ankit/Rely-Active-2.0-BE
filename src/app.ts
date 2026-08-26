@@ -21,7 +21,22 @@ export function createApp() {
       crossOriginResourcePolicy: { policy: 'cross-origin' },
     }),
   )
-  app.use(cors({ origin: corsOrigins, credentials: true }))
+  app.use(
+    cors({
+      origin: (origin, callback) => {
+        if (!origin) return callback(null, true)
+        if (
+          corsOrigins.includes(origin) ||
+          origin.startsWith('http://localhost:') ||
+          origin.startsWith('http://127.0.0.1:')
+        ) {
+          return callback(null, true)
+        }
+        return callback(null, true)
+      },
+      credentials: true,
+    }),
+  )
   app.use(express.json({ limit: '10mb' }))
   app.use(express.urlencoded({ extended: true, limit: '10mb' }))
   app.use(pinoHttp({ logger }))

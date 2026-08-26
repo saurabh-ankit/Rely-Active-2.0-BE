@@ -1,5 +1,6 @@
 import type { NextFunction, Request, Response } from 'express'
 import { Company, CompanyCustomField } from '../../models/index.js'
+import { validateCompanyCreateInput, validateCompanyUpdateInput } from '../../validations/company.validation.js'
 
 interface CustomFieldInput {
   fieldName?: string
@@ -32,18 +33,19 @@ export const createCompany = async (req: Request, res: Response, next: NextFunct
       customFields,
     } = req.body
 
+    const validationError = validateCompanyCreateInput(req.body)
+    if (validationError) {
+      return res.status(400).json({
+        success: false,
+        message: validationError,
+      })
+    }
+
     const finalCompanyName = company_name
     const finalEmail = email || email_id
     const finalContact = contact_number
     const finalAddress = head_office_address || company_head_office_address
     const finalGst = gst_number || company_gst_number
-
-    if (!finalCompanyName || !finalEmail || !finalContact || !finalAddress) {
-      return res.status(400).json({
-        success: false,
-        message: 'company_name, email, contact_number, and head_office_address are required',
-      })
-    }
 
     let document_url = ''
     let document_name = ''
@@ -234,6 +236,14 @@ export const updateCompany = async (req: Request, res: Response, next: NextFunct
     if (updates.gst_number) updates.company_gst_number = updates.gst_number
     if (updates.email) updates.email_id = updates.email
     if (updates.head_office_address) updates.company_head_office_address = updates.head_office_address
+
+    const validationError = validateCompanyUpdateInput(updates, existing)
+    if (validationError) {
+      return res.status(400).json({
+        success: false,
+        message: validationError,
+      })
+    }
 
     if (req.files && typeof req.files === 'object' && 'document' in req.files) {
       const files = req.files['document'] as Express.Multer.File[]
