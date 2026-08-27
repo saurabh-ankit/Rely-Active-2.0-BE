@@ -25,6 +25,7 @@
     "migrate:pending": "tsx src/scripts/migrate.ts pending",
     "migrate:executed": "tsx src/scripts/migrate.ts executed",
     "migrate:create": "tsx src/scripts/migrate.ts create",
+    "seed": "tsx src/scripts/seed.ts",
     "prepare": "husky"
   },
   "lint-staged": {

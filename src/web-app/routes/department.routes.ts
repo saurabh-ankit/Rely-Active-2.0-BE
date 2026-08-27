@@ -1,10 +1,10 @@
 import { Router } from 'express'
-import { getMe, login } from '../controllers/auth.controller.js'
+import { getAllDepartments } from '../controllers/department.controller.js'
 import { authenticate } from '../../middlewares/authenticate.js'
 
 const router = Router()
 
-router.post('/login', login)
-router.get('/me', authenticate, getMe)
+router.use(authenticate)
+router.get('/', getAllDepartments)
 
 export default router

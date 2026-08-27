@@ -10,7 +10,7 @@ export interface PropertyBlockAttributes {
   prefix?: string | null
   price_per_sqft?: number | null
   nomenclature_template?: string | null
-  bhk_templates?: any | null
+  bhk_templates?: unknown | null
   description?: string | null
   isActive?: boolean
   isDeleted?: boolean
@@ -50,7 +50,7 @@ export class PropertyBlock
   declare prefix: string | null
   declare price_per_sqft: number | null
   declare nomenclature_template: string | null
-  declare bhk_templates: any | null
+  declare bhk_templates: unknown | null
   declare description: string | null
   declare isActive: boolean
   declare isDeleted: boolean
@@ -91,11 +91,6 @@ PropertyBlock.init(
       type: DataTypes.STRING(20),
       allowNull: true,
       comment: 'Tower prefix e.g. "B"',
-    },
-    price_per_sqft: {
-      type: DataTypes.DECIMAL(12, 2),
-      allowNull: true,
-      comment: 'Base price per sqft',
     },
     nomenclature_template: {
       type: DataTypes.STRING(255),
