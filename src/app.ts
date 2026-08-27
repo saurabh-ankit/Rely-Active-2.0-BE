@@ -19,20 +19,25 @@ export function createApp() {
   app.use(
     helmet({
       crossOriginResourcePolicy: { policy: 'cross-origin' },
+      crossOriginOpenerPolicy: false,
     }),
   )
   app.use(
     cors({
       origin: (origin, callback) => {
+        // Allow requests with no origin (like mobile apps, curl, postman)
         if (!origin) return callback(null, true)
+
+        // In development or if explicitly in CORS_ORIGINS, allow the request
         if (
+          process.env.NODE_ENV !== 'production' ||
           corsOrigins.includes(origin) ||
-          origin.startsWith('http://localhost:') ||
-          origin.startsWith('http://127.0.0.1:')
+          /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)
         ) {
           return callback(null, true)
         }
-        return callback(null, true)
+
+        callback(new Error(`Origin ${origin} not allowed by CORS`))
       },
       credentials: true,
     }),

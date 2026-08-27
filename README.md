@@ -12,7 +12,7 @@ pnpm install
 pnpm dev
 ```
 
-Foundation routes are `GET /health`, `GET /api/v1`, `/api/v1/auth`, `/api/v1/examples`, and `/api/v1/company`.
+Foundation routes are `GET /health`, `GET /api/v1`, `/api/v1/auth`, `/api/v1/examples`, `/api/v1/company`, and `/api/v1/property`.
 
 ## Database Connections & Server Startup Logs
 
@@ -51,13 +51,18 @@ pnpm migrate:up
 pnpm migrate:down
 ```
 
-### Company Migration File
+### Migration History & Executed Scripts
 
 - `src/migrations/20260826153000-create-company-tables.ts`: Creates `company` and `company_custom_fields` tables in MySQL with full schema definitions, foreign keys, comments, and soft-delete flags.
+- `src/migrations/20260826180000-create-property-tables.ts`: Creates `properties`, `property_blocks`, `property_floors`, and `property_units` tables establishing the 4-tier hierarchy.
+- `src/migrations/20260827120000-remove-upcoming-property-status.ts`: Updates property status options by removing upcoming status.
+- `src/migrations/20260827123000-drop-status-column-from-properties.ts`: Drops property `status` column from `properties` table (Property-level status removed completely; unit-level status `available`, `booked`, `sold` retained).
+
+---
 
 ## Company Domain API
 
-Company management has been aligned with Rely-Assist fields and Sequelize TypeScript models (`Company` & `CompanyCustomField`).
+Company management is aligned with Rely-Assist fields and Sequelize TypeScript models (`Company` & `CompanyCustomField`).
 
 ### Endpoints
 
@@ -67,6 +72,39 @@ Company management has been aligned with Rely-Assist fields and Sequelize TypeSc
 - `PUT /api/v1/company/:id`: Update company details, bank details, accountant signature, documents, and custom fields.
 - `DELETE /api/v1/company/:id`: Soft-delete company record.
 - `GET /api/v1/company/company-setup/status`: Check company setup status (`needsSetup`, `setupStep`, `message`, `hasCompany`, `hasLocation`).
+
+---
+
+## Property Creation & Structure Domain API
+
+The Property module provides full CRUD and structural hierarchy management for residential real estate projects.
+
+### Domain Hierarchy
+
+```text
+Company (companyId)
+  └── Property (Project level with address & amenities)
+        └── PropertyBlock (Block / Tower e.g. "Tower A")
+              └── PropertyFloor (Floor e.g. "Ground Floor", "1st Floor")
+                    └── PropertyUnit (Individual unit e.g. "A-101", 2BHK, Area)
+```
+
+### Key Schema Updates
+- **Property Status Removal**: Property-level status (`status`) has been removed from models, controllers, and database schema via migration.
+- **Unit Hierarchy**: Supports customizable Unit Nomenclature Templates (e.g. `{{TowerPrefix}}-{{FloorNumber}}{{Position}}`), disabled template preview inputs, and unit-level statuses (`available`, `booked`, `sold`).
+
+### Endpoints
+
+- `POST /api/v1/property`: Create property with optional full nested hierarchy (`blocks` → `floors` → `units`). Automatically resolves active company.
+- `GET /api/v1/property`: Fetch all active properties with full nested hierarchy (supports optional `?companyId=` query filter).
+- `GET /api/v1/property/:id`: Fetch single property by ID with complete block, floor, and unit tree.
+- `PUT /api/v1/property/:id`: Update property details and re-create active tower blocks, floors, and units.
+- `DELETE /api/v1/property/:id`: Soft-delete property.
+- `POST /api/v1/property/:id/blocks`: Add a block/tower to an existing property.
+- `POST /api/v1/property/blocks/:blockId/floors`: Add a floor to an existing block.
+- `POST /api/v1/property/floors/:floorId/units`: Add a unit to an existing floor.
+
+---
 
 ## Static Media Uploads
 
