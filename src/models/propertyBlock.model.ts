@@ -1,8 +1,8 @@
-import { DataTypes, Model, Optional } from 'sequelize'
+import { DataTypes, Optional } from 'sequelize'
 import sequelize from '../config/db/index.js'
+import { BaseAttributes, BaseModel, baseModelColumns } from './base.model.js'
 
-export interface PropertyBlockAttributes {
-  id: string
+export interface PropertyBlockAttributes extends BaseAttributes {
   propertyId: string
   block_name: string
   total_floors?: number | null
@@ -14,10 +14,6 @@ export interface PropertyBlockAttributes {
   description?: string | null
   isActive?: boolean
   isDeleted?: boolean
-  createdBy?: string | null
-  updatedBy?: string | null
-  createdAt?: Date
-  updatedAt?: Date
 }
 
 export type PropertyBlockCreationAttributes = Optional<
@@ -39,10 +35,9 @@ export type PropertyBlockCreationAttributes = Optional<
 >
 
 export class PropertyBlock
-  extends Model<PropertyBlockAttributes, PropertyBlockCreationAttributes>
+  extends BaseModel<PropertyBlockAttributes, PropertyBlockCreationAttributes>
   implements PropertyBlockAttributes
 {
-  declare id: string
   declare propertyId: string
   declare block_name: string
   declare total_floors: number | null
@@ -54,19 +49,11 @@ export class PropertyBlock
   declare description: string | null
   declare isActive: boolean
   declare isDeleted: boolean
-  declare createdBy: string | null
-  declare updatedBy: string | null
-  declare readonly createdAt: Date
-  declare readonly updatedAt: Date
 }
 
 PropertyBlock.init(
   {
-    id: {
-      type: DataTypes.UUID,
-      defaultValue: DataTypes.UUIDV4,
-      primaryKey: true,
-    },
+    ...baseModelColumns,
     propertyId: {
       type: DataTypes.UUID,
       allowNull: false,
@@ -113,14 +100,6 @@ PropertyBlock.init(
     isDeleted: {
       type: DataTypes.BOOLEAN,
       defaultValue: false,
-    },
-    createdBy: {
-      type: DataTypes.STRING(255),
-      allowNull: true,
-    },
-    updatedBy: {
-      type: DataTypes.STRING(255),
-      allowNull: true,
     },
   },
   {

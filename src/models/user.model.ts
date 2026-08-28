@@ -1,64 +1,65 @@
-import { DataTypes, Model, Optional } from 'sequelize'
+import { DataTypes, Optional } from 'sequelize'
 import sequelize from '../config/db/index.js'
+import { BaseAttributes, BaseModel, baseModelColumns } from './base.model.js'
 
 export type UserStatus = 'PENDING' | 'ACTIVE' | 'INACTIVE' | 'BLOCKED'
 
-export interface UserAttributes {
-  id: string
-  company_id?: string | null
-  default_location_id?: string | null
+export interface UserAttributes extends BaseAttributes {
+  username?: string | null
+  companyId?: string | null
+  defaultLocationId?: string | null
   email?: string | null
   phone?: string | null
-  password_hash?: string | null
+  passwordHash?: string | null
   status: UserStatus
   isActive?: boolean
   isDeleted?: boolean
-  createdAt?: Date
-  updatedAt?: Date
 }
 
 export type UserCreationAttributes = Optional<
   UserAttributes,
   | 'id'
-  | 'company_id'
-  | 'default_location_id'
+  | 'username'
+  | 'companyId'
+  | 'defaultLocationId'
   | 'email'
   | 'phone'
-  | 'password_hash'
+  | 'passwordHash'
   | 'status'
   | 'isActive'
   | 'isDeleted'
+  | 'createdBy'
+  | 'updatedBy'
   | 'createdAt'
   | 'updatedAt'
 >
 
-export class User extends Model<UserAttributes, UserCreationAttributes> implements UserAttributes {
-  declare id: string
-  declare company_id: string | null
-  declare default_location_id: string | null
+export class User extends BaseModel<UserAttributes, UserCreationAttributes> implements UserAttributes {
+  declare username: string | null
+  declare companyId: string | null
+  declare defaultLocationId: string | null
   declare email: string | null
   declare phone: string | null
-  declare password_hash: string | null
+  declare passwordHash: string | null
   declare status: UserStatus
   declare isActive: boolean
   declare isDeleted: boolean
-  declare readonly createdAt: Date
-  declare readonly updatedAt: Date
 }
 
 User.init(
   {
-    id: {
-      type: DataTypes.CHAR(36),
-      defaultValue: DataTypes.UUIDV4,
-      primaryKey: true,
+    ...baseModelColumns,
+    username: {
+      type: DataTypes.STRING(100),
+      allowNull: true,
+      unique: true,
     },
-    company_id: {
-      type: DataTypes.CHAR(36),
+    companyId: {
+      type: DataTypes.UUID,
       allowNull: true,
     },
-    default_location_id: {
-      type: DataTypes.CHAR(36),
+    defaultLocationId: {
+      type: DataTypes.UUID,
       allowNull: true,
     },
     email: {
@@ -69,7 +70,7 @@ User.init(
       type: DataTypes.STRING(30),
       allowNull: true,
     },
-    password_hash: {
+    passwordHash: {
       type: DataTypes.STRING(255),
       allowNull: true,
     },

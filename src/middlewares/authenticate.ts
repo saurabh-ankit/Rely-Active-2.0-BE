@@ -10,6 +10,7 @@ export interface AuthenticatedRequest extends Request {
     defaultLocationId?: string | null
     roles: string[]
   }
+  locationId?: string | null
 }
 
 export async function authenticate(req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> {
@@ -35,13 +36,17 @@ export async function authenticate(req: AuthenticatedRequest, res: Response, nex
       return
     }
 
+    const headerLocId = (req.headers['x-location-id'] || req.headers['x-property-id']) as string | undefined
+
     req.user = {
       id: user.id,
       email: user.email,
-      companyId: user.company_id,
-      defaultLocationId: user.default_location_id,
+      companyId: user.companyId,
+      defaultLocationId: user.defaultLocationId,
       roles: decoded.roles || [],
     }
+
+    req.locationId = headerLocId || user.defaultLocationId || null
 
     next()
   } catch {

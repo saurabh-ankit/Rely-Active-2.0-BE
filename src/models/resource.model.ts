@@ -1,8 +1,8 @@
-import { DataTypes, Model, Optional } from 'sequelize'
+import { DataTypes, Optional } from 'sequelize'
 import sequelize from '../config/db/index.js'
+import { BaseAttributes, BaseModel, baseModelColumns } from './base.model.js'
 
-export interface ResourceAttributes {
-  id: string
+export interface ResourceAttributes extends BaseAttributes {
   key: string
   name: string
   description?: string | null
@@ -10,10 +10,6 @@ export interface ResourceAttributes {
   path?: string | null
   isActive?: boolean
   isDeleted?: boolean
-  createdBy?: string | null
-  updatedBy?: string | null
-  createdAt?: Date
-  updatedAt?: Date
 }
 
 export type ResourceCreationAttributes = Optional<
@@ -30,8 +26,7 @@ export type ResourceCreationAttributes = Optional<
   | 'updatedAt'
 >
 
-export class Resource extends Model<ResourceAttributes, ResourceCreationAttributes> implements ResourceAttributes {
-  declare id: string
+export class Resource extends BaseModel<ResourceAttributes, ResourceCreationAttributes> implements ResourceAttributes {
   declare key: string
   declare name: string
   declare description: string | null
@@ -39,19 +34,11 @@ export class Resource extends Model<ResourceAttributes, ResourceCreationAttribut
   declare path: string | null
   declare isActive: boolean
   declare isDeleted: boolean
-  declare createdBy: string | null
-  declare updatedBy: string | null
-  declare readonly createdAt: Date
-  declare readonly updatedAt: Date
 }
 
 Resource.init(
   {
-    id: {
-      type: DataTypes.CHAR(36),
-      defaultValue: DataTypes.UUIDV4,
-      primaryKey: true,
-    },
+    ...baseModelColumns,
     key: {
       type: DataTypes.STRING(255),
       allowNull: false,
@@ -82,14 +69,6 @@ Resource.init(
       type: DataTypes.BOOLEAN,
       allowNull: false,
       defaultValue: false,
-    },
-    createdBy: {
-      type: DataTypes.CHAR(36),
-      allowNull: true,
-    },
-    updatedBy: {
-      type: DataTypes.CHAR(36),
-      allowNull: true,
     },
   },
   {

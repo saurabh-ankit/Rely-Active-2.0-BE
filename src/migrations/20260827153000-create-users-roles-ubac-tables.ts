@@ -1,20 +1,33 @@
 import { DataTypes, type QueryInterface } from 'sequelize'
 
-export async function up({ context: queryInterface }: { context: QueryInterface }) {
+export async function up({ context: queryInterface }: { context: QueryInterface }): Promise<void> {
   // 1. users
   await queryInterface.createTable('users', {
     id: {
-      type: DataTypes.CHAR(36),
+      type: DataTypes.UUID,
       defaultValue: DataTypes.UUIDV4,
       primaryKey: true,
     },
-    company_id: {
-      type: DataTypes.CHAR(36),
+    createdBy: {
+      type: DataTypes.UUID,
       allowNull: true,
     },
-    default_location_id: {
-      type: DataTypes.CHAR(36),
+    updatedBy: {
+      type: DataTypes.UUID,
       allowNull: true,
+    },
+    companyId: {
+      type: DataTypes.UUID,
+      allowNull: true,
+    },
+    defaultLocationId: {
+      type: DataTypes.UUID,
+      allowNull: true,
+    },
+    username: {
+      type: DataTypes.STRING(100),
+      allowNull: true,
+      unique: true,
     },
     email: {
       type: DataTypes.STRING(150),
@@ -24,7 +37,7 @@ export async function up({ context: queryInterface }: { context: QueryInterface 
       type: DataTypes.STRING(30),
       allowNull: true,
     },
-    password_hash: {
+    passwordHash: {
       type: DataTypes.STRING(255),
       allowNull: true,
     },
@@ -53,25 +66,33 @@ export async function up({ context: queryInterface }: { context: QueryInterface 
     },
   })
 
-  // 2. user_profiles
-  await queryInterface.createTable('user_profiles', {
+  // 2. user_details
+  await queryInterface.createTable('user_details', {
     id: {
-      type: DataTypes.CHAR(36),
+      type: DataTypes.UUID,
       defaultValue: DataTypes.UUIDV4,
       primaryKey: true,
     },
-    user_id: {
-      type: DataTypes.CHAR(36),
+    createdBy: {
+      type: DataTypes.UUID,
+      allowNull: true,
+    },
+    updatedBy: {
+      type: DataTypes.UUID,
+      allowNull: true,
+    },
+    userId: {
+      type: DataTypes.UUID,
       allowNull: false,
       unique: true,
       references: { model: 'users', key: 'id' },
       onDelete: 'CASCADE',
     },
-    first_name: {
+    firstName: {
       type: DataTypes.STRING(100),
       allowNull: false,
     },
-    last_name: {
+    lastName: {
       type: DataTypes.STRING(100),
       allowNull: true,
     },
@@ -79,11 +100,11 @@ export async function up({ context: queryInterface }: { context: QueryInterface 
       type: DataTypes.STRING(30),
       allowNull: true,
     },
-    date_of_birth: {
+    dateOfBirth: {
       type: DataTypes.DATEONLY,
       allowNull: true,
     },
-    photo_url: {
+    photoUrl: {
       type: DataTypes.STRING(500),
       allowNull: true,
     },
@@ -91,15 +112,15 @@ export async function up({ context: queryInterface }: { context: QueryInterface 
       type: DataTypes.STRING(150),
       allowNull: true,
     },
-    employee_code: {
+    employeeCode: {
       type: DataTypes.STRING(100),
       allowNull: true,
     },
-    emergency_contact: {
+    emergencyContact: {
       type: DataTypes.STRING(30),
       allowNull: true,
     },
-    blood_group: {
+    bloodGroup: {
       type: DataTypes.STRING(20),
       allowNull: true,
     },
@@ -118,12 +139,20 @@ export async function up({ context: queryInterface }: { context: QueryInterface 
   // 3. departments
   await queryInterface.createTable('departments', {
     id: {
-      type: DataTypes.CHAR(36),
+      type: DataTypes.UUID,
       defaultValue: DataTypes.UUIDV4,
       primaryKey: true,
     },
-    location_id: {
-      type: DataTypes.CHAR(36),
+    createdBy: {
+      type: DataTypes.UUID,
+      allowNull: true,
+    },
+    updatedBy: {
+      type: DataTypes.UUID,
+      allowNull: true,
+    },
+    locationId: {
+      type: DataTypes.UUID,
       allowNull: true,
     },
     name: {
@@ -157,12 +186,20 @@ export async function up({ context: queryInterface }: { context: QueryInterface 
   // 4. job_categories
   await queryInterface.createTable('job_categories', {
     id: {
-      type: DataTypes.CHAR(36),
+      type: DataTypes.UUID,
       defaultValue: DataTypes.UUIDV4,
       primaryKey: true,
     },
-    department_id: {
-      type: DataTypes.CHAR(36),
+    createdBy: {
+      type: DataTypes.UUID,
+      allowNull: true,
+    },
+    updatedBy: {
+      type: DataTypes.UUID,
+      allowNull: true,
+    },
+    departmentId: {
+      type: DataTypes.UUID,
       allowNull: false,
       references: { model: 'departments', key: 'id' },
       onDelete: 'CASCADE',
@@ -198,9 +235,17 @@ export async function up({ context: queryInterface }: { context: QueryInterface 
   // 5. roles
   await queryInterface.createTable('roles', {
     id: {
-      type: DataTypes.CHAR(36),
+      type: DataTypes.UUID,
       defaultValue: DataTypes.UUIDV4,
       primaryKey: true,
+    },
+    createdBy: {
+      type: DataTypes.UUID,
+      allowNull: true,
+    },
+    updatedBy: {
+      type: DataTypes.UUID,
+      allowNull: true,
     },
     name: {
       type: DataTypes.STRING(100),
@@ -215,7 +260,7 @@ export async function up({ context: queryInterface }: { context: QueryInterface 
       type: DataTypes.STRING(500),
       allowNull: true,
     },
-    is_system: {
+    isSystem: {
       type: DataTypes.BOOLEAN,
       defaultValue: false,
     },
@@ -235,43 +280,119 @@ export async function up({ context: queryInterface }: { context: QueryInterface 
     },
   })
 
-  // 6. modules
-  await queryInterface.createTable('modules', {
+  // 6. user_roles
+  await queryInterface.createTable('user_roles', {
     id: {
-      type: DataTypes.CHAR(36),
+      type: DataTypes.UUID,
       defaultValue: DataTypes.UUIDV4,
       primaryKey: true,
     },
-    parent_id: {
-      type: DataTypes.CHAR(36),
+    createdBy: {
+      type: DataTypes.UUID,
       allowNull: true,
-      references: { model: 'modules', key: 'id' },
-      onDelete: 'SET NULL',
     },
-    name: {
-      type: DataTypes.STRING(150),
+    updatedBy: {
+      type: DataTypes.UUID,
+      allowNull: true,
+    },
+    userId: {
+      type: DataTypes.UUID,
+      allowNull: false,
+      references: { model: 'users', key: 'id' },
+      onDelete: 'CASCADE',
+    },
+    roleId: {
+      type: DataTypes.UUID,
+      allowNull: false,
+      references: { model: 'roles', key: 'id' },
+      onDelete: 'CASCADE',
+    },
+    companyId: {
+      type: DataTypes.UUID,
+      allowNull: true,
+    },
+    locationId: {
+      type: DataTypes.UUID,
+      allowNull: true,
+    },
+    departmentId: {
+      type: DataTypes.UUID,
+      allowNull: true,
+    },
+    assignedBy: {
+      type: DataTypes.UUID,
+      allowNull: true,
+    },
+    validFrom: {
+      type: DataTypes.DATE,
+      allowNull: true,
+    },
+    validUntil: {
+      type: DataTypes.DATE,
+      allowNull: true,
+    },
+    isActive: {
+      type: DataTypes.BOOLEAN,
+      defaultValue: true,
+    },
+    createdAt: {
+      type: DataTypes.DATE,
+      allowNull: false,
+      defaultValue: DataTypes.NOW,
+    },
+    updatedAt: {
+      type: DataTypes.DATE,
+      allowNull: false,
+      defaultValue: DataTypes.NOW,
+    },
+  })
+
+  // 7. resources
+  await queryInterface.createTable('resources', {
+    id: {
+      type: DataTypes.UUID,
+      defaultValue: DataTypes.UUIDV4,
+      primaryKey: true,
       allowNull: false,
     },
-    code: {
-      type: DataTypes.STRING(100),
+    key: {
+      type: DataTypes.STRING(255),
       allowNull: false,
       unique: true,
     },
-    description: {
-      type: DataTypes.STRING(500),
-      allowNull: true,
+    name: {
+      type: DataTypes.STRING(255),
+      allowNull: false,
     },
-    icon: {
+    description: {
       type: DataTypes.STRING(255),
       allowNull: true,
     },
-    sort_order: {
-      type: DataTypes.INTEGER,
-      defaultValue: 0,
+    type: {
+      type: DataTypes.STRING(255),
+      allowNull: true,
+    },
+    path: {
+      type: DataTypes.STRING(255),
+      allowNull: true,
     },
     isActive: {
       type: DataTypes.BOOLEAN,
+      allowNull: false,
       defaultValue: true,
+    },
+    isDeleted: {
+      type: DataTypes.BOOLEAN,
+      allowNull: false,
+      defaultValue: false,
+    },
+    createdBy: {
+      type: DataTypes.UUID,
+      allowNull: true,
+    },
+    updatedBy: {
+      type: DataTypes.UUID,
+      allowNull: true,
     },
     createdAt: {
       type: DataTypes.DATE,
@@ -285,39 +406,39 @@ export async function up({ context: queryInterface }: { context: QueryInterface 
     },
   })
 
-  // 7. permissions
-  await queryInterface.createTable('permissions', {
+  // 8. user_locations
+  await queryInterface.createTable('user_locations', {
     id: {
-      type: DataTypes.CHAR(36),
+      type: DataTypes.UUID,
       defaultValue: DataTypes.UUIDV4,
       primaryKey: true,
-    },
-    module_id: {
-      type: DataTypes.CHAR(36),
-      allowNull: false,
-      references: { model: 'modules', key: 'id' },
-      onDelete: 'CASCADE',
-    },
-    name: {
-      type: DataTypes.STRING(150),
       allowNull: false,
     },
-    code: {
-      type: DataTypes.STRING(150),
-      allowNull: false,
-      unique: true,
-    },
-    action: {
-      type: DataTypes.STRING(100),
+    userId: {
+      type: DataTypes.UUID,
       allowNull: false,
     },
-    description: {
-      type: DataTypes.STRING(500),
-      allowNull: true,
+    locId: {
+      type: DataTypes.UUID,
+      allowNull: false,
     },
     isActive: {
       type: DataTypes.BOOLEAN,
+      allowNull: false,
       defaultValue: true,
+    },
+    isDeleted: {
+      type: DataTypes.BOOLEAN,
+      allowNull: false,
+      defaultValue: false,
+    },
+    createdBy: {
+      type: DataTypes.UUID,
+      allowNull: true,
+    },
+    updatedBy: {
+      type: DataTypes.UUID,
+      allowNull: true,
     },
     createdAt: {
       type: DataTypes.DATE,
@@ -331,54 +452,52 @@ export async function up({ context: queryInterface }: { context: QueryInterface 
     },
   })
 
-  // 8. user_roles
-  await queryInterface.createTable('user_roles', {
+  await queryInterface.addIndex('user_locations', ['userId', 'locId'], {
+    unique: true,
+    name: 'uk_user_location',
+  })
+
+  // 9. user_location_permissions
+  await queryInterface.createTable('user_location_permissions', {
     id: {
-      type: DataTypes.CHAR(36),
+      type: DataTypes.UUID,
       defaultValue: DataTypes.UUIDV4,
       primaryKey: true,
-    },
-    user_id: {
-      type: DataTypes.CHAR(36),
       allowNull: false,
-      references: { model: 'users', key: 'id' },
-      onDelete: 'CASCADE',
     },
-    role_id: {
-      type: DataTypes.CHAR(36),
+    userId: {
+      type: DataTypes.UUID,
       allowNull: false,
-      references: { model: 'roles', key: 'id' },
-      onDelete: 'CASCADE',
     },
-    company_id: {
-      type: DataTypes.CHAR(36),
-      allowNull: true,
+    locationId: {
+      type: DataTypes.UUID,
+      allowNull: false,
     },
-    location_id: {
-      type: DataTypes.CHAR(36),
-      allowNull: true,
+    resourceKey: {
+      type: DataTypes.STRING(255),
+      allowNull: false,
     },
-    department_id: {
-      type: DataTypes.CHAR(36),
-      allowNull: true,
-    },
-    assigned_by: {
-      type: DataTypes.CHAR(36),
-      allowNull: true,
-      references: { model: 'users', key: 'id' },
-      onDelete: 'SET NULL',
-    },
-    valid_from: {
-      type: DataTypes.DATE,
-      allowNull: true,
-    },
-    valid_until: {
-      type: DataTypes.DATE,
-      allowNull: true,
+    permission: {
+      type: DataTypes.ENUM('view', 'create', 'update', 'delete'),
+      allowNull: false,
     },
     isActive: {
       type: DataTypes.BOOLEAN,
+      allowNull: false,
       defaultValue: true,
+    },
+    isDeleted: {
+      type: DataTypes.BOOLEAN,
+      allowNull: false,
+      defaultValue: false,
+    },
+    createdBy: {
+      type: DataTypes.UUID,
+      allowNull: true,
+    },
+    updatedBy: {
+      type: DataTypes.UUID,
+      allowNull: true,
     },
     createdAt: {
       type: DataTypes.DATE,
@@ -392,107 +511,20 @@ export async function up({ context: queryInterface }: { context: QueryInterface 
     },
   })
 
-  // 9. role_permissions
-  await queryInterface.createTable('role_permissions', {
-    role_id: {
-      type: DataTypes.CHAR(36),
-      allowNull: false,
-      references: { model: 'roles', key: 'id' },
-      onDelete: 'CASCADE',
-    },
-    permission_id: {
-      type: DataTypes.CHAR(36),
-      allowNull: false,
-      references: { model: 'permissions', key: 'id' },
-      onDelete: 'CASCADE',
-    },
-    createdAt: {
-      type: DataTypes.DATE,
-      allowNull: false,
-      defaultValue: DataTypes.NOW,
-    },
-  })
-
-  // 10. user_permissions
-  await queryInterface.createTable('user_permissions', {
-    id: {
-      type: DataTypes.CHAR(36),
-      defaultValue: DataTypes.UUIDV4,
-      primaryKey: true,
-    },
-    user_id: {
-      type: DataTypes.CHAR(36),
-      allowNull: false,
-      references: { model: 'users', key: 'id' },
-      onDelete: 'CASCADE',
-    },
-    permission_id: {
-      type: DataTypes.CHAR(36),
-      allowNull: false,
-      references: { model: 'permissions', key: 'id' },
-      onDelete: 'CASCADE',
-    },
-    effect: {
-      type: DataTypes.ENUM('ALLOW', 'DENY'),
-      allowNull: false,
-      defaultValue: 'ALLOW',
-    },
-    company_id: {
-      type: DataTypes.CHAR(36),
-      allowNull: true,
-    },
-    location_id: {
-      type: DataTypes.CHAR(36),
-      allowNull: true,
-    },
-    department_id: {
-      type: DataTypes.CHAR(36),
-      allowNull: true,
-    },
-    reason: {
-      type: DataTypes.STRING(500),
-      allowNull: true,
-    },
-    assigned_by: {
-      type: DataTypes.CHAR(36),
-      allowNull: true,
-      references: { model: 'users', key: 'id' },
-      onDelete: 'SET NULL',
-    },
-    valid_from: {
-      type: DataTypes.DATE,
-      allowNull: true,
-    },
-    valid_until: {
-      type: DataTypes.DATE,
-      allowNull: true,
-    },
-    isActive: {
-      type: DataTypes.BOOLEAN,
-      defaultValue: true,
-    },
-    createdAt: {
-      type: DataTypes.DATE,
-      allowNull: false,
-      defaultValue: DataTypes.NOW,
-    },
-    updatedAt: {
-      type: DataTypes.DATE,
-      allowNull: false,
-      defaultValue: DataTypes.NOW,
-    },
+  await queryInterface.addIndex('user_location_permissions', ['userId', 'locationId', 'resourceKey', 'permission'], {
+    unique: true,
+    name: 'uk_user_loc_res_perm',
   })
 }
 
-export async function down({ context: queryInterface }: { context: QueryInterface }) {
-  await queryInterface.dropTable('user_permissions')
-  await queryInterface.dropTable('role_permissions')
+export async function down({ context: queryInterface }: { context: QueryInterface }): Promise<void> {
+  await queryInterface.dropTable('user_location_permissions')
+  await queryInterface.dropTable('user_locations')
+  await queryInterface.dropTable('resources')
   await queryInterface.dropTable('user_roles')
-  await queryInterface.dropTable('permissions')
-  await queryInterface.dropTable('modules')
   await queryInterface.dropTable('roles')
   await queryInterface.dropTable('job_categories')
   await queryInterface.dropTable('departments')
-  await queryInterface.dropTable('user_profiles')
+  await queryInterface.dropTable('user_details')
   await queryInterface.dropTable('users')
 }

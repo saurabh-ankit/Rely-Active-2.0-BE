@@ -1,45 +1,36 @@
-import { DataTypes, Model, Optional } from 'sequelize'
+import { DataTypes, Optional } from 'sequelize'
 import sequelize from '../config/db/index.js'
+import { BaseAttributes, BaseModel, baseModelColumns } from './base.model.js'
 
-export interface DepartmentAttributes {
-  id: string
-  location_id?: string | null
+export interface DepartmentAttributes extends BaseAttributes {
+  locationId?: string | null
   name: string
   code: string
   description?: string | null
   isActive?: boolean
-  createdAt?: Date
-  updatedAt?: Date
 }
 
 export type DepartmentCreationAttributes = Optional<
   DepartmentAttributes,
-  'id' | 'location_id' | 'description' | 'isActive' | 'createdAt' | 'updatedAt'
+  'id' | 'locationId' | 'description' | 'isActive' | 'createdBy' | 'updatedBy' | 'createdAt' | 'updatedAt'
 >
 
 export class Department
-  extends Model<DepartmentAttributes, DepartmentCreationAttributes>
+  extends BaseModel<DepartmentAttributes, DepartmentCreationAttributes>
   implements DepartmentAttributes
 {
-  declare id: string
-  declare location_id: string | null
+  declare locationId: string | null
   declare name: string
   declare code: string
   declare description: string | null
   declare isActive: boolean
-  declare readonly createdAt: Date
-  declare readonly updatedAt: Date
 }
 
 Department.init(
   {
-    id: {
-      type: DataTypes.CHAR(36),
-      defaultValue: DataTypes.UUIDV4,
-      primaryKey: true,
-    },
-    location_id: {
-      type: DataTypes.CHAR(36),
+    ...baseModelColumns,
+    locationId: {
+      type: DataTypes.UUID,
       allowNull: true,
     },
     name: {

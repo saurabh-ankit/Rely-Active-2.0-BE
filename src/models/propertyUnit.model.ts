@@ -1,21 +1,13 @@
-import { DataTypes, Model, Optional } from 'sequelize'
+import { DataTypes, Optional } from 'sequelize'
 import sequelize from '../config/db/index.js'
+import { BaseAttributes, BaseModel, baseModelColumns } from './base.model.js'
 
 export type UnitType = '1BHK' | '2BHK' | '3BHK' | '4BHK' | 'studio' | 'penthouse' | 'shop' | 'office'
-export type UnitFacing =
-  | 'north'
-  | 'south'
-  | 'east'
-  | 'west'
-  | 'northeast'
-  | 'northwest'
-  | 'southeast'
-  | 'southwest'
+export type UnitFacing = 'north' | 'south' | 'east' | 'west' | 'northeast' | 'northwest' | 'southeast' | 'southwest'
 export type UnitStatus = 'available' | 'booked' | 'sold' | 'on_hold'
 export type UnitAreaUnit = 'sqft' | 'sqmt' | 'acres'
 
-export interface PropertyUnitAttributes {
-  id: string
+export interface PropertyUnitAttributes extends BaseAttributes {
   floorId: string
   unit_number: string
   unit_type: UnitType
@@ -33,10 +25,6 @@ export interface PropertyUnitAttributes {
   status: UnitStatus
   isActive?: boolean
   isDeleted?: boolean
-  createdBy?: string | null
-  updatedBy?: string | null
-  createdAt?: Date
-  updatedAt?: Date
 }
 
 export type PropertyUnitCreationAttributes = Optional<
@@ -62,10 +50,9 @@ export type PropertyUnitCreationAttributes = Optional<
 >
 
 export class PropertyUnit
-  extends Model<PropertyUnitAttributes, PropertyUnitCreationAttributes>
+  extends BaseModel<PropertyUnitAttributes, PropertyUnitCreationAttributes>
   implements PropertyUnitAttributes
 {
-  declare id: string
   declare floorId: string
   declare unit_number: string
   declare unit_type: UnitType
@@ -83,19 +70,11 @@ export class PropertyUnit
   declare status: UnitStatus
   declare isActive: boolean
   declare isDeleted: boolean
-  declare createdBy: string | null
-  declare updatedBy: string | null
-  declare readonly createdAt: Date
-  declare readonly updatedAt: Date
 }
 
 PropertyUnit.init(
   {
-    id: {
-      type: DataTypes.UUID,
-      defaultValue: DataTypes.UUIDV4,
-      primaryKey: true,
-    },
+    ...baseModelColumns,
     floorId: {
       type: DataTypes.UUID,
       allowNull: false,
@@ -172,14 +151,6 @@ PropertyUnit.init(
     isDeleted: {
       type: DataTypes.BOOLEAN,
       defaultValue: false,
-    },
-    createdBy: {
-      type: DataTypes.STRING(255),
-      allowNull: true,
-    },
-    updatedBy: {
-      type: DataTypes.STRING(255),
-      allowNull: true,
     },
   },
   {

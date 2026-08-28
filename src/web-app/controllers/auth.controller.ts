@@ -1,32 +1,33 @@
 import type { Request, Response } from 'express'
 import bcrypt from 'bcryptjs'
-import { User, UserProfile } from '../../models/index.js'
+import { User, UserDetail } from '../../models/index.js'
 import { generateToken } from '../../utils/jwt.js'
 import { AuthorizationService } from '../../services/authorization.service.js'
 import type { AuthenticatedRequest } from '../../middlewares/authenticate.js'
 
 export async function login(req: Request, res: Response): Promise<void> {
   try {
-    const { email, phone, password } = req.body
+    const { username, password } = req.body
 
-    if ((!email && !phone) || !password) {
+    if (!username || !password) {
       res.status(400).json({
         success: false,
-        message: 'Please provide email or phone and password.',
+        message: 'Please provide username and password.',
       })
       return
     }
 
-    const whereClause: Record<string, unknown> = { isDeleted: false }
-    if (email) whereClause.email = (email as string).trim()
-    else if (phone) whereClause.phone = (phone as string).trim()
+    const trimmedUsername = (username as string).trim()
 
     const user = await User.findOne({
-      where: whereClause,
-      include: [{ model: UserProfile, as: 'profile' }],
+      where: {
+        username: trimmedUsername,
+        isDeleted: false,
+      },
+      include: [{ model: UserDetail, as: 'profile' }],
     })
 
-    if (!user || !user.password_hash) {
+    if (!user || !user.passwordHash) {
       res.status(401).json({
         success: false,
         message: 'Invalid credentials.',
@@ -42,7 +43,7 @@ export async function login(req: Request, res: Response): Promise<void> {
       return
     }
 
-    const isMatch = await bcrypt.compare(password, user.password_hash)
+    const isMatch = await bcrypt.compare(password, user.passwordHash)
     if (!isMatch) {
       res.status(401).json({
         success: false,
@@ -53,21 +54,11 @@ export async function login(req: Request, res: Response): Promise<void> {
 
     const authCtx = await AuthorizationService.getUserAuthorizationContext(user.id)
 
-    // Enforce web console restriction: Only Super Admin and Property Admin can log in!
-    const isAllowedRole = authCtx.isSuperAdmin || authCtx.roles.includes('ADMIN')
-    if (!isAllowedRole) {
-      res.status(403).json({
-        success: false,
-        message: 'Access Denied: Only Super Admin and Property Admin users can log into the web operations console.',
-      })
-      return
-    }
-
     const token = generateToken({
       userId: user.id,
       email: user.email,
-      companyId: user.company_id,
-      defaultLocationId: user.default_location_id,
+      companyId: user.companyId,
+      defaultLocationId: user.defaultLocationId,
       roles: authCtx.roles,
     })
 
@@ -78,10 +69,11 @@ export async function login(req: Request, res: Response): Promise<void> {
         token,
         user: {
           id: user.id,
+          username: user.username,
           email: user.email,
           phone: user.phone,
-          companyId: user.company_id,
-          defaultLocationId: user.default_location_id,
+          companyId: user.companyId,
+          defaultLocationId: user.defaultLocationId,
           profile: (user as User & { profile?: unknown }).profile,
           isSuperAdmin: authCtx.isSuperAdmin,
           roles: authCtx.roles,
@@ -106,7 +98,7 @@ export async function getMe(req: AuthenticatedRequest, res: Response): Promise<v
     }
 
     const user = await User.findByPk(req.user.id, {
-      include: [{ model: UserProfile, as: 'profile' }],
+      include: [{ model: UserDetail, as: 'profile' }],
     })
 
     if (!user) {
@@ -116,23 +108,15 @@ export async function getMe(req: AuthenticatedRequest, res: Response): Promise<v
 
     const authCtx = await AuthorizationService.getUserAuthorizationContext(user.id)
 
-    const isAllowedRole = authCtx.isSuperAdmin || authCtx.roles.includes('ADMIN')
-    if (!isAllowedRole) {
-      res.status(403).json({
-        success: false,
-        message: 'Access Denied: Only Super Admin and Property Admin users can access the web operations console.',
-      })
-      return
-    }
-
     res.status(200).json({
       success: true,
       data: {
         id: user.id,
+        username: user.username,
         email: user.email,
         phone: user.phone,
-        companyId: user.company_id,
-        defaultLocationId: user.default_location_id,
+        companyId: user.companyId,
+        defaultLocationId: user.defaultLocationId,
         profile: (user as User & { profile?: unknown }).profile,
         isSuperAdmin: authCtx.isSuperAdmin,
         roles: authCtx.roles,

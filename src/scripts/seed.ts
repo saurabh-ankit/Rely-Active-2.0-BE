@@ -1,16 +1,6 @@
 import bcrypt from 'bcryptjs'
 import sequelize from '../config/db/index.js'
-import {
-  Department,
-  Module,
-  Permission,
-  Resource,
-  Role,
-  RolePermission,
-  User,
-  UserProfile,
-  UserRole,
-} from '../models/index.js'
+import { Department, JobCategory, Resource, Role, User, UserDetail, UserRole } from '../models/index.js'
 
 export async function seedRbacData() {
   console.log('🌱 Starting RBAC & Super Admin Seeder...')
@@ -19,15 +9,20 @@ export async function seedRbacData() {
 
   // ── 1. Roles ───────────────────────────────────────────────────────────────
   const rolesData = [
-    { name: 'Super Admin', code: 'SUPER_ADMIN', description: 'Platform-level administrator', is_system: true },
-    { name: 'Property Admin', code: 'ADMIN', description: 'Property-level administrator', is_system: true },
-    { name: 'Department Manager', code: 'MANAGER', description: 'Department-level manager', is_system: true },
-    { name: 'Operational Staff', code: 'EMPLOYEE', description: 'Operational staff member', is_system: true },
-    { name: 'Doctor', code: 'DOCTOR', description: 'Medical practitioner', is_system: true },
-    { name: 'Nurse', code: 'NURSE', description: 'Nursing staff member', is_system: true },
-    { name: 'Resident', code: 'RESIDENT', description: 'Resident / occupant', is_system: true },
-    { name: 'Caretaker', code: 'CARETAKER', description: 'Assigned resident caretaker', is_system: true },
-    { name: 'Vendor', code: 'VENDOR', description: 'External contractor', is_system: true },
+    {
+      name: 'Super Admin',
+      code: 'SUPER_ADMIN',
+      description: 'Platform-level administrator with full system access',
+      isSystem: true,
+    },
+    { name: 'Property Admin', code: 'ADMIN', description: 'Property-level administrator', isSystem: true },
+    { name: 'Department Manager', code: 'MANAGER', description: 'Department-level manager', isSystem: true },
+    { name: 'Operational Staff', code: 'EMPLOYEE', description: 'Operational staff member', isSystem: true },
+    { name: 'Doctor', code: 'DOCTOR', description: 'Medical practitioner', isSystem: true },
+    { name: 'Nurse', code: 'NURSE', description: 'Nursing staff member', isSystem: true },
+    { name: 'Resident', code: 'RESIDENT', description: 'Resident / occupant', isSystem: true },
+    { name: 'Caretaker', code: 'CARETAKER', description: 'Assigned resident caretaker', isSystem: true },
+    { name: 'Vendor', code: 'VENDOR', description: 'External contractor', isSystem: true },
   ]
 
   const createdRoles: Record<string, Role> = {}
@@ -40,7 +35,7 @@ export async function seedRbacData() {
   }
   console.log(`✅ Roles seeded: ${Object.keys(createdRoles).length}`)
 
-  // ── 2. Resources ───────────────────────────────────────────────────────────
+  // ── 2. Resources (Modules) ──────────────────────────────────────────────────
   const resourcesData = [
     {
       key: 'FNB',
@@ -127,150 +122,9 @@ export async function seedRbacData() {
       defaults: resItem,
     })
   }
-  console.log(`✅ Resources seeded: ${resourcesData.length}`)
+  console.log(`✅ Resources (Modules) seeded: ${resourcesData.length}`)
 
-  // ── 3. Exact 11 Modules ───────────────────────────────────────────────────
-  const modulesData = [
-    { name: 'Food', code: 'FNB', description: 'Food & Beverage dining and orders', icon: 'Utensils' },
-    { name: 'Resident', code: 'RESIDENT', description: 'Resident management & directory', icon: 'User' },
-    { name: 'Employee', code: 'EMPLOYEE', description: 'Employee directory & staff profiles', icon: 'HandHeart' },
-    { name: 'Shift & Roster', code: 'ROSTER', description: 'Shift & roster schedules', icon: 'CalendarClock' },
-    {
-      name: 'Ticket Management',
-      code: 'TICKETS',
-      description: 'Repair & Maintenance, Concierge, Housekeeping, Food Tickets',
-      icon: 'Wrench',
-    },
-    {
-      name: 'Gate & Security',
-      code: 'GNS',
-      description: 'Gate passes, visitor check-ins & security scans',
-      icon: 'ShieldCheck',
-    },
-    { name: 'Inventory', code: 'INVENTORY', description: 'Inventory & stock management', icon: 'Package' },
-    { name: 'Asset Management', code: 'ASSET', description: 'Asset tracking & maintenance', icon: 'Box' },
-    { name: 'Medical', code: 'MEDICAL', description: 'Medical dashboard, care tasks & records', icon: 'Stethoscope' },
-    { name: 'Billing', code: 'BILLING', description: 'Invoices, payments & ledgers', icon: 'Receipt' },
-    { name: 'Events', code: 'EVENTS', description: 'Community events & activities', icon: 'CalendarCheck' },
-  ]
-
-  const createdModules: Record<string, Module> = {}
-  for (const m of modulesData) {
-    const [mod] = await Module.findOrCreate({
-      where: { code: m.code },
-      defaults: m,
-    })
-    createdModules[m.code] = mod
-  }
-  console.log(`✅ Modules seeded: ${Object.keys(createdModules).length}`)
-
-  // ── 4. 4 CRUD Permissions per Module ────────────────────────────────────────
-  const permissionsData = [
-    // 1. Food (FNB)
-    { moduleCode: 'FNB', code: 'FNB_VIEW', name: 'View Food Orders', action: 'VIEW' },
-    { moduleCode: 'FNB', code: 'FNB_CREATE', name: 'Create Food Order', action: 'CREATE' },
-    { moduleCode: 'FNB', code: 'FNB_UPDATE', name: 'Update Food Order', action: 'UPDATE' },
-    { moduleCode: 'FNB', code: 'FNB_DELETE', name: 'Delete Food Order', action: 'DELETE' },
-
-    // 2. Resident
-    { moduleCode: 'RESIDENT', code: 'RESIDENT_VIEW', name: 'View Residents', action: 'VIEW' },
-    { moduleCode: 'RESIDENT', code: 'RESIDENT_CREATE', name: 'Create Resident', action: 'CREATE' },
-    { moduleCode: 'RESIDENT', code: 'RESIDENT_UPDATE', name: 'Update Resident', action: 'UPDATE' },
-    { moduleCode: 'RESIDENT', code: 'RESIDENT_DELETE', name: 'Delete Resident', action: 'DELETE' },
-
-    // 3. Employee
-    { moduleCode: 'EMPLOYEE', code: 'EMPLOYEE_VIEW', name: 'View Employee Directory', action: 'VIEW' },
-    { moduleCode: 'EMPLOYEE', code: 'EMPLOYEE_CREATE', name: 'Create Employee', action: 'CREATE' },
-    { moduleCode: 'EMPLOYEE', code: 'EMPLOYEE_UPDATE', name: 'Update Employee', action: 'UPDATE' },
-    { moduleCode: 'EMPLOYEE', code: 'EMPLOYEE_DELETE', name: 'Delete Employee', action: 'DELETE' },
-
-    // 4. Shift & Roster
-    { moduleCode: 'ROSTER', code: 'ROSTER_VIEW', name: 'View Shift & Roster', action: 'VIEW' },
-    { moduleCode: 'ROSTER', code: 'ROSTER_CREATE', name: 'Create Shift & Roster', action: 'CREATE' },
-    { moduleCode: 'ROSTER', code: 'ROSTER_UPDATE', name: 'Update Shift & Roster', action: 'UPDATE' },
-    { moduleCode: 'ROSTER', code: 'ROSTER_DELETE', name: 'Delete Shift & Roster', action: 'DELETE' },
-
-    // 5. Ticket Management
-    { moduleCode: 'TICKETS', code: 'TICKET_VIEW', name: 'View Tickets', action: 'VIEW' },
-    { moduleCode: 'TICKETS', code: 'TICKET_CREATE', name: 'Create Ticket', action: 'CREATE' },
-    { moduleCode: 'TICKETS', code: 'TICKET_UPDATE', name: 'Update Ticket', action: 'UPDATE' },
-    { moduleCode: 'TICKETS', code: 'TICKET_DELETE', name: 'Delete Ticket', action: 'DELETE' },
-
-    // 6. Gate & Security
-    { moduleCode: 'GNS', code: 'GNS_VIEW', name: 'View Gate & Security', action: 'VIEW' },
-    { moduleCode: 'GNS', code: 'GNS_CREATE', name: 'Create Gate Pass / Entry', action: 'CREATE' },
-    { moduleCode: 'GNS', code: 'GNS_UPDATE', name: 'Update Gate Pass', action: 'UPDATE' },
-    { moduleCode: 'GNS', code: 'GNS_DELETE', name: 'Delete Gate Pass', action: 'DELETE' },
-
-    // 7. Inventory
-    { moduleCode: 'INVENTORY', code: 'INVENTORY_VIEW', name: 'View Inventory', action: 'VIEW' },
-    { moduleCode: 'INVENTORY', code: 'INVENTORY_CREATE', name: 'Create Stock Item', action: 'CREATE' },
-    { moduleCode: 'INVENTORY', code: 'INVENTORY_UPDATE', name: 'Update Stock Item', action: 'UPDATE' },
-    { moduleCode: 'INVENTORY', code: 'INVENTORY_DELETE', name: 'Delete Stock Item', action: 'DELETE' },
-
-    // 8. Asset Management
-    { moduleCode: 'ASSET', code: 'ASSET_VIEW', name: 'View Assets', action: 'VIEW' },
-    { moduleCode: 'ASSET', code: 'ASSET_CREATE', name: 'Create Asset', action: 'CREATE' },
-    { moduleCode: 'ASSET', code: 'ASSET_UPDATE', name: 'Update Asset', action: 'UPDATE' },
-    { moduleCode: 'ASSET', code: 'ASSET_DELETE', name: 'Delete Asset', action: 'DELETE' },
-
-    // 9. Medical
-    { moduleCode: 'MEDICAL', code: 'MEDICAL_VIEW', name: 'View Medical Dashboard', action: 'VIEW' },
-    { moduleCode: 'MEDICAL', code: 'MEDICAL_CREATE', name: 'Create Care Task / Record', action: 'CREATE' },
-    { moduleCode: 'MEDICAL', code: 'MEDICAL_UPDATE', name: 'Update Medical Record', action: 'UPDATE' },
-    { moduleCode: 'MEDICAL', code: 'MEDICAL_DELETE', name: 'Delete Medical Record', action: 'DELETE' },
-
-    // 10. Billing
-    { moduleCode: 'BILLING', code: 'BILLING_VIEW', name: 'View Invoices & Ledgers', action: 'VIEW' },
-    { moduleCode: 'BILLING', code: 'BILLING_CREATE', name: 'Create Invoice', action: 'CREATE' },
-    { moduleCode: 'BILLING', code: 'BILLING_UPDATE', name: 'Update Invoice', action: 'UPDATE' },
-    { moduleCode: 'BILLING', code: 'BILLING_DELETE', name: 'Delete Invoice', action: 'DELETE' },
-
-    // 11. Events
-    { moduleCode: 'EVENTS', code: 'EVENTS_VIEW', name: 'View Events', action: 'VIEW' },
-    { moduleCode: 'EVENTS', code: 'EVENTS_CREATE', name: 'Create Event', action: 'CREATE' },
-    { moduleCode: 'EVENTS', code: 'EVENTS_UPDATE', name: 'Update Event', action: 'UPDATE' },
-    { moduleCode: 'EVENTS', code: 'EVENTS_DELETE', name: 'Delete Event', action: 'DELETE' },
-  ]
-
-  const allPermissions: Permission[] = []
-  for (const p of permissionsData) {
-    const parentModule = createdModules[p.moduleCode]
-    if (!parentModule) continue
-    const [perm] = await Permission.findOrCreate({
-      where: { code: p.code },
-      defaults: {
-        module_id: parentModule.id,
-        name: p.name,
-        code: p.code,
-        action: p.action,
-        description: `Permission ${p.code}`,
-        isActive: true,
-      },
-    })
-    allPermissions.push(perm)
-  }
-  console.log(`✅ Permissions seeded: ${allPermissions.length}`)
-
-  // ── 5. Map ALL permissions to SUPER_ADMIN ──────────────────────────────────
-  const superAdminRole = createdRoles['SUPER_ADMIN']
-  if (!superAdminRole) throw new Error('SUPER_ADMIN role missing')
-
-  for (const perm of allPermissions) {
-    await RolePermission.findOrCreate({
-      where: {
-        role_id: superAdminRole.id,
-        permission_id: perm.id,
-      },
-      defaults: {
-        role_id: superAdminRole.id,
-        permission_id: perm.id,
-      },
-    })
-  }
-  console.log(`✅ Linked ${allPermissions.length} permissions to SUPER_ADMIN role`)
-
-  // ── 6. Departments ─────────────────────────────────────────────────────────
+  // ── 3. Departments ─────────────────────────────────────────────────────────
   const departmentsData = [
     { code: 'RNM', name: 'Repair & Maintenance', description: 'Maintenance & engineering services' },
     { code: 'CON', name: 'Concierge', description: 'Front desk & resident services' },
@@ -283,15 +137,65 @@ export async function seedRbacData() {
     { code: 'ATT', name: 'Attendance & Workforce', description: 'Workforce management' },
   ]
 
+  const createdDepartments: Record<string, Department> = {}
   for (const dep of departmentsData) {
-    await Department.findOrCreate({
+    const [d] = await Department.findOrCreate({
       where: { code: dep.code },
       defaults: dep,
     })
+    createdDepartments[dep.code] = d
   }
-  console.log(`✅ Departments seeded: ${departmentsData.length}`)
+  console.log(`✅ Departments seeded: ${Object.keys(createdDepartments).length}`)
 
-  // ── 7. Seed SUPER_ADMIN User ────────────────────────────────────────────────
+  // ── 4. Job Categories per Department ───────────────────────────────────────
+  const jobCategoriesData = [
+    { departmentCode: 'RNM', code: 'ELEC', name: 'Electrician', description: 'Electrical maintenance & repairs' },
+    { departmentCode: 'RNM', code: 'PLUM', name: 'Plumber', description: 'Plumbing maintenance & repairs' },
+    {
+      departmentCode: 'RNM',
+      code: 'HVAC',
+      name: 'HVAC Technician',
+      description: 'Air conditioning & ventilation technician',
+    },
+    {
+      departmentCode: 'CON',
+      code: 'FDESK',
+      name: 'Front Desk Executive',
+      description: 'Concierge reception & desk management',
+    },
+    { departmentCode: 'FNB', code: 'CHEF', name: 'Head Chef', description: 'Kitchen culinary lead' },
+    { departmentCode: 'FNB', code: 'WAIT', name: 'F&B Steward', description: 'Dining service steward' },
+    { departmentCode: 'SEC', code: 'GUARD', name: 'Security Guard', description: 'Gate & perimeter security guard' },
+    { departmentCode: 'HK', code: 'CLEAN', name: 'Housekeeper', description: 'Facility cleaning staff' },
+    { departmentCode: 'NUR', code: 'SNURSE', name: 'Staff Nurse', description: 'Registered nursing staff' },
+    {
+      departmentCode: 'DOC',
+      code: 'PHYS',
+      name: 'General Physician',
+      description: 'Medical doctor & healthcare practitioner',
+    },
+  ]
+
+  let categoryCount = 0
+  for (const jc of jobCategoriesData) {
+    const parentDept = createdDepartments[jc.departmentCode]
+    if (parentDept) {
+      await JobCategory.findOrCreate({
+        where: { code: jc.code },
+        defaults: {
+          departmentId: parentDept.id,
+          code: jc.code,
+          name: jc.name,
+          description: jc.description,
+          isActive: true,
+        },
+      })
+      categoryCount++
+    }
+  }
+  console.log(`✅ Job Categories seeded: ${categoryCount}`)
+
+  // ── 5. Seed SUPER_ADMIN User ────────────────────────────────────────────────
   const superAdminEmail = 'superadmin@rely.com'
   const defaultPassword = 'SuperAdmin@123'
   const hashedPassword = await bcrypt.hash(defaultPassword, 10)
@@ -299,9 +203,10 @@ export async function seedRbacData() {
   const [superAdminUser] = await User.findOrCreate({
     where: { email: superAdminEmail },
     defaults: {
+      username: 'superadmin',
       email: superAdminEmail,
       phone: '9999999999',
-      password_hash: hashedPassword,
+      passwordHash: hashedPassword,
       status: 'ACTIVE',
       isActive: true,
       isDeleted: false,
@@ -310,34 +215,38 @@ export async function seedRbacData() {
 
   // Ensure password and active status are updated
   await superAdminUser.update({
-    password_hash: hashedPassword,
+    username: 'superadmin',
+    passwordHash: hashedPassword,
     status: 'ACTIVE',
     isActive: true,
     isDeleted: false,
   })
 
-  await UserProfile.findOrCreate({
-    where: { user_id: superAdminUser.id },
+  await UserDetail.findOrCreate({
+    where: { userId: superAdminUser.id },
     defaults: {
-      user_id: superAdminUser.id,
-      first_name: 'Super',
-      last_name: 'Admin',
+      userId: superAdminUser.id,
+      firstName: 'Super',
+      lastName: 'Admin',
       designation: 'Platform Administrator',
-      employee_code: 'SA-001',
+      employeeCode: 'SA-001',
     },
   })
 
-  await UserRole.findOrCreate({
-    where: {
-      user_id: superAdminUser.id,
-      role_id: superAdminRole.id,
-    },
-    defaults: {
-      user_id: superAdminUser.id,
-      role_id: superAdminRole.id,
-      isActive: true,
-    },
-  })
+  const superAdminRole = createdRoles['SUPER_ADMIN']
+  if (superAdminRole) {
+    await UserRole.findOrCreate({
+      where: {
+        userId: superAdminUser.id,
+        roleId: superAdminRole.id,
+      },
+      defaults: {
+        userId: superAdminUser.id,
+        roleId: superAdminRole.id,
+        isActive: true,
+      },
+    })
+  }
 
   console.log('🎉 Super Admin user seeded successfully!')
   console.log(`   Email: ${superAdminEmail}`)

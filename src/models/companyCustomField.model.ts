@@ -1,10 +1,10 @@
-import { DataTypes, Model, Optional } from 'sequelize'
+import { DataTypes, Optional } from 'sequelize'
 import sequelize from '../config/db/index.js'
+import { BaseAttributes, BaseModel, baseModelColumns } from './base.model.js'
 
 export type CustomFieldType = 'text' | 'number' | 'date' | 'select' | 'bool' | 'document'
 
-export interface CompanyCustomFieldAttributes {
-  id: string
+export interface CompanyCustomFieldAttributes extends BaseAttributes {
   companyId: string
   fieldName: string
   fieldLabel: string
@@ -15,10 +15,6 @@ export interface CompanyCustomFieldAttributes {
   defaultValue?: string | null
   isActive?: boolean
   isDeleted?: boolean
-  createdBy?: string | null
-  updatedBy?: string | null
-  createdAt?: Date
-  updatedAt?: Date
 }
 
 export type CompanyCustomFieldCreationAttributes = Optional<
@@ -37,10 +33,9 @@ export type CompanyCustomFieldCreationAttributes = Optional<
 >
 
 export class CompanyCustomField
-  extends Model<CompanyCustomFieldAttributes, CompanyCustomFieldCreationAttributes>
+  extends BaseModel<CompanyCustomFieldAttributes, CompanyCustomFieldCreationAttributes>
   implements CompanyCustomFieldAttributes
 {
-  declare id: string
   declare companyId: string
   declare fieldName: string
   declare fieldLabel: string
@@ -51,19 +46,11 @@ export class CompanyCustomField
   declare defaultValue: string | null
   declare isActive: boolean
   declare isDeleted: boolean
-  declare createdBy: string | null
-  declare updatedBy: string | null
-  declare readonly createdAt: Date
-  declare readonly updatedAt: Date
 }
 
 CompanyCustomField.init(
   {
-    id: {
-      type: DataTypes.UUID,
-      defaultValue: DataTypes.UUIDV4,
-      primaryKey: true,
-    },
+    ...baseModelColumns,
     companyId: {
       type: DataTypes.UUID,
       allowNull: false,
@@ -108,14 +95,6 @@ CompanyCustomField.init(
     isDeleted: {
       type: DataTypes.BOOLEAN,
       defaultValue: false,
-    },
-    createdBy: {
-      type: DataTypes.STRING(255),
-      allowNull: true,
-    },
-    updatedBy: {
-      type: DataTypes.STRING(255),
-      allowNull: true,
     },
   },
   {

@@ -1,70 +1,35 @@
-import { DataTypes, Model, Optional } from 'sequelize'
+import { DataTypes, Optional } from 'sequelize'
 import sequelize from '../config/db/index.js'
+import { BaseAttributes, BaseModel, baseModelColumns } from './base.model.js'
 
-export interface UserLocationAttributes {
-  id: string
+export interface UserLocationAttributes extends BaseAttributes {
   userId: string
-  locationId: string
-  isActive?: boolean
-  isDeleted?: boolean
-  createdBy?: string | null
-  updatedBy?: string | null
-  createdAt?: Date
-  updatedAt?: Date
+  locId: string
 }
 
 export type UserLocationCreationAttributes = Optional<
   UserLocationAttributes,
-  'id' | 'isActive' | 'isDeleted' | 'createdBy' | 'updatedBy' | 'createdAt' | 'updatedAt'
+  'id' | 'createdBy' | 'updatedBy' | 'createdAt' | 'updatedAt'
 >
 
 export class UserLocation
-  extends Model<UserLocationAttributes, UserLocationCreationAttributes>
+  extends BaseModel<UserLocationAttributes, UserLocationCreationAttributes>
   implements UserLocationAttributes
 {
-  declare id: string
   declare userId: string
-  declare locationId: string
-  declare isActive: boolean
-  declare isDeleted: boolean
-  declare createdBy: string | null
-  declare updatedBy: string | null
-  declare readonly createdAt: Date
-  declare readonly updatedAt: Date
+  declare locId: string
 }
 
 UserLocation.init(
   {
-    id: {
-      type: DataTypes.CHAR(36),
-      defaultValue: DataTypes.UUIDV4,
-      primaryKey: true,
-    },
+    ...baseModelColumns,
     userId: {
-      type: DataTypes.CHAR(36),
+      type: DataTypes.UUID,
       allowNull: false,
     },
-    locationId: {
-      type: DataTypes.CHAR(36),
+    locId: {
+      type: DataTypes.UUID,
       allowNull: false,
-    },
-    isActive: {
-      type: DataTypes.BOOLEAN,
-      allowNull: false,
-      defaultValue: true,
-    },
-    isDeleted: {
-      type: DataTypes.BOOLEAN,
-      allowNull: false,
-      defaultValue: false,
-    },
-    createdBy: {
-      type: DataTypes.CHAR(36),
-      allowNull: true,
-    },
-    updatedBy: {
-      type: DataTypes.CHAR(36),
-      allowNull: true,
     },
   },
   {

@@ -1,15 +1,6 @@
 import type { Request, Response } from 'express'
 import bcrypt from 'bcryptjs'
-import {
-  Permission,
-  Property,
-  Role,
-  User,
-  UserPermission,
-  UserProfile,
-  UserProperty,
-  UserRole,
-} from '../../models/index.js'
+import { Property, Role, User, UserDetail, UserLocation, UserRole } from '../../models/index.js'
 import { AuthorizationService } from '../../services/authorization.service.js'
 
 export async function getAllUsers(_req: Request, res: Response): Promise<void> {
@@ -17,16 +8,11 @@ export async function getAllUsers(_req: Request, res: Response): Promise<void> {
     const users = await User.findAll({
       where: { isDeleted: false },
       include: [
-        { model: UserProfile, as: 'profile' },
+        { model: UserDetail, as: 'profile' },
         {
           model: UserRole,
           as: 'userRoles',
           include: [{ model: Role, as: 'role' }],
-        },
-        {
-          model: UserPermission,
-          as: 'userPermissions',
-          include: [{ model: Permission, as: 'permission' }],
         },
         {
           model: Property,
@@ -52,16 +38,11 @@ export async function getUserById(req: Request, res: Response): Promise<void> {
     const id = req.params.id as string
     const user = await User.findByPk(id, {
       include: [
-        { model: UserProfile, as: 'profile' },
+        { model: UserDetail, as: 'profile' },
         {
           model: UserRole,
           as: 'userRoles',
           include: [{ model: Role, as: 'role' }],
-        },
-        {
-          model: UserPermission,
-          as: 'userPermissions',
-          include: [{ model: Permission, as: 'permission' }],
         },
         {
           model: Property,
@@ -94,6 +75,7 @@ export async function getUserById(req: Request, res: Response): Promise<void> {
 export async function createUser(req: Request, res: Response): Promise<void> {
   try {
     const {
+      username,
       email,
       phone,
       password,
@@ -101,68 +83,89 @@ export async function createUser(req: Request, res: Response): Promise<void> {
       defaultLocationId,
       departmentId,
       first_name,
+      firstName,
       last_name,
+      lastName,
       designation,
       employee_code,
+      employeeCode,
       roleCode,
       propertyIds,
     } = req.body
 
-    if (!first_name || (!email && !phone)) {
+    const fName = firstName || first_name
+    const lName = lastName || last_name
+    const empCode = employeeCode || employee_code
+    const uName = username ? username.trim() : null
+
+    if (!fName || (!uName && !email && !phone)) {
       res.status(400).json({
         success: false,
-        message: 'first_name and email or phone are required.',
+        message: 'firstName and username, email, or phone are required.',
       })
       return
+    }
+
+    if (uName) {
+      const existingUser = await User.findOne({ where: { username: uName } })
+      if (existingUser) {
+        res.status(400).json({
+          success: false,
+          message: 'Username is already taken. Please choose a different username.',
+        })
+        return
+      }
     }
 
     const defaultPassword = password || 'Password@123'
     const hashedPassword = await bcrypt.hash(defaultPassword, 10)
 
     const user = await User.create({
+      username: uName,
       email: email ? email.trim() : null,
       phone: phone ? phone.trim() : null,
-      password_hash: hashedPassword,
-      company_id: companyId || null,
-      default_location_id: defaultLocationId || null,
+      passwordHash: hashedPassword,
+      companyId: companyId || null,
+      defaultLocationId: defaultLocationId || null,
       status: 'ACTIVE',
       isActive: true,
     })
 
-    await UserProfile.create({
-      user_id: user.id,
-      first_name: first_name.trim(),
-      last_name: last_name ? last_name.trim() : null,
+    await UserDetail.create({
+      userId: user.id,
+      firstName: fName.trim(),
+      lastName: lName ? lName.trim() : null,
       designation: designation || null,
-      employee_code: employee_code || null,
+      employeeCode: empCode || null,
     })
 
     if (roleCode) {
       const targetRole = await Role.findOne({ where: { code: roleCode } })
       if (targetRole) {
         await UserRole.create({
-          user_id: user.id,
-          role_id: targetRole.id,
-          company_id: companyId || null,
-          location_id: defaultLocationId || null,
-          department_id: departmentId || null,
+          userId: user.id,
+          roleId: targetRole.id,
+          companyId: companyId || null,
+          locationId: defaultLocationId || null,
+          departmentId: departmentId || null,
         })
       }
     }
 
-    // Insert user_properties mapping
-    if (propertyIds && Array.isArray(propertyIds)) {
-      for (const pId of propertyIds) {
-        await UserProperty.create({
-          user_id: user.id,
-          property_id: pId,
+    // Insert user_locations mapping
+    const locationIds = propertyIds || req.body.locIds || req.body.locationIds
+    if (locationIds && Array.isArray(locationIds)) {
+      for (const pId of locationIds) {
+        await UserLocation.create({
+          userId: user.id,
+          locId: pId,
         })
       }
     }
 
     const createdUser = await User.findByPk(user.id, {
       include: [
-        { model: UserProfile, as: 'profile' },
+        { model: UserDetail, as: 'profile' },
         { model: UserRole, as: 'userRoles', include: [{ model: Role, as: 'role' }] },
         { model: Property, as: 'assignedProperties', through: { attributes: [] } },
       ],
@@ -197,7 +200,7 @@ export async function getUserAccessibleProperties(req: Request, res: Response): 
       return
     }
 
-    // Regular users: Fetch properties mapped in user_properties
+    // Regular users: Fetch properties mapped in user_locations
     const user = (await User.findByPk(userId, {
       include: [
         {
@@ -234,15 +237,15 @@ export async function getUserAccessibleProperties(req: Request, res: Response): 
 export async function updateUserProperties(req: Request, res: Response): Promise<void> {
   try {
     const userId = req.params.id as string
-    const { propertyIds } = req.body
+    const locationIds = req.body.propertyIds || req.body.locIds || req.body.locationIds
 
-    await UserProperty.destroy({ where: { user_id: userId } })
+    await UserLocation.destroy({ where: { userId } })
 
-    if (propertyIds && Array.isArray(propertyIds)) {
-      for (const pId of propertyIds) {
-        await UserProperty.create({
-          user_id: userId,
-          property_id: pId,
+    if (locationIds && Array.isArray(locationIds)) {
+      for (const pId of locationIds) {
+        await UserLocation.create({
+          userId,
+          locId: pId,
         })
       }
     }
@@ -272,11 +275,11 @@ export async function assignUserRole(req: Request, res: Response): Promise<void>
     }
 
     const userRole = await UserRole.create({
-      user_id: userId,
-      role_id: targetRole.id,
-      company_id: companyId || null,
-      location_id: locationId || null,
-      department_id: departmentId || null,
+      userId,
+      roleId: targetRole.id,
+      companyId: companyId || null,
+      locationId: locationId || null,
+      departmentId: departmentId || null,
       isActive: true,
     })
 
@@ -284,84 +287,6 @@ export async function assignUserRole(req: Request, res: Response): Promise<void>
       success: true,
       message: 'Role assigned to user successfully',
       data: userRole,
-    })
-  } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : 'Unknown error'
-    res.status(500).json({ success: false, message })
-  }
-}
-
-export async function assignUserPermission(req: Request, res: Response): Promise<void> {
-  try {
-    const userId = req.params.id as string
-    const { permissionId, permissionCode, effect, companyId, locationId, departmentId, reason } = req.body
-
-    let targetPerm = null
-    if (permissionId) targetPerm = await Permission.findByPk(permissionId)
-    else if (permissionCode) targetPerm = await Permission.findOne({ where: { code: permissionCode } })
-
-    if (!targetPerm) {
-      res.status(400).json({ success: false, message: 'Valid permissionId or permissionCode is required' })
-      return
-    }
-
-    const userPerm = await UserPermission.create({
-      user_id: userId,
-      permission_id: targetPerm.id,
-      effect: effect === 'DENY' ? 'DENY' : 'ALLOW',
-      company_id: companyId || null,
-      location_id: locationId || null,
-      department_id: departmentId || null,
-      reason: reason || null,
-      isActive: true,
-    })
-
-    res.status(200).json({
-      success: true,
-      message: `User UBAC permission override (${effect}) created successfully`,
-      data: userPerm,
-    })
-  } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : 'Unknown error'
-    res.status(500).json({ success: false, message })
-  }
-}
-
-export async function updateUserPermissions(req: Request, res: Response): Promise<void> {
-  try {
-    const userId = req.params.id as string
-    const { permissionIds } = req.body
-
-    const user = await User.findByPk(userId)
-    if (!user) {
-      res.status(404).json({ success: false, message: 'User not found' })
-      return
-    }
-
-    // Clear existing user-level UBAC permissions
-    await UserPermission.destroy({ where: { user_id: userId } })
-
-    // Create new user UBAC permissions
-    if (permissionIds && Array.isArray(permissionIds)) {
-      for (const pId of permissionIds) {
-        await UserPermission.create({
-          user_id: userId,
-          permission_id: pId,
-          effect: 'ALLOW',
-          isActive: true,
-        })
-      }
-    }
-
-    const authCtx = await AuthorizationService.getUserAuthorizationContext(userId)
-
-    res.status(200).json({
-      success: true,
-      message: 'User permissions updated successfully',
-      data: {
-        userId,
-        authorizationContext: authCtx,
-      },
     })
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Unknown error'

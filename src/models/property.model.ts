@@ -1,11 +1,11 @@
-import { DataTypes, Model, Optional } from 'sequelize'
+import { DataTypes, Optional } from 'sequelize'
 import sequelize from '../config/db/index.js'
+import { BaseAttributes, BaseModel, baseModelColumns } from './base.model.js'
 
 export type PropertyType = 'apartment' | 'villa' | 'duplex' | 'triplex'
 export type AreaUnit = 'sqft' | 'sqmt' | 'acres'
 
-export interface PropertyAttributes {
-  id: string
+export interface PropertyAttributes extends BaseAttributes {
   companyId: string
   property_name: string
   property_type: PropertyType
@@ -24,10 +24,6 @@ export interface PropertyAttributes {
   launch_date?: string | null
   isActive?: boolean
   isDeleted?: boolean
-  createdBy?: string | null
-  updatedBy?: string | null
-  createdAt?: Date
-  updatedAt?: Date
 }
 
 export type PropertyCreationAttributes = Optional<
@@ -47,11 +43,7 @@ export type PropertyCreationAttributes = Optional<
   | 'updatedAt'
 >
 
-export class Property
-  extends Model<PropertyAttributes, PropertyCreationAttributes>
-  implements PropertyAttributes
-{
-  declare id: string
+export class Property extends BaseModel<PropertyAttributes, PropertyCreationAttributes> implements PropertyAttributes {
   declare companyId: string
   declare property_name: string
   declare property_type: PropertyType
@@ -67,19 +59,11 @@ export class Property
   declare launch_date: string | null
   declare isActive: boolean
   declare isDeleted: boolean
-  declare createdBy: string | null
-  declare updatedBy: string | null
-  declare readonly createdAt: Date
-  declare readonly updatedAt: Date
 }
 
 Property.init(
   {
-    id: {
-      type: DataTypes.UUID,
-      defaultValue: DataTypes.UUIDV4,
-      primaryKey: true,
-    },
+    ...baseModelColumns,
     companyId: {
       type: DataTypes.UUID,
       allowNull: false,
@@ -147,14 +131,6 @@ Property.init(
     isDeleted: {
       type: DataTypes.BOOLEAN,
       defaultValue: false,
-    },
-    createdBy: {
-      type: DataTypes.STRING(255),
-      allowNull: true,
-    },
-    updatedBy: {
-      type: DataTypes.STRING(255),
-      allowNull: true,
     },
   },
   {

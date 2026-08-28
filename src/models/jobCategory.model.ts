@@ -1,45 +1,36 @@
-import { DataTypes, Model, Optional } from 'sequelize'
+import { DataTypes, Optional } from 'sequelize'
 import sequelize from '../config/db/index.js'
+import { BaseAttributes, BaseModel, baseModelColumns } from './base.model.js'
 
-export interface JobCategoryAttributes {
-  id: string
-  department_id: string
+export interface JobCategoryAttributes extends BaseAttributes {
+  departmentId: string
   name: string
   code: string
   description?: string | null
   isActive?: boolean
-  createdAt?: Date
-  updatedAt?: Date
 }
 
 export type JobCategoryCreationAttributes = Optional<
   JobCategoryAttributes,
-  'id' | 'description' | 'isActive' | 'createdAt' | 'updatedAt'
+  'id' | 'description' | 'isActive' | 'createdBy' | 'updatedBy' | 'createdAt' | 'updatedAt'
 >
 
 export class JobCategory
-  extends Model<JobCategoryAttributes, JobCategoryCreationAttributes>
+  extends BaseModel<JobCategoryAttributes, JobCategoryCreationAttributes>
   implements JobCategoryAttributes
 {
-  declare id: string
-  declare department_id: string
+  declare departmentId: string
   declare name: string
   declare code: string
   declare description: string | null
   declare isActive: boolean
-  declare readonly createdAt: Date
-  declare readonly updatedAt: Date
 }
 
 JobCategory.init(
   {
-    id: {
-      type: DataTypes.CHAR(36),
-      defaultValue: DataTypes.UUIDV4,
-      primaryKey: true,
-    },
-    department_id: {
-      type: DataTypes.CHAR(36),
+    ...baseModelColumns,
+    departmentId: {
+      type: DataTypes.UUID,
       allowNull: false,
     },
     name: {

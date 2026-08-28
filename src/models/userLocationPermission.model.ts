@@ -1,18 +1,14 @@
-import { DataTypes, Model, Optional } from 'sequelize'
+import { DataTypes, Optional } from 'sequelize'
 import sequelize from '../config/db/index.js'
+import { BaseAttributes, BaseModel, baseModelColumns } from './base.model.js'
 
-export interface UserLocationPermissionAttributes {
-  id: string
+export interface UserLocationPermissionAttributes extends BaseAttributes {
   userId: string
   locationId: string
   resourceKey: string
   permission: 'view' | 'create' | 'update' | 'delete'
   isActive?: boolean
   isDeleted?: boolean
-  createdBy?: string | null
-  updatedBy?: string | null
-  createdAt?: Date
-  updatedAt?: Date
 }
 
 export type UserLocationPermissionCreationAttributes = Optional<
@@ -21,29 +17,20 @@ export type UserLocationPermissionCreationAttributes = Optional<
 >
 
 export class UserLocationPermission
-  extends Model<UserLocationPermissionAttributes, UserLocationPermissionCreationAttributes>
+  extends BaseModel<UserLocationPermissionAttributes, UserLocationPermissionCreationAttributes>
   implements UserLocationPermissionAttributes
 {
-  declare id: string
   declare userId: string
   declare locationId: string
   declare resourceKey: string
   declare permission: 'view' | 'create' | 'update' | 'delete'
   declare isActive: boolean
   declare isDeleted: boolean
-  declare createdBy: string | null
-  declare updatedBy: string | null
-  declare readonly createdAt: Date
-  declare readonly updatedAt: Date
 }
 
 UserLocationPermission.init(
   {
-    id: {
-      type: DataTypes.CHAR(36),
-      defaultValue: DataTypes.UUIDV4,
-      primaryKey: true,
-    },
+    ...baseModelColumns,
     userId: {
       type: DataTypes.CHAR(36),
       allowNull: false,
@@ -69,14 +56,6 @@ UserLocationPermission.init(
       type: DataTypes.BOOLEAN,
       allowNull: false,
       defaultValue: false,
-    },
-    createdBy: {
-      type: DataTypes.CHAR(36),
-      allowNull: true,
-    },
-    updatedBy: {
-      type: DataTypes.CHAR(36),
-      allowNull: true,
     },
   },
   {

@@ -1,8 +1,8 @@
-import { DataTypes, Model, Optional } from 'sequelize'
+import { DataTypes, Optional } from 'sequelize'
 import sequelize from '../config/db/index.js'
+import { BaseAttributes, BaseModel, baseModelColumns } from './base.model.js'
 
-export interface CompanyAttributes {
-  id: string
+export interface CompanyAttributes extends BaseAttributes {
   company_name: string
   company_gst_number?: string | null
   email_id: string
@@ -20,10 +20,6 @@ export interface CompanyAttributes {
   accountant_signature?: string | null
   isActive?: boolean
   isDeleted?: boolean
-  createdBy?: string | null
-  updatedBy?: string | null
-  createdAt?: Date
-  updatedAt?: Date
 }
 
 export type CompanyCreationAttributes = Optional<
@@ -48,8 +44,7 @@ export type CompanyCreationAttributes = Optional<
   | 'updatedAt'
 >
 
-export class Company extends Model<CompanyAttributes, CompanyCreationAttributes> implements CompanyAttributes {
-  declare id: string
+export class Company extends BaseModel<CompanyAttributes, CompanyCreationAttributes> implements CompanyAttributes {
   declare company_name: string
   declare company_gst_number: string | null
   declare email_id: string
@@ -67,19 +62,11 @@ export class Company extends Model<CompanyAttributes, CompanyCreationAttributes>
   declare accountant_signature: string | null
   declare isActive: boolean
   declare isDeleted: boolean
-  declare createdBy: string | null
-  declare updatedBy: string | null
-  declare readonly createdAt: Date
-  declare readonly updatedAt: Date
 }
 
 Company.init(
   {
-    id: {
-      type: DataTypes.UUID,
-      defaultValue: DataTypes.UUIDV4,
-      primaryKey: true,
-    },
+    ...baseModelColumns,
     company_name: {
       type: DataTypes.STRING(255),
       allowNull: false,
@@ -162,14 +149,6 @@ Company.init(
     isDeleted: {
       type: DataTypes.BOOLEAN,
       defaultValue: false,
-    },
-    createdBy: {
-      type: DataTypes.STRING(255),
-      allowNull: true,
-    },
-    updatedBy: {
-      type: DataTypes.STRING(255),
-      allowNull: true,
     },
   },
   {

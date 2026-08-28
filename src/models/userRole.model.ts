@@ -1,86 +1,79 @@
-import { DataTypes, Model, Optional } from 'sequelize'
+import { DataTypes, Optional } from 'sequelize'
 import sequelize from '../config/db/index.js'
+import { BaseAttributes, BaseModel, baseModelColumns } from './base.model.js'
 
-export interface UserRoleAttributes {
-  id: string
-  user_id: string
-  role_id: string
-  company_id?: string | null
-  location_id?: string | null
-  department_id?: string | null
-  assigned_by?: string | null
-  valid_from?: Date | null
-  valid_until?: Date | null
+export interface UserRoleAttributes extends BaseAttributes {
+  userId: string
+  roleId: string
+  companyId?: string | null
+  locationId?: string | null
+  departmentId?: string | null
+  assignedBy?: string | null
+  validFrom?: Date | null
+  validUntil?: Date | null
   isActive?: boolean
-  createdAt?: Date
-  updatedAt?: Date
 }
 
 export type UserRoleCreationAttributes = Optional<
   UserRoleAttributes,
   | 'id'
-  | 'company_id'
-  | 'location_id'
-  | 'department_id'
-  | 'assigned_by'
-  | 'valid_from'
-  | 'valid_until'
+  | 'companyId'
+  | 'locationId'
+  | 'departmentId'
+  | 'assignedBy'
+  | 'validFrom'
+  | 'validUntil'
   | 'isActive'
+  | 'createdBy'
+  | 'updatedBy'
   | 'createdAt'
   | 'updatedAt'
 >
 
-export class UserRole extends Model<UserRoleAttributes, UserRoleCreationAttributes> implements UserRoleAttributes {
-  declare id: string
-  declare user_id: string
-  declare role_id: string
-  declare company_id: string | null
-  declare location_id: string | null
-  declare department_id: string | null
-  declare assigned_by: string | null
-  declare valid_from: Date | null
-  declare valid_until: Date | null
+export class UserRole extends BaseModel<UserRoleAttributes, UserRoleCreationAttributes> implements UserRoleAttributes {
+  declare userId: string
+  declare roleId: string
+  declare companyId: string | null
+  declare locationId: string | null
+  declare departmentId: string | null
+  declare assignedBy: string | null
+  declare validFrom: Date | null
+  declare validUntil: Date | null
   declare isActive: boolean
-  declare readonly createdAt: Date
-  declare readonly updatedAt: Date
 }
 
 UserRole.init(
   {
-    id: {
-      type: DataTypes.CHAR(36),
-      defaultValue: DataTypes.UUIDV4,
-      primaryKey: true,
-    },
-    user_id: {
-      type: DataTypes.CHAR(36),
+    ...baseModelColumns,
+    userId: {
+      type: DataTypes.UUID,
       allowNull: false,
     },
-    role_id: {
-      type: DataTypes.CHAR(36),
+    roleId: {
+      type: DataTypes.UUID,
       allowNull: false,
     },
-    company_id: {
-      type: DataTypes.CHAR(36),
+    companyId: {
+      type: DataTypes.UUID,
       allowNull: true,
     },
-    location_id: {
-      type: DataTypes.CHAR(36),
+    locationId: {
+      type: DataTypes.UUID,
       allowNull: true,
     },
-    department_id: {
-      type: DataTypes.CHAR(36),
+    departmentId: {
+      type: DataTypes.UUID,
       allowNull: true,
     },
-    assigned_by: {
-      type: DataTypes.CHAR(36),
+    assignedBy: {
+      type: DataTypes.UUID,
       allowNull: true,
     },
-    valid_from: {
+    validFrom: {
       type: DataTypes.DATE,
       allowNull: true,
     },
-    valid_until: {
+    validUntil: {
       type: DataTypes.DATE,
       allowNull: true,
     },

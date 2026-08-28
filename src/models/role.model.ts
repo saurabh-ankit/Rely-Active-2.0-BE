@@ -1,40 +1,31 @@
-import { DataTypes, Model, Optional } from 'sequelize'
+import { DataTypes, Optional } from 'sequelize'
 import sequelize from '../config/db/index.js'
+import { BaseAttributes, BaseModel, baseModelColumns } from './base.model.js'
 
-export interface RoleAttributes {
-  id: string
+export interface RoleAttributes extends BaseAttributes {
   name: string
   code: string
   description?: string | null
-  is_system?: boolean
+  isSystem?: boolean
   isActive?: boolean
-  createdAt?: Date
-  updatedAt?: Date
 }
 
 export type RoleCreationAttributes = Optional<
   RoleAttributes,
-  'id' | 'description' | 'is_system' | 'isActive' | 'createdAt' | 'updatedAt'
+  'id' | 'description' | 'isSystem' | 'isActive' | 'createdBy' | 'updatedBy' | 'createdAt' | 'updatedAt'
 >
 
-export class Role extends Model<RoleAttributes, RoleCreationAttributes> implements RoleAttributes {
-  declare id: string
+export class Role extends BaseModel<RoleAttributes, RoleCreationAttributes> implements RoleAttributes {
   declare name: string
   declare code: string
   declare description: string | null
-  declare is_system: boolean
+  declare isSystem: boolean
   declare isActive: boolean
-  declare readonly createdAt: Date
-  declare readonly updatedAt: Date
 }
 
 Role.init(
   {
-    id: {
-      type: DataTypes.CHAR(36),
-      defaultValue: DataTypes.UUIDV4,
-      primaryKey: true,
-    },
+    ...baseModelColumns,
     name: {
       type: DataTypes.STRING(100),
       allowNull: false,
@@ -48,7 +39,7 @@ Role.init(
       type: DataTypes.STRING(500),
       allowNull: true,
     },
-    is_system: {
+    isSystem: {
       type: DataTypes.BOOLEAN,
       defaultValue: false,
     },
