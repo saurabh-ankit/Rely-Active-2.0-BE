@@ -96,6 +96,10 @@ export async function up({ context: queryInterface }: { context: QueryInterface 
       type: DataTypes.STRING(100),
       allowNull: true,
     },
+    phone: {
+      type: DataTypes.STRING(30),
+      allowNull: true,
+    },
     gender: {
       type: DataTypes.STRING(30),
       allowNull: true,

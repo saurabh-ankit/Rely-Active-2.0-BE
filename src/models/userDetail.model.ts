@@ -6,6 +6,7 @@ export interface UserDetailAttributes extends BaseAttributes {
   userId: string
   firstName: string
   lastName?: string | null
+  phone?: string | null
   gender?: string | null
   dateOfBirth?: string | null
   photoUrl?: string | null
@@ -13,12 +14,16 @@ export interface UserDetailAttributes extends BaseAttributes {
   employeeCode?: string | null
   emergencyContact?: string | null
   bloodGroup?: string | null
+  address?: string | null
+  qualification?: string | null
+  experience?: string | null
 }
 
 export type UserDetailCreationAttributes = Optional<
   UserDetailAttributes,
   | 'id'
   | 'lastName'
+  | 'phone'
   | 'gender'
   | 'dateOfBirth'
   | 'photoUrl'
@@ -26,6 +31,9 @@ export type UserDetailCreationAttributes = Optional<
   | 'employeeCode'
   | 'emergencyContact'
   | 'bloodGroup'
+  | 'address'
+  | 'qualification'
+  | 'experience'
   | 'createdBy'
   | 'updatedBy'
   | 'createdAt'
@@ -39,6 +47,7 @@ export class UserDetail
   declare userId: string
   declare firstName: string
   declare lastName: string | null
+  declare phone: string | null
   declare gender: string | null
   declare dateOfBirth: string | null
   declare photoUrl: string | null
@@ -46,6 +55,9 @@ export class UserDetail
   declare employeeCode: string | null
   declare emergencyContact: string | null
   declare bloodGroup: string | null
+  declare address: string | null
+  declare qualification: string | null
+  declare experience: string | null
 }
 
 UserDetail.init(
@@ -62,6 +74,10 @@ UserDetail.init(
     },
     lastName: {
       type: DataTypes.STRING(100),
+      allowNull: true,
+    },
+    phone: {
+      type: DataTypes.STRING(30),
       allowNull: true,
     },
     gender: {
@@ -90,6 +106,18 @@ UserDetail.init(
     },
     bloodGroup: {
       type: DataTypes.STRING(20),
+      allowNull: true,
+    },
+    address: {
+      type: DataTypes.TEXT,
+      allowNull: true,
+    },
+    qualification: {
+      type: DataTypes.STRING(150),
+      allowNull: true,
+    },
+    experience: {
+      type: DataTypes.STRING(50),
       allowNull: true,
     },
   },

@@ -428,6 +428,7 @@ export async function up({ context: queryInterface }: { context: QueryInterface 
         userId: superAdminId,
         firstName: 'Super',
         lastName: 'Admin',
+        phone: '9999999999',
         designation: 'Platform Administrator',
         employeeCode: 'SA-001',
         createdAt: now,
