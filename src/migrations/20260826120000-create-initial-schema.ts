@@ -1,6 +1,7 @@
 import { DataTypes, type QueryInterface } from 'sequelize'
 
 export async function up({ context: queryInterface }: { context: QueryInterface }): Promise<void> {
+  // ── Module: Company ──────────────────────────────────────────────────────────
   // 1. company
   await queryInterface.createTable('company', {
     id: {
@@ -187,6 +188,7 @@ export async function up({ context: queryInterface }: { context: QueryInterface 
     },
   })
 
+  // ── Module: Property Hierarchy (Properties, Blocks, Floors, Units) ──────────
   // 3. properties
   await queryInterface.createTable('properties', {
     id: {
@@ -575,6 +577,7 @@ export async function up({ context: queryInterface }: { context: QueryInterface 
     },
   })
 
+  // ── Module: User Management & Authentication ─────────────────────────────────
   // 7. users
   await queryInterface.createTable('users', {
     id: {
@@ -726,6 +729,7 @@ export async function up({ context: queryInterface }: { context: QueryInterface 
     },
   })
 
+  // ── Module: Departments & Job Categories ────────────────────────────────────
   // 9. departments
   await queryInterface.createTable('departments', {
     id: {
@@ -822,6 +826,7 @@ export async function up({ context: queryInterface }: { context: QueryInterface 
     },
   })
 
+  // ── Module: RBAC (Roles & System Resources) ────────────────────────────────────────
   // 11. roles
   await queryInterface.createTable('roles', {
     id: {
@@ -921,6 +926,7 @@ export async function up({ context: queryInterface }: { context: QueryInterface 
     },
   })
 
+  // ── Module: User Locations & Permissions ───────────────────────────────────
   // 13. user_locations
   await queryInterface.createTable('user_locations', {
     id: {
@@ -1051,6 +1057,7 @@ export async function up({ context: queryInterface }: { context: QueryInterface 
     name: 'uk_user_loc_res_perm',
   })
 
+  // ── Module: Employee Managers ───────────────────────────────────────────────
   // 15. employee_managers
   await queryInterface.createTable('employee_managers', {
     id: {
@@ -1100,9 +1107,203 @@ export async function up({ context: queryInterface }: { context: QueryInterface 
       defaultValue: DataTypes.NOW,
     },
   })
+
+  // ── Module: Resident & Resident Family Members ──────────────────────────────
+  // 16. residents
+  await queryInterface.createTable('residents', {
+    id: {
+      type: DataTypes.UUID,
+      defaultValue: DataTypes.UUIDV4,
+      primaryKey: true,
+      allowNull: false,
+    },
+    unitId: {
+      type: DataTypes.UUID,
+      allowNull: false,
+      comment: 'FK -> property_units.id',
+    },
+    locId: {
+      type: DataTypes.UUID,
+      allowNull: false,
+      comment: 'FK -> properties.id (Property Location)',
+    },
+    companyId: {
+      type: DataTypes.UUID,
+      allowNull: true,
+    },
+    residentType: {
+      type: DataTypes.ENUM('OWNER', 'TENANT'),
+      allowNull: false,
+    },
+    ownershipType: {
+      type: DataTypes.ENUM('PRIMARY', 'CO_OWNER', 'DEPENDENT'),
+      allowNull: true,
+      defaultValue: 'PRIMARY',
+    },
+    isResiding: {
+      type: DataTypes.BOOLEAN,
+      allowNull: false,
+      defaultValue: true,
+    },
+    firstName: {
+      type: DataTypes.STRING(100),
+      allowNull: false,
+    },
+    lastName: {
+      type: DataTypes.STRING(100),
+      allowNull: true,
+    },
+    username: {
+      type: DataTypes.STRING(100),
+      allowNull: true,
+      unique: true,
+    },
+    passwordHash: {
+      type: DataTypes.STRING(255),
+      allowNull: true,
+    },
+    email: {
+      type: DataTypes.STRING(150),
+      allowNull: true,
+    },
+    phone: {
+      type: DataTypes.STRING(30),
+      allowNull: true,
+    },
+    emergencyContact: {
+      type: DataTypes.STRING(30),
+      allowNull: true,
+    },
+    bloodGroup: {
+      type: DataTypes.STRING(10),
+      allowNull: true,
+    },
+    photoUrl: {
+      type: DataTypes.STRING(255),
+      allowNull: true,
+    },
+    moveInDate: {
+      type: DataTypes.DATEONLY,
+      allowNull: true,
+    },
+    moveOutDate: {
+      type: DataTypes.DATEONLY,
+      allowNull: true,
+    },
+    status: {
+      type: DataTypes.ENUM('PENDING', 'ACTIVE', 'INACTIVE', 'MOVED_OUT'),
+      allowNull: false,
+      defaultValue: 'ACTIVE',
+    },
+    isActive: {
+      type: DataTypes.BOOLEAN,
+      allowNull: false,
+      defaultValue: true,
+    },
+    isDeleted: {
+      type: DataTypes.BOOLEAN,
+      allowNull: false,
+      defaultValue: false,
+    },
+    createdBy: {
+      type: DataTypes.STRING(255),
+      allowNull: true,
+    },
+    updatedBy: {
+      type: DataTypes.STRING(255),
+      allowNull: true,
+    },
+    createdAt: {
+      type: DataTypes.DATE,
+      allowNull: false,
+      defaultValue: DataTypes.NOW,
+    },
+    updatedAt: {
+      type: DataTypes.DATE,
+      allowNull: false,
+      defaultValue: DataTypes.NOW,
+    },
+  })
+
+  // 17. resident_family_members
+  await queryInterface.createTable('resident_family_members', {
+    id: {
+      type: DataTypes.UUID,
+      defaultValue: DataTypes.UUIDV4,
+      primaryKey: true,
+      allowNull: false,
+    },
+    residentId: {
+      type: DataTypes.UUID,
+      allowNull: false,
+      comment: 'FK -> residents.id',
+    },
+    firstName: {
+      type: DataTypes.STRING(100),
+      allowNull: false,
+    },
+    lastName: {
+      type: DataTypes.STRING(100),
+      allowNull: true,
+    },
+    relation: {
+      type: DataTypes.STRING(50),
+      allowNull: false,
+    },
+    gender: {
+      type: DataTypes.ENUM('MALE', 'FEMALE', 'OTHER'),
+      allowNull: true,
+    },
+    age: {
+      type: DataTypes.INTEGER,
+      allowNull: true,
+    },
+    phone: {
+      type: DataTypes.STRING(30),
+      allowNull: true,
+    },
+    username: {
+      type: DataTypes.STRING(50),
+      allowNull: true,
+      unique: true,
+    },
+    passwordHash: {
+      type: DataTypes.STRING(255),
+      allowNull: true,
+    },
+    email: {
+      type: DataTypes.STRING(100),
+      allowNull: true,
+    },
+    isDeleted: {
+      type: DataTypes.BOOLEAN,
+      allowNull: false,
+      defaultValue: false,
+    },
+    createdBy: {
+      type: DataTypes.STRING(255),
+      allowNull: true,
+    },
+    updatedBy: {
+      type: DataTypes.STRING(255),
+      allowNull: true,
+    },
+    createdAt: {
+      type: DataTypes.DATE,
+      allowNull: false,
+      defaultValue: DataTypes.NOW,
+    },
+    updatedAt: {
+      type: DataTypes.DATE,
+      allowNull: false,
+      defaultValue: DataTypes.NOW,
+    },
+  })
 }
 
 export async function down({ context: queryInterface }: { context: QueryInterface }): Promise<void> {
+  await queryInterface.dropTable('resident_family_members')
+  await queryInterface.dropTable('residents')
   await queryInterface.dropTable('employee_managers')
   await queryInterface.dropTable('user_location_permissions')
   await queryInterface.dropTable('user_locations')

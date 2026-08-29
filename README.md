@@ -12,7 +12,7 @@ pnpm install
 pnpm dev
 ```
 
-Foundation routes are `GET /health`, `GET /api/v1`, `/api/v1/auth`, `/api/v1/examples`, `/api/v1/company`, `/api/v1/property`, `/api/v1/users`, `/api/v1/roles`, `/api/v1/resources`, and `/api/v1/permissions`.
+Foundation routes are `GET /health`, `GET /api/v1`, `/api/v1/auth`, `/api/v1/examples`, `/api/v1/company`, `/api/v1/property`, `/api/v1/users`, `/api/v1/roles`, `/api/v1/resources`, `/api/v1/permissions`, `/api/v1/departments`, and `/api/v1/residents`.
 
 ---
 
@@ -26,35 +26,36 @@ Every domain module (e.g., `company`, `property`, `user`, `role`, `resident`) mu
 
 ```text
 src/
-├── migrations/                        # Database schema migrations (Sequelize CLI)
-│   ├── 20260826153000-create-company-tables.ts
-│   ├── 20260826180000-create-property-tables.ts
-│   └── <timestamp>-create-<module>-table.ts
+├── migrations/                        # Master Database Migrations
+│   ├── 20260826120000-create-initial-schema.ts
+│   └── 20260827160000-seed-initial-data.ts
 ├── models/                            # Sequelize ORM TypeScript Models
 │   ├── company.model.ts
 │   ├── property.model.ts
-│   └── <module>.model.ts
+│   ├── resident.model.ts
+│   └── residentFamilyMember.model.ts
 ├── types/                             # Domain DTOs, Payload & Request Interfaces
 │   ├── company.ts
 │   ├── property.ts
-│   └── <module>.ts
+│   └── resident.ts
 ├── validations/                       # Zod Request Validation Schemas
 │   ├── company.validation.ts
 │   ├── property.validation.ts
-│   └── <module>.validation.ts
+│   └── resident.validation.ts
 ├── services/                          # Business Logic & Database Operations
 │   ├── company.service.ts
 │   ├── property.service.ts
-│   └── <module>.service.ts
+│   └── resident.service.ts
 └── web-app/                           # Web API Layer
     ├── controllers/                   # HTTP Request Controllers
     │   ├── company.controller.ts
     │   ├── property.controller.ts
-    │   └── <module>.controller.ts
+    │   ├── resident.controller.ts
+    │   └── residentAuth.controller.ts
     └── routes/                        # Express Route Definitions
         ├── company.routes.ts
         ├── property.routes.ts
-        ├── <module>.routes.ts
+        ├── resident.routes.ts
         └── index.ts                   # Central Router Registry
 ```
 
@@ -109,54 +110,13 @@ export const updateModuleSchema = createModuleSchema.partial().passthrough()
 
 Implement business logic, ORM queries, transactional operations, and data transformations.
 
-```typescript
-import { ModuleModel } from '@/models/module.model'
-import type { CreateModuleInput } from '@/types/module'
-
-export class ModuleService {
-  async getAll() {
-    return await ModuleModel.findAll({ where: { is_deleted: false } })
-  }
-
-  async create(data: CreateModuleInput) {
-    return await ModuleModel.create(data)
-  }
-}
-```
-
 #### Step 6: Create Controller (`src/web-app/controllers/<module>.controller.ts`)
 
 Extract parameters, delegate execution to the service layer, and return standardized JSON responses.
 
-```typescript
-import { Request, Response } from 'express'
-import { ModuleService } from '@/services/module.service'
-
-const service = new ModuleService()
-
-export const getModules = async (req: Request, res: Response) => {
-  const result = await service.getAll()
-  return res.status(200).json({ success: true, data: result })
-}
-```
-
 #### Step 7: Define Routes & Register Router (`src/web-app/routes/<module>.routes.ts`)
 
 Connect validation middleware, authentication guards, and controller handler methods. Then register the module router in `src/web-app/routes/index.ts`.
-
-```typescript
-import { Router } from 'express'
-import { getModules, createModule } from '../controllers/module.controller'
-import { validateRequest } from '@/middlewares/validateRequest'
-import { createModuleSchema } from '@/validations/module.validation'
-
-const router = Router()
-
-router.get('/', getModules)
-router.post('/', validateRequest(createModuleSchema), createModule)
-
-export default router
-```
 
 ---
 
@@ -170,26 +130,14 @@ When starting the server with `pnpm dev` / `npm run dev`, the server logs explic
 
 ---
 
-## Database Migrations & Model Policy
+## Database Migrations & Executed Scripts
 
 > **Mandatory Rule**: Every time a new domain model is created in `src/models`, a corresponding migration file **MUST** be created under `src/migrations/`.
-
-### Migration Running Console Notifications
-
-When running migrations (`pnpm migrate:up`), explicit console notifications are output:
-
-- `✅ Database connected successfully for migrations!`
-- `📌 Found X pending migration(s). Running migrations...`
-- `🚀 Migration running finished successfully!`
-- `✨ All migrations finished!`
 
 ### Migration Commands
 
 ```bash
-# Create a new migration for a model (kebab-case name)
-pnpm migrate:create -- create-my-new-table
-
-# Check migration status (executed vs pending)
+# Check migration status
 pnpm migrate:status
 
 # Run all pending migrations
@@ -199,12 +147,45 @@ pnpm migrate:up
 pnpm migrate:down
 ```
 
-### Migration History & Executed Scripts
+### Key Master Migrations
 
-- `src/migrations/20260826153000-create-company-tables.ts`: Creates `company` and `company_custom_fields` tables in MySQL with full schema definitions, foreign keys, comments, and soft-delete flags.
-- `src/migrations/20260826180000-create-property-tables.ts`: Creates `properties`, `property_blocks`, `property_floors`, and `property_units` tables establishing the 4-tier hierarchy.
-- `src/migrations/20260827120000-remove-upcoming-property-status.ts`: Updates property status options by removing upcoming status.
-- `src/migrations/20260827123000-drop-status-column-from-properties.ts`: Drops property `status` column from `properties` table (Property-level status removed completely; unit-level status `available`, `booked`, `sold` retained).
+- `src/migrations/20260826120000-create-initial-schema.ts`: Master initial schema migration file creating all module tables with section comments (`company`, `company_custom_fields`, `properties`, `property_blocks`, `property_floors`, `property_units`, `users`, `user_details`, `departments`, `job_categories`, `roles`, `resources`, `user_locations`, `employee_managers`, `residents`, `resident_family_members`).
+- `src/migrations/20260827160000-seed-initial-data.ts`: Master seed migration file populating system roles, resources, departments, job categories, and initial superadmin account.
+
+---
+
+## Resident & Mobile Auth Domain API
+
+The Resident module manages property occupants (Owners, Tenants, and Family Members) and provides dedicated mobile app authentication.
+
+### Database Architecture & Domain Rules
+
+```text
+property_units
+   └── residents (Primary Owner or Tenant)
+         └── resident_family_members (Family members living in flat)
+```
+
+1. **Owner (`OWNER`)**: Can be marked as `Physically Residing` (`isResiding = true`) or `Off-site Landlord` (`isResiding = false`).
+2. **Tenant (`TENANT`)**: Must be `Physically Residing` (`isResiding = true`). Tenants can ONLY be onboarded to flats that have a registered **Off-site Owner**.
+3. **Family Members (`resident_family_members`)**: Stored with relation, gender, age, contact info, and optional **individual mobile app login credentials** (`username`, `passwordHash`, `email`).
+
+### Mobile App Authentication Endpoint
+
+```bash
+POST /api/v1/residents/auth/login
+```
+
+- **Dual-Table Authentication**: Checks `residents` first; if not found, checks `resident_family_members`.
+- **Response**: Returns JWT token + flat/unit context (`unit_number`, `occupancyStatus`, `role`).
+
+### Resident Management Endpoints
+
+- `POST /api/v1/residents`: Onboard new resident (Owner or Tenant) with optional nested `familyMembers` array.
+- `GET /api/v1/residents`: Fetch all residents for a property location (supports `?locId=`, `?unitId=`, `?residentType=`, `?isResiding=`).
+- `GET /api/v1/residents/unit/:unitId`: Fetch unit occupants, residing occupant, and landlord.
+- `PUT /api/v1/residents/:id`: Update resident profile and sync family members.
+- `DELETE /api/v1/residents/:id`: Soft-delete resident and associated family members.
 
 ---
 
@@ -214,12 +195,12 @@ Company management is aligned with Rely-Assist fields and Sequelize TypeScript m
 
 ### Endpoints
 
-- `POST /api/v1/company`: Create company record with multipart file uploads (`document`, `accountant_signature`, `documents` for custom fields) and JSON `customFields`.
-- `GET /api/v1/company`: Fetch all active companies including associated custom fields.
-- `GET /api/v1/company/:id`: Fetch company by ID with custom fields.
-- `PUT /api/v1/company/:id`: Update company details, bank details, accountant signature, documents, and custom fields.
-- `DELETE /api/v1/company/:id`: Soft-delete company record.
-- `GET /api/v1/company/company-setup/status`: Check company setup status (`needsSetup`, `setupStep`, `message`, `hasCompany`, `hasLocation`).
+- `POST /api/v1/company`: Create company record with file uploads.
+- `GET /api/v1/company`: Fetch all active companies.
+- `GET /api/v1/company/:id`: Fetch company by ID.
+- `PUT /api/v1/company/:id`: Update company details.
+- `DELETE /api/v1/company/:id`: Soft-delete company.
+- `GET /api/v1/company/company-setup/status`: Check company setup status.
 
 ---
 
@@ -231,27 +212,19 @@ The Property module provides full CRUD and structural hierarchy management for r
 
 ```text
 Company (companyId)
-  └── Property (Project level with address & amenities)
-        └── PropertyBlock (Block / Tower e.g. "Tower A")
-              └── PropertyFloor (Floor e.g. "Ground Floor", "1st Floor")
-                    └── PropertyUnit (Individual unit e.g. "A-101", 2BHK, Area)
+  └── Property (Project level)
+        └── PropertyBlock (Block / Tower)
+              └── PropertyFloor (Floor)
+                    └── PropertyUnit (Individual unit)
 ```
-
-### Key Schema Updates
-
-- **Property Status Removal**: Property-level status (`status`) has been removed from models, controllers, and database schema via migration.
-- **Unit Hierarchy**: Supports customizable Unit Nomenclature Templates (e.g. `{{TowerPrefix}}-{{FloorNumber}}{{Position}}`), disabled template preview inputs, and unit-level statuses (`available`, `booked`, `sold`).
 
 ### Endpoints
 
-- `POST /api/v1/property`: Create property with optional full nested hierarchy (`blocks` → `floors` → `units`). Automatically resolves active company.
-- `GET /api/v1/property`: Fetch all active properties with full nested hierarchy (supports optional `?companyId=` query filter).
-- `GET /api/v1/property/:id`: Fetch single property by ID with complete block, floor, and unit tree.
-- `PUT /api/v1/property/:id`: Update property details and re-create active tower blocks, floors, and units.
+- `POST /api/v1/property`: Create property with optional full nested hierarchy (`blocks` → `floors` → `units`).
+- `GET /api/v1/property`: Fetch all active properties with hierarchy.
+- `GET /api/v1/property/:id`: Fetch single property by ID.
+- `PUT /api/v1/property/:id`: Update property details.
 - `DELETE /api/v1/property/:id`: Soft-delete property.
-- `POST /api/v1/property/:id/blocks`: Add a block/tower to an existing property.
-- `POST /api/v1/property/blocks/:blockId/floors`: Add a floor to an existing block.
-- `POST /api/v1/property/floors/:floorId/units`: Add a unit to an existing floor.
 
 ---
 

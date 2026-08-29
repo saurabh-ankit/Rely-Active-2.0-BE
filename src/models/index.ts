@@ -14,6 +14,7 @@ import { UserLocation } from './userLocation.model.js'
 import { Resource } from './resource.model.js'
 import { UserLocationPermission } from './userLocationPermission.model.js'
 import { EmployeeManager } from './employeeManager.model.js'
+import { Resident } from './resident.model.js'
 
 // ── Company associations ────────────────────────────────────────────────────
 Company.hasMany(CompanyCustomField, { foreignKey: 'companyId', as: 'customFields' })
@@ -31,6 +32,18 @@ PropertyFloor.belongsTo(PropertyBlock, { foreignKey: 'blockId', as: 'block' })
 
 PropertyFloor.hasMany(PropertyUnit, { foreignKey: 'floorId', as: 'units' })
 PropertyUnit.belongsTo(PropertyFloor, { foreignKey: 'floorId', as: 'floor' })
+
+import { ResidentFamilyMember } from './residentFamilyMember.model.js'
+
+// ── Resident associations ───────────────────────────────────────────────────
+PropertyUnit.hasMany(Resident, { foreignKey: 'unitId', as: 'residents' })
+Resident.belongsTo(PropertyUnit, { foreignKey: 'unitId', as: 'unit' })
+
+Property.hasMany(Resident, { foreignKey: 'locId', as: 'residents' })
+Resident.belongsTo(Property, { foreignKey: 'locId', as: 'property' })
+
+Resident.hasMany(ResidentFamilyMember, { foreignKey: 'residentId', as: 'familyMembers' })
+ResidentFamilyMember.belongsTo(Resident, { foreignKey: 'residentId', as: 'resident' })
 
 // ── User & Detail ───────────────────────────────────────────────────────────
 User.hasOne(UserDetail, { foreignKey: 'userId', as: 'profile' })
@@ -101,4 +114,6 @@ export {
   Resource,
   UserLocationPermission,
   EmployeeManager,
+  Resident,
+  ResidentFamilyMember,
 }

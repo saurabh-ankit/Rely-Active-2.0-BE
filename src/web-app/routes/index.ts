@@ -7,6 +7,7 @@ import roleRouter from './role.routes.js'
 import permissionRouter from './permission.routes.js'
 import departmentRouter from './department.routes.js'
 import resourceRouter from './resource.routes.js'
+import residentRouter from './resident.routes.js'
 
 export const apiRouter = Router()
 
@@ -22,3 +23,4 @@ apiRouter.use('/resources', resourceRouter)
 apiRouter.use('/departments', departmentRouter)
 apiRouter.use('/company', companyRouter)
 apiRouter.use('/property', propertyRouter)
+apiRouter.use('/residents', residentRouter)

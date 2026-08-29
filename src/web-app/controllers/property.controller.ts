@@ -6,11 +6,12 @@ import {
   PropertyBlock,
   PropertyFloor,
   PropertyUnit,
+  Resident,
   Role,
   User,
   UserLocation,
 } from '../../models/index.js'
-import type { UnitAreaUnit, UnitFacing, UnitStatus, UnitType } from '../../models/propertyUnit.model.js'
+import type { UnitAreaUnit, UnitFacing, UnitStatus, UnitType } from '../../enums/propertyUnit.enum.js'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -33,6 +34,14 @@ const propertyFullInclude = [
             as: 'units',
             where: { isDeleted: false },
             required: false,
+            include: [
+              {
+                model: Resident,
+                as: 'residents',
+                where: { isDeleted: false },
+                required: false,
+              },
+            ],
           },
         ],
       },
