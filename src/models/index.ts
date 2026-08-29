@@ -10,10 +10,10 @@ import { UserDetail } from './userDetail.model.js'
 import { Department } from './department.model.js'
 import { JobCategory } from './jobCategory.model.js'
 import { Role } from './role.model.js'
-import { UserRole } from './userRole.model.js'
 import { UserLocation } from './userLocation.model.js'
 import { Resource } from './resource.model.js'
 import { UserLocationPermission } from './userLocationPermission.model.js'
+import { EmployeeManager } from './employeeManager.model.js'
 
 // ── Company associations ────────────────────────────────────────────────────
 Company.hasMany(CompanyCustomField, { foreignKey: 'companyId', as: 'customFields' })
@@ -40,22 +40,27 @@ UserDetail.belongsTo(User, { foreignKey: 'userId', as: 'user' })
 Department.hasMany(JobCategory, { foreignKey: 'departmentId', as: 'jobCategories' })
 JobCategory.belongsTo(Department, { foreignKey: 'departmentId', as: 'department' })
 
-// ── User <-> UserRole <-> Role ──────────────────────────────────────────────
-User.hasMany(UserRole, { foreignKey: 'userId', as: 'userRoles' })
-UserRole.belongsTo(User, { foreignKey: 'userId', as: 'user' })
-
-Role.hasMany(UserRole, { foreignKey: 'roleId', as: 'userRoles' })
-UserRole.belongsTo(Role, { foreignKey: 'roleId', as: 'role' })
-
-User.belongsToMany(Role, { through: UserRole, foreignKey: 'userId', otherKey: 'roleId', as: 'roles' })
-Role.belongsToMany(User, { through: UserRole, foreignKey: 'roleId', otherKey: 'userId', as: 'users' })
-
-// ── User <-> UserLocation <-> Property ──────────────────────────────────────
+// ── User <-> UserLocation <-> Property / Role ───────────────────────────────
 User.hasMany(UserLocation, { foreignKey: 'userId', as: 'userLocations' })
 UserLocation.belongsTo(User, { foreignKey: 'userId', as: 'user' })
 
 Property.hasMany(UserLocation, { foreignKey: 'locId', as: 'userLocations' })
 UserLocation.belongsTo(Property, { foreignKey: 'locId', as: 'property' })
+
+Role.hasMany(UserLocation, { foreignKey: 'roleId', as: 'userLocations' })
+UserLocation.belongsTo(Role, { foreignKey: 'roleId', as: 'role' })
+
+Company.hasMany(UserLocation, { foreignKey: 'companyId', as: 'userLocations' })
+UserLocation.belongsTo(Company, { foreignKey: 'companyId', as: 'company' })
+
+Department.hasMany(UserLocation, { foreignKey: 'departmentId', as: 'userLocations' })
+UserLocation.belongsTo(Department, { foreignKey: 'departmentId', as: 'department' })
+
+JobCategory.hasMany(UserLocation, { foreignKey: 'jobCategoryId', as: 'userLocations' })
+UserLocation.belongsTo(JobCategory, { foreignKey: 'jobCategoryId', as: 'jobCategory' })
+
+User.belongsToMany(Role, { through: UserLocation, foreignKey: 'userId', otherKey: 'roleId', as: 'roles' })
+Role.belongsToMany(User, { through: UserLocation, foreignKey: 'roleId', otherKey: 'userId', as: 'users' })
 
 User.belongsToMany(Property, {
   through: UserLocation,
@@ -69,6 +74,12 @@ Property.belongsToMany(User, {
   otherKey: 'userId',
   as: 'assignedUsers',
 })
+
+// ── EmployeeManager associations ───────────────────────────────────────────
+User.hasMany(EmployeeManager, { foreignKey: 'userId', as: 'employeeManagers' })
+EmployeeManager.belongsTo(User, { foreignKey: 'userId', as: 'employee' })
+EmployeeManager.belongsTo(User, { foreignKey: 'managerId', as: 'manager' })
+EmployeeManager.belongsTo(Property, { foreignKey: 'locId', as: 'property' })
 
 export {
   BaseModel,
@@ -86,8 +97,8 @@ export {
   Department,
   JobCategory,
   Role,
-  UserRole,
   UserLocation,
   Resource,
   UserLocationPermission,
+  EmployeeManager,
 }

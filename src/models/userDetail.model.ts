@@ -9,8 +9,8 @@ export interface UserDetailAttributes extends BaseAttributes {
   phone?: string | null
   gender?: string | null
   dateOfBirth?: string | null
+  dateOfJoining?: string | null
   photoUrl?: string | null
-  designation?: string | null
   employeeCode?: string | null
   emergencyContact?: string | null
   bloodGroup?: string | null
@@ -26,8 +26,8 @@ export type UserDetailCreationAttributes = Optional<
   | 'phone'
   | 'gender'
   | 'dateOfBirth'
+  | 'dateOfJoining'
   | 'photoUrl'
-  | 'designation'
   | 'employeeCode'
   | 'emergencyContact'
   | 'bloodGroup'
@@ -50,8 +50,8 @@ export class UserDetail
   declare phone: string | null
   declare gender: string | null
   declare dateOfBirth: string | null
+  declare dateOfJoining: string | null
   declare photoUrl: string | null
-  declare designation: string | null
   declare employeeCode: string | null
   declare emergencyContact: string | null
   declare bloodGroup: string | null
@@ -88,12 +88,12 @@ UserDetail.init(
       type: DataTypes.DATEONLY,
       allowNull: true,
     },
-    photoUrl: {
-      type: DataTypes.STRING(500),
+    dateOfJoining: {
+      type: DataTypes.DATEONLY,
       allowNull: true,
     },
-    designation: {
-      type: DataTypes.STRING(150),
+    photoUrl: {
+      type: DataTypes.STRING(500),
       allowNull: true,
     },
     employeeCode: {

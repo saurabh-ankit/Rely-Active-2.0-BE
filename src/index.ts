@@ -21,7 +21,7 @@ async function startServer() {
     await sequelize.authenticate()
     console.log('✅ Database connected successfully!')
     logger.info('Database connection established successfully')
-    await sequelize.sync({ alter: true })
+    await sequelize.sync()
     console.log('✅ Database models synchronized successfully!')
     logger.info('Database models synchronized successfully')
   } catch (error) {

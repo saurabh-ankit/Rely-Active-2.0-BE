@@ -10,6 +10,8 @@ import {
 } from '../controllers/user.controller.js'
 import { authenticate } from '../../middlewares/authenticate.js'
 import { authorize } from '../../middlewares/authorize.js'
+import { validateBody } from '../../middlewares/validate/index.js'
+import { assignUserRoleSchema, createUserSchema, updateUserSchema } from '../../validations/user.validation.js'
 
 const router = Router()
 
@@ -20,9 +22,9 @@ router.get('/user-properties', getUserAccessibleProperties)
 router.get('/me/properties', getUserAccessibleProperties)
 router.get('/', authorize('USER_VIEW'), getAllUsers)
 router.get('/:id', authorize('USER_VIEW'), getUserById)
-router.post('/', authorize('USER_CREATE'), createUser)
-router.put('/:id', authorize('USER_UPDATE'), updateUser)
-router.post('/:id/roles', authorize('USER_ASSIGN_ROLE'), assignUserRole)
+router.post('/', authorize('USER_CREATE'), validateBody(createUserSchema), createUser)
+router.put('/:id', authorize('USER_UPDATE'), validateBody(updateUserSchema), updateUser)
+router.post('/:id/roles', authorize('USER_ASSIGN_ROLE'), validateBody(assignUserRoleSchema), assignUserRole)
 router.put('/:id/properties', authorize('USER_UPDATE'), updateUserProperties)
 
 export default router

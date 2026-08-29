@@ -6,32 +6,19 @@ export interface ResourceAttributes extends BaseAttributes {
   key: string
   name: string
   description?: string | null
-  type?: string | null
-  path?: string | null
   isActive?: boolean
   isDeleted?: boolean
 }
 
 export type ResourceCreationAttributes = Optional<
   ResourceAttributes,
-  | 'id'
-  | 'description'
-  | 'type'
-  | 'path'
-  | 'isActive'
-  | 'isDeleted'
-  | 'createdBy'
-  | 'updatedBy'
-  | 'createdAt'
-  | 'updatedAt'
+  'id' | 'description' | 'isActive' | 'isDeleted' | 'createdBy' | 'updatedBy' | 'createdAt' | 'updatedAt'
 >
 
 export class Resource extends BaseModel<ResourceAttributes, ResourceCreationAttributes> implements ResourceAttributes {
   declare key: string
   declare name: string
   declare description: string | null
-  declare type: string | null
-  declare path: string | null
   declare isActive: boolean
   declare isDeleted: boolean
 }
@@ -49,14 +36,6 @@ Resource.init(
       allowNull: false,
     },
     description: {
-      type: DataTypes.STRING(255),
-      allowNull: true,
-    },
-    type: {
-      type: DataTypes.STRING(255),
-      allowNull: true,
-    },
-    path: {
       type: DataTypes.STRING(255),
       allowNull: true,
     },

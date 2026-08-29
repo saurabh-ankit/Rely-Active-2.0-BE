@@ -113,8 +113,6 @@ export async function up({ context: queryInterface }: { context: QueryInterface 
       key: 'FNB',
       name: 'Food',
       description: 'Food & Beverage dining and orders',
-      type: 'MODULE',
-      path: '/admin/fnb-history',
       isActive: true,
       isDeleted: false,
       createdAt: now,
@@ -125,8 +123,6 @@ export async function up({ context: queryInterface }: { context: QueryInterface 
       key: 'RESIDENT',
       name: 'Resident',
       description: 'Resident management & directory',
-      type: 'MODULE',
-      path: '/admin/residents',
       isActive: true,
       isDeleted: false,
       createdAt: now,
@@ -137,8 +133,6 @@ export async function up({ context: queryInterface }: { context: QueryInterface 
       key: 'EMPLOYEE',
       name: 'Employee',
       description: 'Employee directory & staff profiles',
-      type: 'MODULE',
-      path: '/admin/employees',
       isActive: true,
       isDeleted: false,
       createdAt: now,
@@ -149,8 +143,6 @@ export async function up({ context: queryInterface }: { context: QueryInterface 
       key: 'ROSTER',
       name: 'Shift & Roster',
       description: 'Shift & roster schedules',
-      type: 'MODULE',
-      path: '/admin/shift-roster-management',
       isActive: true,
       isDeleted: false,
       createdAt: now,
@@ -161,8 +153,6 @@ export async function up({ context: queryInterface }: { context: QueryInterface 
       key: 'TICKETS',
       name: 'Ticket Management',
       description: 'Repair & Maintenance, Concierge, Housekeeping, Food Tickets',
-      type: 'MODULE',
-      path: '/admin/tickets',
       isActive: true,
       isDeleted: false,
       createdAt: now,
@@ -173,8 +163,6 @@ export async function up({ context: queryInterface }: { context: QueryInterface 
       key: 'GNS',
       name: 'Gate & Security',
       description: 'Gate passes, visitor check-ins & security scans',
-      type: 'MODULE',
-      path: '/admin/visitor-history',
       isActive: true,
       isDeleted: false,
       createdAt: now,
@@ -185,8 +173,6 @@ export async function up({ context: queryInterface }: { context: QueryInterface 
       key: 'INVENTORY',
       name: 'Inventory',
       description: 'Inventory & stock management',
-      type: 'MODULE',
-      path: '/admin/inventory/home',
       isActive: true,
       isDeleted: false,
       createdAt: now,
@@ -197,8 +183,6 @@ export async function up({ context: queryInterface }: { context: QueryInterface 
       key: 'ASSET',
       name: 'Asset Management',
       description: 'Asset tracking & maintenance',
-      type: 'MODULE',
-      path: '/admin/asset-management',
       isActive: true,
       isDeleted: false,
       createdAt: now,
@@ -209,8 +193,6 @@ export async function up({ context: queryInterface }: { context: QueryInterface 
       key: 'MEDICAL',
       name: 'Medical',
       description: 'Medical dashboard, care tasks & records',
-      type: 'MODULE',
-      path: '/admin/medical',
       isActive: true,
       isDeleted: false,
       createdAt: now,
@@ -221,8 +203,6 @@ export async function up({ context: queryInterface }: { context: QueryInterface 
       key: 'BILLING',
       name: 'Billing',
       description: 'Invoices, payments & ledgers',
-      type: 'MODULE',
-      path: '/admin/billing-management',
       isActive: true,
       isDeleted: false,
       createdAt: now,
@@ -233,8 +213,6 @@ export async function up({ context: queryInterface }: { context: QueryInterface 
       key: 'EVENTS',
       name: 'Events',
       description: 'Community events & activities',
-      type: 'MODULE',
-      path: '/admin/events',
       isActive: true,
       isDeleted: false,
       createdAt: now,
@@ -347,31 +325,83 @@ export async function up({ context: queryInterface }: { context: QueryInterface 
 
   // ── 4. Job Categories ──────────────────────────────────────────────────────
   const jobCategoriesData = [
-    { departmentCode: 'RNM', code: 'ELEC', name: 'Electrician', description: 'Electrical maintenance & repairs' },
-    { departmentCode: 'RNM', code: 'PLUM', name: 'Plumber', description: 'Plumbing maintenance & repairs' },
+    // Housekeeping (HK)
+    { departmentCode: 'HK', code: 'HK_OPS', name: 'Housekeeping Operations', description: 'Housekeeping Operations' },
+    { departmentCode: 'HK', code: 'HK_CLEAN', name: 'Cleaning Services', description: 'Cleaning Services' },
+    { departmentCode: 'HK', code: 'HK_LAUNDRY', name: 'Laundry Services', description: 'Laundry Services' },
+    { departmentCode: 'HK', code: 'HK_WASTE', name: 'Waste Management', description: 'Waste Management' },
+    { departmentCode: 'HK', code: 'HK_ATTENDANT', name: 'Room Attendant', description: 'Room Attendant' },
+
+    // Attendance & Workforce (ATT)
+    { departmentCode: 'ATT', code: 'ATT_MGMT', name: 'Attendance Management', description: 'Attendance Management' },
+    { departmentCode: 'ATT', code: 'ATT_WORKFORCE', name: 'Workforce Planning', description: 'Workforce Planning' },
+    { departmentCode: 'ATT', code: 'ATT_HROPS', name: 'HR Operations', description: 'HR Operations' },
+    { departmentCode: 'ATT', code: 'ATT_PAYROLL', name: 'Payroll & Timekeeping', description: 'Payroll & Timekeeping' },
+
+    // Nursing (NUR)
+    { departmentCode: 'NUR', code: 'NUR_OPS', name: 'Nursing Operations', description: 'Nursing Operations' },
+    { departmentCode: 'NUR', code: 'NUR_CLINICAL', name: 'Clinical Nursing', description: 'Clinical Nursing' },
+    { departmentCode: 'NUR', code: 'NUR_PATIENT_CARE', name: 'Patient Care', description: 'Patient Care' },
+    { departmentCode: 'NUR', code: 'NUR_ADMIN', name: 'Nursing Administration', description: 'Nursing Administration' },
+
+    // Repair & Maintenance (RNM)
+    { departmentCode: 'RNM', code: 'RNM_ELEC', name: 'Electrical', description: 'Electrical maintenance & repairs' },
+    { departmentCode: 'RNM', code: 'RNM_PLUM', name: 'Plumbing', description: 'Plumbing maintenance & repairs' },
+    { departmentCode: 'RNM', code: 'RNM_HVAC', name: 'HVAC', description: 'HVAC Technician & cooling' },
     {
       departmentCode: 'RNM',
-      code: 'HVAC',
-      name: 'HVAC Technician',
-      description: 'Air conditioning & ventilation technician',
+      code: 'RNM_CIVIL',
+      name: 'Civil Maintenance',
+      description: 'Civil & structural maintenance',
     },
     {
-      departmentCode: 'CON',
-      code: 'FDESK',
-      name: 'Front Desk Executive',
-      description: 'Concierge reception & desk management',
+      departmentCode: 'RNM',
+      code: 'RNM_BIOMED',
+      name: 'Biomedical Equipment',
+      description: 'Biomedical equipment maintenance',
     },
-    { departmentCode: 'FNB', code: 'CHEF', name: 'Head Chef', description: 'Kitchen culinary lead' },
-    { departmentCode: 'FNB', code: 'WAIT', name: 'F&B Steward', description: 'Dining service steward' },
-    { departmentCode: 'SEC', code: 'GUARD', name: 'Security Guard', description: 'Gate & perimeter security guard' },
-    { departmentCode: 'HK', code: 'CLEAN', name: 'Housekeeper', description: 'Facility cleaning staff' },
-    { departmentCode: 'NUR', code: 'SNURSE', name: 'Staff Nurse', description: 'Registered nursing staff' },
     {
-      departmentCode: 'DOC',
-      code: 'PHYS',
-      name: 'General Physician',
-      description: 'Medical doctor & healthcare practitioner',
+      departmentCode: 'RNM',
+      code: 'RNM_GEN',
+      name: 'General Maintenance',
+      description: 'General facility maintenance',
     },
+
+    // Food & Beverage (FNB)
+    { departmentCode: 'FNB', code: 'FNB_KITCHEN', name: 'Kitchen Operations', description: 'Kitchen Operations' },
+    { departmentCode: 'FNB', code: 'FNB_PROD', name: 'Food Production', description: 'Food Production' },
+    { departmentCode: 'FNB', code: 'FNB_SERVICE', name: 'Food Service', description: 'Food Service' },
+    { departmentCode: 'FNB', code: 'FNB_CATERING', name: 'Catering', description: 'Catering' },
+    { departmentCode: 'FNB', code: 'FNB_STEWARD', name: 'Stewarding', description: 'Stewarding' },
+    { departmentCode: 'FNB', code: 'FNB_NUTRITION', name: 'Nutrition & Dietary', description: 'Nutrition & Dietary' },
+
+    // Gate & Security (SEC)
+    { departmentCode: 'SEC', code: 'SEC_OPS', name: 'Security Operations', description: 'Security Operations' },
+    { departmentCode: 'SEC', code: 'SEC_ACCESS', name: 'Access Control', description: 'Access Control' },
+    { departmentCode: 'SEC', code: 'SEC_SURV', name: 'Surveillance', description: 'Surveillance' },
+    { departmentCode: 'SEC', code: 'SEC_VISITOR', name: 'Visitor Management', description: 'Visitor Management' },
+    { departmentCode: 'SEC', code: 'SEC_EMERGENCY', name: 'Emergency & Safety', description: 'Emergency & Safety' },
+
+    // Concierge (CON)
+    { departmentCode: 'CON', code: 'CON_FDESK', name: 'Front Desk', description: 'Front Desk' },
+    { departmentCode: 'CON', code: 'CON_GUEST', name: 'Guest Services', description: 'Guest Services' },
+    { departmentCode: 'CON', code: 'CON_RESIDENT', name: 'Resident Services', description: 'Resident Services' },
+    { departmentCode: 'CON', code: 'CON_TRANS', name: 'Transportation', description: 'Transportation' },
+    { departmentCode: 'CON', code: 'CON_SUPPORT', name: 'Customer Support', description: 'Customer Support' },
+
+    // Events (EVT)
+    { departmentCode: 'EVT', code: 'EVT_PLANNING', name: 'Event Planning', description: 'Event Planning' },
+    { departmentCode: 'EVT', code: 'EVT_OPS', name: 'Event Operations', description: 'Event Operations' },
+    { departmentCode: 'EVT', code: 'EVT_COMMUNITY', name: 'Community Activities', description: 'Community Activities' },
+    { departmentCode: 'EVT', code: 'EVT_REC', name: 'Recreation', description: 'Recreation' },
+    { departmentCode: 'EVT', code: 'EVT_ENTERTAIN', name: 'Entertainment', description: 'Entertainment' },
+
+    // Medical / Doctor (DOC)
+    { departmentCode: 'DOC', code: 'DOC_GEN', name: 'General Medicine', description: 'General Medicine' },
+    { departmentCode: 'DOC', code: 'DOC_SPEC', name: 'Specialist Medicine', description: 'Specialist Medicine' },
+    { departmentCode: 'DOC', code: 'DOC_CLINICAL', name: 'Clinical Services', description: 'Clinical Services' },
+    { departmentCode: 'DOC', code: 'DOC_DIAG', name: 'Diagnostics', description: 'Diagnostics' },
+    { departmentCode: 'DOC', code: 'DOC_EMERGENCY', name: 'Emergency Care', description: 'Emergency Care' },
   ]
 
   for (const jc of jobCategoriesData) {
@@ -429,8 +459,8 @@ export async function up({ context: queryInterface }: { context: QueryInterface 
         firstName: 'Super',
         lastName: 'Admin',
         phone: '9999999999',
-        designation: 'Platform Administrator',
-        employeeCode: 'SA-001',
+        dateOfJoining: '2026-08-28',
+        employeeCode: 'EMP-20260828-0001',
         createdAt: now,
         updatedAt: now,
       },
@@ -441,18 +471,21 @@ export async function up({ context: queryInterface }: { context: QueryInterface 
   const superAdminRoleId = existingRole ? String(existingRole) : null
 
   if (superAdminRoleId) {
-    const userRoleExisting = await queryInterface.rawSelect(
-      'user_roles',
+    const defaultLocId = '00000000-0000-0000-0000-000000000000'
+    const userLocExisting = await queryInterface.rawSelect(
+      'user_locations',
       { where: { userId: superAdminId, roleId: superAdminRoleId } },
       ['id'],
     )
-    if (!userRoleExisting) {
-      await queryInterface.bulkInsert('user_roles', [
+    if (!userLocExisting) {
+      await queryInterface.bulkInsert('user_locations', [
         {
           id: randomUUID(),
           userId: superAdminId,
+          locId: defaultLocId,
           roleId: superAdminRoleId,
           isActive: true,
+          isDeleted: false,
           createdAt: now,
           updatedAt: now,
         },
@@ -467,7 +500,7 @@ export async function down({ context: queryInterface }: { context: QueryInterfac
   const superAdminId = existingUser ? String(existingUser) : null
 
   if (superAdminId) {
-    await queryInterface.bulkDelete('user_roles', { userId: superAdminId })
+    await queryInterface.bulkDelete('user_locations', { userId: superAdminId })
     await queryInterface.bulkDelete('user_details', { userId: superAdminId })
     await queryInterface.bulkDelete('users', { id: superAdminId })
   }

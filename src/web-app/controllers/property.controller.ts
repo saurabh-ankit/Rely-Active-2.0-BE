@@ -1,5 +1,15 @@
 import type { NextFunction, Request, Response } from 'express'
-import { Company, Property, PropertyBlock, PropertyFloor, PropertyUnit } from '../../models/index.js'
+import type { AuthenticatedRequest } from '../../middlewares/authenticate.js'
+import {
+  Company,
+  Property,
+  PropertyBlock,
+  PropertyFloor,
+  PropertyUnit,
+  Role,
+  User,
+  UserLocation,
+} from '../../models/index.js'
 import type { UnitAreaUnit, UnitFacing, UnitStatus, UnitType } from '../../models/propertyUnit.model.js'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -149,6 +159,8 @@ export const createProperty = async (req: Request, res: Response, next: NextFunc
       }
     }
 
+    const operatingUserId = (req as AuthenticatedRequest).user?.id || null
+
     // ── Create top-level property ───────────────────────────────────────────
     const property = await Property.create({
       companyId: finalCompanyId,
@@ -166,7 +178,51 @@ export const createProperty = async (req: Request, res: Response, next: NextFunc
       launch_date: launch_date || null,
       isActive: true,
       isDeleted: false,
+      createdBy: operatingUserId,
+      updatedBy: operatingUserId,
     })
+
+    // ── Auto-assign SuperAdmins to the new property ────────────────────────
+    const superAdminRole = await Role.findOne({ where: { code: 'SUPER_ADMIN' } })
+    const userLocationInclude: {
+      model: typeof UserLocation
+      as: string
+      required: boolean
+      where?: { roleId: string }
+    } = {
+      model: UserLocation,
+      as: 'userLocations',
+      required: false,
+    }
+    if (superAdminRole) {
+      userLocationInclude.where = { roleId: superAdminRole.id }
+    }
+
+    const superAdminUsers = (await User.findAll({
+      where: { isDeleted: false },
+      include: [userLocationInclude],
+    })) as Array<User & { userLocations?: UserLocation[] }>
+    const superAdminUserIds = superAdminUsers
+      .filter((u) => u.username === 'superadmin' || u.userLocations?.some((ul) => ul.roleId === superAdminRole?.id))
+      .map((u) => u.id)
+
+    if (operatingUserId && !superAdminUserIds.includes(operatingUserId)) {
+      superAdminUserIds.push(operatingUserId)
+    }
+
+    for (const sUserId of superAdminUserIds) {
+      const exists = await UserLocation.findOne({ where: { userId: sUserId, locId: property.id } })
+      if (!exists) {
+        await UserLocation.create({
+          userId: sUserId,
+          locId: property.id,
+          roleId: superAdminRole?.id || null,
+          companyId: property.companyId || null,
+          createdBy: operatingUserId,
+          updatedBy: operatingUserId,
+        })
+      }
+    }
 
     // ── Optionally create nested blocks → floors → units ───────────────────
     if (blocks && Array.isArray(blocks)) {
@@ -183,6 +239,8 @@ export const createProperty = async (req: Request, res: Response, next: NextFunc
           description: blockInput.description || null,
           isActive: true,
           isDeleted: false,
+          createdBy: operatingUserId,
+          updatedBy: operatingUserId,
         })
 
         const resolvedFloors = resolveBlockFloorsAndUnits(blockInput)
@@ -196,6 +254,8 @@ export const createProperty = async (req: Request, res: Response, next: NextFunc
             description: floorInput.description || null,
             isActive: true,
             isDeleted: false,
+            createdBy: operatingUserId,
+            updatedBy: operatingUserId,
           })
 
           if (floorInput.units && Array.isArray(floorInput.units)) {
@@ -218,6 +278,8 @@ export const createProperty = async (req: Request, res: Response, next: NextFunc
                 status: (unitInput.status || 'available') as UnitStatus,
                 isActive: true,
                 isDeleted: false,
+                createdBy: operatingUserId,
+                updatedBy: operatingUserId,
               })
             }
           }
@@ -307,13 +369,17 @@ export const updateProperty = async (req: Request, res: Response, next: NextFunc
       return res.status(404).json({ success: false, message: 'Property not found' })
     }
 
+    const operatingUserId = (req as AuthenticatedRequest).user?.id || null
     const { blocks: blocksInput, ...propertyFields } = req.body
 
-    await existing.update(propertyFields)
+    await existing.update({ ...propertyFields, updatedBy: operatingUserId })
 
     if (blocksInput && Array.isArray(blocksInput)) {
       // Deactivate existing blocks for this property
-      await PropertyBlock.update({ isDeleted: true, isActive: false }, { where: { propertyId: id, isDeleted: false } })
+      await PropertyBlock.update(
+        { isDeleted: true, isActive: false, updatedBy: operatingUserId },
+        { where: { propertyId: id, isDeleted: false } },
+      )
 
       for (const blockInput of blocksInput) {
         const block = await PropertyBlock.create({
@@ -328,6 +394,8 @@ export const updateProperty = async (req: Request, res: Response, next: NextFunc
           description: blockInput.description || null,
           isActive: true,
           isDeleted: false,
+          createdBy: operatingUserId,
+          updatedBy: operatingUserId,
         })
 
         const resolvedFloors = resolveBlockFloorsAndUnits(blockInput)
@@ -341,6 +409,8 @@ export const updateProperty = async (req: Request, res: Response, next: NextFunc
             description: floorInput.description || null,
             isActive: true,
             isDeleted: false,
+            createdBy: operatingUserId,
+            updatedBy: operatingUserId,
           })
 
           if (floorInput.units && Array.isArray(floorInput.units)) {
@@ -363,6 +433,8 @@ export const updateProperty = async (req: Request, res: Response, next: NextFunc
                 status: (unitInput.status || 'available') as UnitStatus,
                 isActive: true,
                 isDeleted: false,
+                createdBy: operatingUserId,
+                updatedBy: operatingUserId,
               })
             }
           }
@@ -396,7 +468,8 @@ export const deleteProperty = async (req: Request, res: Response, next: NextFunc
       return res.status(404).json({ success: false, message: 'Property not found' })
     }
 
-    await property.update({ isDeleted: true, isActive: false })
+    const operatingUserId = (req as AuthenticatedRequest).user?.id || null
+    await property.update({ isDeleted: true, isActive: false, updatedBy: operatingUserId })
 
     return res.status(200).json({ success: true, message: 'Property deleted successfully' })
   } catch (error) {
@@ -422,6 +495,7 @@ export const addBlock = async (req: Request, res: Response, next: NextFunction) 
       return res.status(404).json({ success: false, message: 'Property not found' })
     }
 
+    const operatingUserId = (req as AuthenticatedRequest).user?.id || null
     const { block_name, total_floors, description, floors } = req.body
     if (!block_name) {
       return res.status(400).json({ success: false, message: 'block_name is required' })
@@ -434,6 +508,8 @@ export const addBlock = async (req: Request, res: Response, next: NextFunction) 
       description: description || null,
       isActive: true,
       isDeleted: false,
+      createdBy: operatingUserId,
+      updatedBy: operatingUserId,
     })
 
     // Optionally seed floors immediately
@@ -446,6 +522,8 @@ export const addBlock = async (req: Request, res: Response, next: NextFunction) 
           description: floorInput.description || null,
           isActive: true,
           isDeleted: false,
+          createdBy: operatingUserId,
+          updatedBy: operatingUserId,
         })
 
         if (floorInput.units && Array.isArray(floorInput.units)) {
@@ -464,6 +542,8 @@ export const addBlock = async (req: Request, res: Response, next: NextFunction) 
               status: unitInput.status || 'available',
               isActive: true,
               isDeleted: false,
+              createdBy: operatingUserId,
+              updatedBy: operatingUserId,
             })
           }
         }
@@ -517,6 +597,7 @@ export const addFloor = async (req: Request, res: Response, next: NextFunction) 
       return res.status(404).json({ success: false, message: 'Block not found' })
     }
 
+    const operatingUserId = (req as AuthenticatedRequest).user?.id || null
     const { floor_number, floor_name, description, units } = req.body
     if (floor_number === undefined || floor_number === null) {
       return res.status(400).json({ success: false, message: 'floor_number is required' })
@@ -529,6 +610,8 @@ export const addFloor = async (req: Request, res: Response, next: NextFunction) 
       description: description || null,
       isActive: true,
       isDeleted: false,
+      createdBy: operatingUserId,
+      updatedBy: operatingUserId,
     })
 
     // Optionally seed units immediately
@@ -548,6 +631,8 @@ export const addFloor = async (req: Request, res: Response, next: NextFunction) 
           status: unitInput.status || 'available',
           isActive: true,
           isDeleted: false,
+          createdBy: operatingUserId,
+          updatedBy: operatingUserId,
         })
       }
     }
@@ -592,6 +677,7 @@ export const addUnit = async (req: Request, res: Response, next: NextFunction) =
       return res.status(404).json({ success: false, message: 'Floor not found' })
     }
 
+    const operatingUserId = (req as AuthenticatedRequest).user?.id || null
     const {
       unit_number,
       unit_type,
@@ -623,6 +709,8 @@ export const addUnit = async (req: Request, res: Response, next: NextFunction) =
       status: status || 'available',
       isActive: true,
       isDeleted: false,
+      createdBy: operatingUserId,
+      updatedBy: operatingUserId,
     })
 
     return res.status(201).json({

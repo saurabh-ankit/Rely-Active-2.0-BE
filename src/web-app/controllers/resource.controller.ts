@@ -1,4 +1,5 @@
 import type { Request, Response } from 'express'
+import type { AuthenticatedRequest } from '../../middlewares/authenticate.js'
 import { Resource, UserLocationPermission } from '../../models/index.js'
 
 export async function getAllResources(_req: Request, res: Response): Promise<void> {
@@ -57,6 +58,8 @@ export async function saveUserLocationPermissions(req: Request, res: Response): 
       return
     }
 
+    const operatingUserId = (req as AuthenticatedRequest).user?.id || null
+
     // Delete existing permissions for this user and location
     await UserLocationPermission.destroy({
       where: { userId, locationId },
@@ -71,6 +74,8 @@ export async function saveUserLocationPermissions(req: Request, res: Response): 
         permission: p.permission,
         isActive: true,
         isDeleted: false,
+        createdBy: operatingUserId,
+        updatedBy: operatingUserId,
       })
     }
 

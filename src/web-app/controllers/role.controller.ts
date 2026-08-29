@@ -1,4 +1,5 @@
 import type { Request, Response } from 'express'
+import type { AuthenticatedRequest } from '../../middlewares/authenticate.js'
 import { Role } from '../../models/index.js'
 
 export async function getAllRoles(_req: Request, res: Response): Promise<void> {
@@ -28,6 +29,7 @@ export async function createRole(req: Request, res: Response): Promise<void> {
     }
 
     const formattedCode = code.toUpperCase().trim()
+    const operatingUserId = (req as AuthenticatedRequest).user?.id || null
 
     const role = await Role.create({
       name: name.trim(),
@@ -35,6 +37,8 @@ export async function createRole(req: Request, res: Response): Promise<void> {
       description: description || null,
       isSystem: false,
       isActive: true,
+      createdBy: operatingUserId,
+      updatedBy: operatingUserId,
     })
 
     res.status(201).json({

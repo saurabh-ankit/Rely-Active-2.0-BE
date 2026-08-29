@@ -1,4 +1,5 @@
 import type { NextFunction, Request, Response } from 'express'
+import type { AuthenticatedRequest } from '../../middlewares/authenticate.js'
 import { Company, CompanyCustomField } from '../../models/index.js'
 import { validateCompanyCreateInput, validateCompanyUpdateInput } from '../../validations/company.validation.js'
 
@@ -65,6 +66,8 @@ export const createCompany = async (req: Request, res: Response, next: NextFunct
       }
     }
 
+    const operatingUserId = (req as AuthenticatedRequest).user?.id || null
+
     const company = await Company.create({
       company_name: finalCompanyName,
       company_gst_number: finalGst,
@@ -83,6 +86,8 @@ export const createCompany = async (req: Request, res: Response, next: NextFunct
       accountant_signature: accountant_signature_url,
       isActive: true,
       isDeleted: false,
+      createdBy: operatingUserId,
+      updatedBy: operatingUserId,
     })
 
     if (customFields) {
@@ -128,6 +133,8 @@ export const createCompany = async (req: Request, res: Response, next: NextFunct
           defaultValue: field.defaultValue ? String(field.defaultValue) : null,
           isActive: true,
           isDeleted: false,
+          createdBy: operatingUserId,
+          updatedBy: operatingUserId,
         })
       }
     }
@@ -229,9 +236,10 @@ export const updateCompany = async (req: Request, res: Response, next: NextFunct
       })
     }
 
+    const operatingUserId = (req as AuthenticatedRequest).user?.id || null
     const { customFields, locationId, ...companyFields } = req.body
     void locationId
-    const updates: Record<string, unknown> = { ...companyFields }
+    const updates: Record<string, unknown> = { ...companyFields, updatedBy: operatingUserId }
 
     if (updates.gst_number) updates.company_gst_number = updates.gst_number
     if (updates.email) updates.email_id = updates.email
@@ -311,6 +319,8 @@ export const updateCompany = async (req: Request, res: Response, next: NextFunct
           defaultValue: field.defaultValue ? String(field.defaultValue) : null,
           isActive: true,
           isDeleted: false,
+          createdBy: operatingUserId,
+          updatedBy: operatingUserId,
         })
       }
     }
@@ -352,7 +362,8 @@ export const deleteCompany = async (req: Request, res: Response, next: NextFunct
       })
     }
 
-    await company.update({ isDeleted: true })
+    const operatingUserId = (req as AuthenticatedRequest).user?.id || null
+    await company.update({ isDeleted: true, updatedBy: operatingUserId })
     return res.status(200).json({
       success: true,
       message: 'Company deleted successfully',

@@ -1,19 +1,130 @@
 import type { Request, Response } from 'express'
+import type { AuthenticatedRequest } from '../../middlewares/authenticate.js'
 import bcrypt from 'bcryptjs'
-import { Property, Role, User, UserDetail, UserLocation, UserRole } from '../../models/index.js'
+import { Op } from 'sequelize'
+import {
+  Department,
+  EmployeeManager,
+  JobCategory,
+  Property,
+  Role,
+  User,
+  UserDetail,
+  UserLocation,
+} from '../../models/index.js'
 import { AuthorizationService } from '../../services/authorization.service.js'
+import sequelize from '../../config/db/index.js'
 
-export async function getAllUsers(_req: Request, res: Response): Promise<void> {
-  try {
-    const users = await User.findAll({
-      where: { isDeleted: false },
+function sanitizeUuid(id: string | null | undefined): string | null {
+  if (!id || typeof id !== 'string') return null
+  const trimmed = id.trim()
+  if (!trimmed || trimmed === '00000000-0000-0000-0000-000000000000') return null
+  return trimmed
+}
+
+function formatUserResponse(user: unknown): Record<string, unknown> | null {
+  if (!user) return null
+  const uObj = user as Record<string, unknown>
+  const plain = (
+    typeof uObj.toJSON === 'function' ? (user as { toJSON: () => Record<string, unknown> }).toJSON() : { ...uObj }
+  ) as Record<string, unknown>
+  const uLocs = (plain.userLocations || []) as Array<Record<string, unknown>>
+  const empMgrs = (plain.employeeManagers || []) as Array<Record<string, unknown>>
+
+  const enrichedULocs = uLocs.map((ul) => {
+    const locId =
+      ul.locId ||
+      ul.loc_id ||
+      ul.locationId ||
+      ul.location_id ||
+      (ul.property as Record<string, unknown> | undefined)?.id
+    const empMgr = empMgrs.find((em) => em.locId === locId)
+    const mgr = empMgr?.manager || ul.manager || null
+    const mgrId = empMgr?.managerId || ul.managerId || null
+    return {
+      ...ul,
+      managerId: mgrId,
+      manager: mgr,
+    }
+  })
+
+  return {
+    ...plain,
+    userLocations: enrichedULocs,
+    userRoles: enrichedULocs,
+  }
+}
+
+const userLocationInclude = [
+  { model: Role, as: 'role' },
+  { model: Property, as: 'property' },
+  { model: Department, as: 'department' },
+  { model: JobCategory, as: 'jobCategory' },
+]
+
+const employeeManagerInclude = {
+  model: EmployeeManager,
+  as: 'employeeManagers',
+  include: [
+    {
+      model: User,
+      as: 'manager',
       include: [
         { model: UserDetail, as: 'profile' },
         {
-          model: UserRole,
-          as: 'userRoles',
-          include: [{ model: Role, as: 'role' }],
+          model: UserLocation,
+          as: 'userLocations',
+          include: [
+            { model: Department, as: 'department' },
+            { model: JobCategory, as: 'jobCategory' },
+          ],
         },
+      ],
+    },
+    { model: Property, as: 'property' },
+  ],
+}
+
+export async function getAllUsers(req: Request, res: Response): Promise<void> {
+  try {
+    const isGlobalQuery =
+      req.query.allLocations === 'true' || req.query.global === 'true' || req.headers['x-global'] === 'true'
+
+    const rawLocId = isGlobalQuery
+      ? null
+      : (req.headers['x-location-id'] as string) ||
+        (req.headers['x-property-id'] as string) ||
+        (req.query.locationId as string) ||
+        (req.query.locId as string) ||
+        (req.query.propertyId as string)
+
+    const targetLocId = rawLocId && rawLocId.trim() !== '' ? rawLocId.trim() : null
+
+    let userWhere: Record<string, unknown> = { isDeleted: false }
+
+    if (targetLocId) {
+      const locUserRecords = await UserLocation.findAll({
+        where: { locId: targetLocId },
+        attributes: ['userId'],
+      })
+      const userIdsInLoc = locUserRecords.map((u) => u.userId)
+
+      userWhere = {
+        isDeleted: false,
+        [Op.or]: [{ id: { [Op.in]: userIdsInLoc } }, { defaultLocationId: targetLocId }],
+      }
+    }
+
+    const users = (await User.findAll({
+      where: userWhere,
+      include: [
+        { model: UserDetail, as: 'profile' },
+        {
+          model: UserLocation,
+          as: 'userLocations',
+          include: userLocationInclude,
+        },
+        employeeManagerInclude,
         {
           model: Property,
           as: 'assignedProperties',
@@ -21,11 +132,22 @@ export async function getAllUsers(_req: Request, res: Response): Promise<void> {
         },
       ],
       order: [['createdAt', 'DESC']],
+    })) as Array<User & { userLocations?: Array<UserLocation & { role?: Role }> }>
+
+    const superAdminRole = await Role.findOne({ where: { code: 'SUPER_ADMIN' } })
+
+    const nonSuperAdminUsers = users.filter((u) => {
+      if (u.username === 'superadmin') return false
+      const hasSuperAdminRole = u.userLocations?.some(
+        (ul) => ul.roleId === superAdminRole?.id || ul.role?.code === 'SUPER_ADMIN',
+      )
+      if (hasSuperAdminRole) return false
+      return true
     })
 
     res.status(200).json({
       success: true,
-      data: users,
+      data: nonSuperAdminUsers.map(formatUserResponse),
     })
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Unknown error'
@@ -40,10 +162,11 @@ export async function getUserById(req: Request, res: Response): Promise<void> {
       include: [
         { model: UserDetail, as: 'profile' },
         {
-          model: UserRole,
-          as: 'userRoles',
-          include: [{ model: Role, as: 'role' }],
+          model: UserLocation,
+          as: 'userLocations',
+          include: userLocationInclude,
         },
+        employeeManagerInclude,
         {
           model: Property,
           as: 'assignedProperties',
@@ -62,7 +185,7 @@ export async function getUserById(req: Request, res: Response): Promise<void> {
     res.status(200).json({
       success: true,
       data: {
-        ...user.toJSON(),
+        ...formatUserResponse(user),
         authorizationContext: authCtx,
       },
     })
@@ -82,11 +205,14 @@ export async function createUser(req: Request, res: Response): Promise<void> {
       companyId,
       defaultLocationId,
       departmentId,
+      jobCategoryId,
+      job_category_id,
+      managerId,
+      manager_id,
       first_name,
       firstName,
       last_name,
       lastName,
-      designation,
       employee_code,
       employeeCode,
       roleCode,
@@ -97,6 +223,8 @@ export async function createUser(req: Request, res: Response): Promise<void> {
     const lName = lastName || last_name
     const empCode = employeeCode || employee_code
     const uName = username ? username.trim() : null
+    const jCategoryId = jobCategoryId || job_category_id || null
+    const mgrId = managerId || manager_id || null
 
     if (!fName || (!uName && !email && !phone)) {
       res.status(400).json({
@@ -111,63 +239,113 @@ export async function createUser(req: Request, res: Response): Promise<void> {
       if (existingUser) {
         res.status(400).json({
           success: false,
-          message: 'Username is already taken. Please choose a different username.',
+          message: 'Username is already taken.',
         })
         return
       }
     }
 
-    const defaultPassword = password || 'Password@123'
-    const hashedPassword = await bcrypt.hash(defaultPassword, 10)
+    const passwordHash = password ? await bcrypt.hash(password, 10) : await bcrypt.hash('123456', 10)
+    const operatingUserId = (req as AuthenticatedRequest).user?.id || null
 
     const user = await User.create({
-      username: uName,
-      email: email ? email.trim() : null,
-      phone: phone ? phone.trim() : null,
-      passwordHash: hashedPassword,
-      companyId: companyId || null,
-      defaultLocationId: defaultLocationId || null,
+      username: uName || undefined,
+      email: email || undefined,
+      phone: phone || undefined,
+      passwordHash,
       status: 'ACTIVE',
-      isActive: true,
+      createdBy: operatingUserId,
+      updatedBy: operatingUserId,
     })
 
     await UserDetail.create({
       userId: user.id,
-      firstName: fName.trim(),
-      lastName: lName ? lName.trim() : null,
-      phone: phone ? phone.trim() : null,
-      designation: designation || null,
+      firstName: fName,
+      lastName: lName || null,
       employeeCode: empCode || null,
+      dateOfJoining: req.body.dateOfJoining || req.body.date_of_joining || new Date().toISOString().split('T')[0],
+      phone: phone || null,
       gender: req.body.gender || null,
       dateOfBirth: req.body.dateOfBirth || req.body.date_of_birth || null,
       emergencyContact: req.body.emergencyContact || req.body.emergency_contact || null,
       bloodGroup: req.body.bloodGroup || req.body.blood_group || null,
-      address: req.body.address || null,
       qualification: req.body.qualification || null,
-      experience:
-        req.body.experience !== undefined && req.body.experience !== null ? String(req.body.experience) : null,
+      experience: req.body.experience || null,
+      address: req.body.address || null,
+      createdBy: operatingUserId,
+      updatedBy: operatingUserId,
     })
 
+    let targetRoleId: string | null = null
     if (roleCode) {
       const targetRole = await Role.findOne({ where: { code: roleCode } })
-      if (targetRole) {
-        await UserRole.create({
-          userId: user.id,
-          roleId: targetRole.id,
-          companyId: companyId || null,
-          locationId: defaultLocationId || null,
-          departmentId: departmentId || null,
-        })
-      }
+      if (targetRole) targetRoleId = targetRole.id
     }
 
-    // Insert user_locations mapping
-    const locationIds = propertyIds || req.body.locIds || req.body.locationIds
+    // Insert user_locations and employee_managers mapping
+    const cleanCompId = sanitizeUuid(companyId)
+    const cleanDeptId = sanitizeUuid(departmentId)
+    const cleanJobCatId = sanitizeUuid(jCategoryId)
+    const cleanMgrId = sanitizeUuid(mgrId)
+
+    const locationIds =
+      propertyIds !== undefined ? propertyIds : req.body.locIds !== undefined ? req.body.locIds : req.body.locationIds
+    let pIdsToCreate: string[] = []
     if (locationIds && Array.isArray(locationIds)) {
-      for (const pId of locationIds) {
-        await UserLocation.create({
+      pIdsToCreate = Array.from(
+        new Set(locationIds.filter((id: unknown): id is string => typeof id === 'string' && id.trim() !== '')),
+      )
+    } else if (defaultLocationId) {
+      pIdsToCreate = [defaultLocationId]
+    }
+
+    if (pIdsToCreate.length === 0) {
+      res.status(400).json({ success: false, message: 'At least one property location is required' })
+      return
+    }
+
+    const hasPropMgrMap =
+      (req.body.propertyManagers && typeof req.body.propertyManagers === 'object') ||
+      (req.body.property_managers && typeof req.body.property_managers === 'object')
+    const propMgrMap = req.body.propertyManagers || req.body.property_managers || {}
+
+    for (const pId of pIdsToCreate) {
+      const rawPropMgr = propMgrMap[pId]
+      let specificMgrId: string | null = null
+
+      if (hasPropMgrMap) {
+        if (
+          rawPropMgr !== undefined &&
+          rawPropMgr !== null &&
+          typeof rawPropMgr === 'string' &&
+          rawPropMgr.trim() !== ''
+        ) {
+          specificMgrId = sanitizeUuid(rawPropMgr)
+        } else {
+          specificMgrId = null
+        }
+      } else {
+        specificMgrId = cleanMgrId
+      }
+
+      await UserLocation.create({
+        userId: user.id,
+        locId: pId,
+        roleId: targetRoleId,
+        companyId: cleanCompId,
+        departmentId: cleanDeptId,
+        jobCategoryId: cleanJobCatId,
+        createdBy: operatingUserId,
+        updatedBy: operatingUserId,
+      })
+
+      if (specificMgrId) {
+        await EmployeeManager.create({
           userId: user.id,
+          managerId: specificMgrId,
           locId: pId,
+          createdBy: operatingUserId,
+          updatedBy: operatingUserId,
         })
       }
     }
@@ -175,7 +353,12 @@ export async function createUser(req: Request, res: Response): Promise<void> {
     const createdUser = await User.findByPk(user.id, {
       include: [
         { model: UserDetail, as: 'profile' },
-        { model: UserRole, as: 'userRoles', include: [{ model: Role, as: 'role' }] },
+        {
+          model: UserLocation,
+          as: 'userLocations',
+          include: userLocationInclude,
+        },
+        employeeManagerInclude,
         { model: Property, as: 'assignedProperties', through: { attributes: [] } },
       ],
     })
@@ -183,7 +366,7 @@ export async function createUser(req: Request, res: Response): Promise<void> {
     res.status(201).json({
       success: true,
       message: 'User created successfully',
-      data: createdUser,
+      data: formatUserResponse(createdUser),
     })
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Unknown error'
@@ -193,15 +376,48 @@ export async function createUser(req: Request, res: Response): Promise<void> {
 
 export async function getUserAccessibleProperties(req: Request, res: Response): Promise<void> {
   try {
-    const reqWithAuth = req as Request & { authContext?: { isSuperAdmin: boolean }; userId?: string }
-    const authCtx = reqWithAuth.authContext
-    const userId = reqWithAuth.userId || ''
+    const userPayload = (req as AuthenticatedRequest).user
+    const userId = userPayload?.id || ''
 
-    if (authCtx?.isSuperAdmin) {
+    let isSuperAdmin = userPayload?.roles?.includes('SUPER_ADMIN') || false
+    if (!isSuperAdmin && userId) {
+      const dbUser = (await User.findByPk(userId, {
+        include: [{ model: UserLocation, as: 'userLocations', include: [{ model: Role, as: 'role' }] }],
+      })) as (User & { userLocations?: Array<UserLocation & { role?: Role }> }) | null
+
+      if (dbUser?.username === 'superadmin') {
+        isSuperAdmin = true
+      } else {
+        const uLocs = dbUser?.userLocations || []
+        isSuperAdmin = uLocs.some((ul) => ul.role?.code === 'SUPER_ADMIN')
+      }
+    }
+
+    if (isSuperAdmin) {
       // Super Admin automatically gets access to ALL properties
       const allProperties = await Property.findAll({
+        where: { isDeleted: false },
         order: [['property_name', 'ASC']],
       })
+
+      // Ensure user_locations has entries for all properties for this superadmin
+      if (userId) {
+        const superAdminRole = await Role.findOne({ where: { code: 'SUPER_ADMIN' } })
+        for (const prop of allProperties) {
+          const exists = await UserLocation.findOne({ where: { userId, locId: prop.id } })
+          if (!exists) {
+            await UserLocation.create({
+              userId,
+              locId: prop.id,
+              roleId: superAdminRole?.id || null,
+              companyId: prop.companyId || null,
+              createdBy: userId,
+              updatedBy: userId,
+            })
+          }
+        }
+      }
+
       res.status(200).json({
         success: true,
         data: allProperties,
@@ -231,6 +447,7 @@ export async function getUserAccessibleProperties(req: Request, res: Response): 
 
     // Fallback: If no explicit mapping, return all active properties
     const fallbackProperties = await Property.findAll({
+      where: { isDeleted: false },
       order: [['property_name', 'ASC']],
     })
     res.status(200).json({
@@ -246,22 +463,63 @@ export async function getUserAccessibleProperties(req: Request, res: Response): 
 export async function updateUserProperties(req: Request, res: Response): Promise<void> {
   try {
     const userId = req.params.id as string
-    const locationIds = req.body.propertyIds || req.body.locIds || req.body.locationIds
+    const { propertyIds, defaultLocationId, locIds } = req.body
+    const operatingUserId = (req as AuthenticatedRequest).user?.id || null
 
-    await UserLocation.destroy({ where: { userId } })
-
-    if (locationIds && Array.isArray(locationIds)) {
-      for (const pId of locationIds) {
-        await UserLocation.create({
-          userId,
-          locId: pId,
-        })
-      }
+    const rawPIds = propertyIds !== undefined ? propertyIds : locIds !== undefined ? locIds : undefined
+    let pIdsArray: string[] = []
+    if (Array.isArray(rawPIds)) {
+      pIdsArray = rawPIds.filter((id) => typeof id === 'string' && id.trim() !== '')
+    } else if (defaultLocationId) {
+      pIdsArray = [defaultLocationId]
     }
+
+    const pIds = Array.from(new Set(pIdsArray))
+
+    if (pIds.length === 0) {
+      res.status(400).json({ success: false, message: 'At least one property location is required' })
+      return
+    }
+
+    const existingLocs = await UserLocation.findAll({ where: { userId } })
+    const primaryLoc = existingLocs[0]
+    const roleIdToUse = primaryLoc?.roleId || null
+    const companyIdToUse = primaryLoc?.companyId || null
+    const deptIdToUse = primaryLoc?.departmentId || null
+    const jobCatIdToUse = primaryLoc?.jobCategoryId || null
+
+    await UserLocation.destroy({ where: { userId }, force: true })
+
+    for (const pId of pIds) {
+      await UserLocation.create({
+        userId,
+        locId: pId,
+        roleId: roleIdToUse,
+        companyId: companyIdToUse,
+        departmentId: deptIdToUse,
+        jobCategoryId: jobCatIdToUse,
+        createdBy: operatingUserId,
+        updatedBy: operatingUserId,
+      })
+    }
+
+    const updatedUser = await User.findByPk(userId, {
+      include: [
+        { model: UserDetail, as: 'profile' },
+        {
+          model: UserLocation,
+          as: 'userLocations',
+          include: userLocationInclude,
+        },
+        employeeManagerInclude,
+        { model: Property, as: 'assignedProperties', through: { attributes: [] } },
+      ],
+    })
 
     res.status(200).json({
       success: true,
-      message: 'User properties updated successfully',
+      message: 'User property locations updated successfully',
+      data: formatUserResponse(updatedUser),
     })
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Unknown error'
@@ -272,7 +530,8 @@ export async function updateUserProperties(req: Request, res: Response): Promise
 export async function assignUserRole(req: Request, res: Response): Promise<void> {
   try {
     const userId = req.params.id as string
-    const { roleId, roleCode, companyId, locationId, departmentId } = req.body
+    const { roleId, roleCode, companyId, locationId, locId, departmentId, jobCategoryId, job_category_id } = req.body
+    const operatingUserId = (req as AuthenticatedRequest).user?.id || null
 
     let targetRole = null
     if (roleId) targetRole = await Role.findByPk(roleId)
@@ -283,19 +542,44 @@ export async function assignUserRole(req: Request, res: Response): Promise<void>
       return
     }
 
-    const userRole = await UserRole.create({
-      userId,
-      roleId: targetRole.id,
-      companyId: companyId || null,
-      locationId: locationId || null,
-      departmentId: departmentId || null,
-      isActive: true,
-    })
+    const jCategoryId = jobCategoryId || job_category_id || undefined
+
+    const userLocs = await UserLocation.findAll({ where: { userId } })
+    if (userLocs.length > 0) {
+      await UserLocation.update(
+        {
+          roleId: targetRole.id,
+          companyId: companyId || undefined,
+          departmentId: departmentId || undefined,
+          jobCategoryId: jCategoryId,
+          updatedBy: operatingUserId,
+        },
+        { where: { userId } },
+      )
+    } else {
+      const pId = locationId || locId
+      if (!pId) {
+        res.status(400).json({
+          success: false,
+          message: 'locationId is required when user has no existing locations',
+        })
+        return
+      }
+      await UserLocation.create({
+        userId,
+        locId: pId,
+        roleId: targetRole.id,
+        companyId: companyId || undefined,
+        departmentId: departmentId || undefined,
+        jobCategoryId: jCategoryId,
+        createdBy: operatingUserId,
+        updatedBy: operatingUserId,
+      })
+    }
 
     res.status(200).json({
       success: true,
       message: 'Role assigned to user successfully',
-      data: userRole,
     })
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Unknown error'
@@ -312,6 +596,7 @@ export async function updateUser(req: Request, res: Response): Promise<void> {
       return
     }
 
+    const operatingUserId = (req as AuthenticatedRequest).user?.id || null
     const {
       username,
       email,
@@ -320,117 +605,362 @@ export async function updateUser(req: Request, res: Response): Promise<void> {
       companyId,
       defaultLocationId,
       departmentId,
-      first_name,
-      firstName,
-      last_name,
-      lastName,
-      designation,
-      employee_code,
-      employeeCode,
       roleCode,
+      roleId,
+      jobCategoryId,
+      job_category_id,
+      managerId,
+      manager_id,
+      firstName,
+      first_name,
+      lastName,
+      last_name,
+      employeeCode,
+      employee_code,
       propertyIds,
+      property_ids,
+      properties,
       locIds,
+      loc_ids,
       locationIds,
+      location_ids,
+      locations,
     } = req.body
 
     const fName = firstName || first_name
     const lName = lastName || last_name
     const empCode = employeeCode || employee_code
-    const uName = username !== undefined ? (username ? username.trim() : null) : user.username
+    const uName = username ? username.trim() : null
+    const jCategoryId = jobCategoryId || job_category_id || undefined
+    const mgrId = managerId || manager_id || undefined
+    void mgrId
 
     if (uName && uName !== user.username) {
       const existingUser = await User.findOne({ where: { username: uName } })
       if (existingUser && existingUser.id !== user.id) {
-        res.status(400).json({
-          success: false,
-          message: 'Username is already taken. Please choose a different username.',
-        })
+        res.status(400).json({ success: false, message: 'Username is already taken' })
         return
       }
     }
 
-    user.username = uName
-    if (email !== undefined) user.email = email ? email.trim() : null
-    if (phone !== undefined) user.phone = phone ? phone.trim() : null
-    if (password) {
-      user.passwordHash = await bcrypt.hash(password, 10)
-    }
-    if (companyId !== undefined) user.companyId = companyId || null
-    if (defaultLocationId !== undefined) user.defaultLocationId = defaultLocationId || null
-    await user.save()
+    // Update User main record
+    const userUpdatePayload: Record<string, unknown> = { updatedBy: operatingUserId }
+    if (uName !== undefined && uName !== null) userUpdatePayload.username = uName
+    if (email !== undefined) userUpdatePayload.email = email || null
+    if (phone !== undefined) userUpdatePayload.phone = phone || null
+    if (password) userUpdatePayload.passwordHash = await bcrypt.hash(password, 10)
+    if (defaultLocationId !== undefined) userUpdatePayload.defaultLocationId = sanitizeUuid(defaultLocationId)
 
-    // Update or create UserDetail
-    const profile = await UserDetail.findOne({ where: { userId: user.id } })
-    const profileFields = {
-      firstName: fName ? fName.trim() : profile?.firstName || '',
-      lastName: lName !== undefined ? (lName ? lName.trim() : null) : profile?.lastName || null,
-      phone: phone !== undefined ? (phone ? phone.trim() : null) : profile?.phone || null,
-      designation: designation !== undefined ? designation || null : profile?.designation || null,
-      employeeCode: empCode !== undefined ? empCode || null : profile?.employeeCode || null,
-      gender: req.body.gender !== undefined ? req.body.gender || null : profile?.gender || null,
-      dateOfBirth:
-        req.body.dateOfBirth || req.body.date_of_birth !== undefined
-          ? req.body.dateOfBirth || req.body.date_of_birth || null
-          : profile?.dateOfBirth || null,
-      emergencyContact:
-        req.body.emergencyContact || req.body.emergency_contact !== undefined
-          ? req.body.emergencyContact || req.body.emergency_contact || null
-          : profile?.emergencyContact || null,
-      bloodGroup:
-        req.body.bloodGroup || req.body.blood_group !== undefined
-          ? req.body.bloodGroup || req.body.blood_group || null
-          : profile?.bloodGroup || null,
-      address: req.body.address !== undefined ? req.body.address || null : profile?.address || null,
-      qualification:
-        req.body.qualification !== undefined ? req.body.qualification || null : profile?.qualification || null,
-      experience:
-        req.body.experience !== undefined
-          ? req.body.experience !== null
-            ? String(req.body.experience)
-            : null
-          : profile?.experience || null,
-    }
+    await user.update(userUpdatePayload)
 
-    if (profile) {
-      await profile.update(profileFields)
+    // Update UserDetail record
+    const detailUpdatePayload: Record<string, unknown> = { updatedBy: operatingUserId }
+    if (fName !== undefined) detailUpdatePayload.firstName = fName
+    if (lName !== undefined) detailUpdatePayload.lastName = lName || null
+    if (empCode !== undefined) detailUpdatePayload.employeeCode = empCode || null
+    if (req.body.dateOfJoining !== undefined || req.body.date_of_joining !== undefined) {
+      detailUpdatePayload.dateOfJoining = req.body.dateOfJoining || req.body.date_of_joining || null
+    }
+    if (phone !== undefined) detailUpdatePayload.phone = phone || null
+    if (req.body.gender !== undefined) detailUpdatePayload.gender = req.body.gender || null
+    if (req.body.dateOfBirth !== undefined || req.body.date_of_birth !== undefined) {
+      detailUpdatePayload.dateOfBirth = req.body.dateOfBirth || req.body.date_of_birth || null
+    }
+    if (req.body.emergencyContact !== undefined || req.body.emergency_contact !== undefined) {
+      detailUpdatePayload.emergencyContact = req.body.emergencyContact || req.body.emergency_contact || null
+    }
+    if (req.body.bloodGroup !== undefined || req.body.blood_group !== undefined) {
+      detailUpdatePayload.bloodGroup = req.body.bloodGroup || req.body.blood_group || null
+    }
+    if (req.body.qualification !== undefined) detailUpdatePayload.qualification = req.body.qualification || null
+    if (req.body.experience !== undefined) detailUpdatePayload.experience = req.body.experience || null
+    if (req.body.address !== undefined) detailUpdatePayload.address = req.body.address || null
+
+    const existingDetail = await UserDetail.findOne({ where: { userId: user.id } })
+    if (existingDetail) {
+      await existingDetail.update(detailUpdatePayload)
     } else {
       await UserDetail.create({
         userId: user.id,
-        ...profileFields,
+        firstName: fName || 'DefaultFirst',
+        lastName: lName || null,
+        employeeCode: empCode || null,
+        dateOfJoining: req.body.dateOfJoining || req.body.date_of_joining || new Date().toISOString().split('T')[0],
+        phone: phone || null,
+        gender: req.body.gender || null,
+        dateOfBirth: req.body.dateOfBirth || req.body.date_of_birth || null,
+        emergencyContact: req.body.emergencyContact || req.body.emergency_contact || null,
+        bloodGroup: req.body.bloodGroup || req.body.blood_group || null,
+        qualification: req.body.qualification || null,
+        experience: req.body.experience || null,
+        address: req.body.address || null,
+        createdBy: operatingUserId,
+        updatedBy: operatingUserId,
       })
     }
 
-    // Update Role if roleCode is passed
-    if (roleCode) {
+    let targetRoleId: string | null = roleId ? sanitizeUuid(roleId) : null
+    if (!targetRoleId && roleCode) {
       const targetRole = await Role.findOne({ where: { code: roleCode } })
-      if (targetRole) {
-        await UserRole.destroy({ where: { userId: user.id } })
-        await UserRole.create({
-          userId: user.id,
-          roleId: targetRole.id,
-          companyId: companyId || user.companyId || null,
-          locationId: defaultLocationId || user.defaultLocationId || null,
-          departmentId: departmentId || null,
-        })
+      if (targetRole) targetRoleId = targetRole.id
+    }
+
+    // Update UserLocations and EmployeeManagers if propertyIds passed
+    const existingLocs = await UserLocation.findAll({ where: { userId: user.id } })
+    const primaryUserLoc = existingLocs[0]
+    const cleanCompId = sanitizeUuid(companyId || user.companyId || primaryUserLoc?.companyId)
+    const cleanDeptId = departmentId !== undefined ? sanitizeUuid(departmentId) : primaryUserLoc?.departmentId || null
+    const cleanJobCatId =
+      jobCategoryId !== undefined || job_category_id !== undefined
+        ? sanitizeUuid(jobCategoryId || job_category_id)
+        : primaryUserLoc?.jobCategoryId || null
+    const cleanMgrId =
+      managerId !== undefined || manager_id !== undefined ? sanitizeUuid(managerId || manager_id) : null
+
+    // Extract target single propertyId/locId strictly from req.body
+    const targetSinglePropId = sanitizeUuid(
+      req.body.propertyId ||
+        req.body.property_id ||
+        req.body.property ||
+        req.body.locId ||
+        req.body.loc_id ||
+        req.body.locationId ||
+        req.body.location_id,
+    )
+
+    const hasManagerIdInBody =
+      Object.prototype.hasOwnProperty.call(req.body, 'managerId') ||
+      Object.prototype.hasOwnProperty.call(req.body, 'manager_id')
+
+    const propMgrMap: Record<string, string | null> = {}
+    const rawPropMgrInput = req.body.propertyManagers || req.body.property_managers
+    if (rawPropMgrInput && typeof rawPropMgrInput === 'object') {
+      Object.entries(rawPropMgrInput).forEach(([pId, mId]) => {
+        if (typeof pId === 'string' && pId.trim()) {
+          const cleanKey = pId.trim()
+          const cleanVal = typeof mId === 'string' && mId.trim() ? sanitizeUuid(mId) : null
+          propMgrMap[cleanKey] = cleanVal
+        }
+      })
+    }
+
+    let effectivePropId = targetSinglePropId
+    if (!effectivePropId && hasManagerIdInBody) {
+      const headerLoc = (req.headers['x-location-id'] as string) || (req.headers['x-property-id'] as string)
+      const primaryLocId = primaryUserLoc?.locId
+      effectivePropId = sanitizeUuid(headerLoc || primaryLocId)
+    }
+
+    if (effectivePropId && hasManagerIdInBody) {
+      const rawMgrVal = req.body.managerId ?? req.body.manager_id
+      const cleanSpecificMgr = typeof rawMgrVal === 'string' && rawMgrVal.trim() ? sanitizeUuid(rawMgrVal) : null
+      propMgrMap[effectivePropId] = cleanSpecificMgr
+    }
+
+    const hasPropMgrMap = Object.keys(propMgrMap).length > 0
+
+    const rawPIds =
+      propertyIds !== undefined
+        ? propertyIds
+        : property_ids !== undefined
+          ? property_ids
+          : properties !== undefined
+            ? properties
+            : locIds !== undefined
+              ? locIds
+              : loc_ids !== undefined
+                ? loc_ids
+                : locationIds !== undefined
+                  ? locationIds
+                  : location_ids !== undefined
+                    ? location_ids
+                    : locations !== undefined
+                      ? locations
+                      : undefined
+
+    console.log('==================================================')
+    console.log('[BE updateUser] User ID:', user.id)
+    console.log('[BE updateUser] Request Body:', JSON.stringify(req.body))
+    console.log('[BE updateUser] Target Single Property ID:', targetSinglePropId)
+    console.log('[BE updateUser] Has ManagerId In Body:', hasManagerIdInBody)
+    console.log('[BE updateUser] Constructed propMgrMap:', JSON.stringify(propMgrMap))
+    console.log('==================================================')
+
+    let pIdsArray: string[] | undefined = undefined
+    if (rawPIds !== undefined) {
+      if (Array.isArray(rawPIds)) {
+        pIdsArray = rawPIds.filter((id) => typeof id === 'string' && id.trim() !== '')
+      } else if (typeof rawPIds === 'string' && rawPIds.trim() !== '') {
+        pIdsArray = [rawPIds.trim()]
       }
     }
 
-    // Update UserLocations if propertyIds passed
-    const pIds = propertyIds || locIds || locationIds
-    if (pIds && Array.isArray(pIds)) {
-      await UserLocation.destroy({ where: { userId: user.id } })
-      for (const pId of pIds) {
-        await UserLocation.create({
-          userId: user.id,
-          locId: pId,
-        })
+    if (pIdsArray === undefined && existingLocs.length === 0) {
+      const headerLocId =
+        (req.headers['x-location-id'] as string) ||
+        (req.headers['x-property-id'] as string) ||
+        (req.query.locationId as string) ||
+        (req.query.propertyId as string)
+      if (headerLocId && headerLocId.trim() !== '') {
+        pIdsArray = [headerLocId.trim()]
       }
     }
+
+    const hasAnyFieldToUpdate =
+      targetRoleId !== null ||
+      departmentId !== undefined ||
+      jCategoryId !== undefined ||
+      hasPropMgrMap ||
+      (hasManagerIdInBody && cleanMgrId !== null) ||
+      companyId !== undefined
+
+    if (pIdsArray !== undefined) {
+      const pIds = Array.from(new Set(pIdsArray))
+      console.log('[BE updateUser] Full property array overwrite mode. Deduplicated pIds to save:', pIds)
+      if (pIds.length === 0) {
+        res.status(400).json({ success: false, message: 'At least one property location is required' })
+        return
+      }
+      const transaction = await sequelize.transaction()
+      try {
+        await UserLocation.destroy({ where: { userId: user.id }, force: true, transaction })
+        await EmployeeManager.destroy({ where: { userId: user.id }, force: true, transaction })
+
+        for (const pId of pIds) {
+          let specificMgrId: string | null = null
+
+          if (pId in propMgrMap) {
+            specificMgrId = propMgrMap[pId] ?? null
+          } else if (hasPropMgrMap) {
+            specificMgrId = null
+          } else {
+            specificMgrId = cleanMgrId
+          }
+
+          console.log(`[BE updateUser] Creating UserLocation for userId=${user.id}, locId=${pId}`)
+          await UserLocation.create(
+            {
+              userId: user.id,
+              locId: pId,
+              roleId: targetRoleId || primaryUserLoc?.roleId || null,
+              companyId: cleanCompId,
+              departmentId: cleanDeptId,
+              jobCategoryId: cleanJobCatId,
+              createdBy: operatingUserId,
+              updatedBy: operatingUserId,
+            },
+            { transaction },
+          )
+
+          if (specificMgrId) {
+            console.log(
+              `[BE updateUser] Inserting EmployeeManager: userId=${user.id}, locId=${pId}, managerId=${specificMgrId}`,
+            )
+            await EmployeeManager.create(
+              {
+                userId: user.id,
+                managerId: specificMgrId,
+                locId: pId,
+                createdBy: operatingUserId,
+                updatedBy: operatingUserId,
+              },
+              { transaction },
+            )
+          } else {
+            console.log(`[BE updateUser] No manager assigned for locId=${pId}`)
+          }
+        }
+        await transaction.commit()
+        console.log('[BE updateUser] Transaction committed successfully!')
+      } catch (tErr) {
+        await transaction.rollback()
+        console.error('[BE updateUser] Transaction failed & rolled back:', tErr)
+        throw tErr
+      }
+    } else if (hasAnyFieldToUpdate) {
+      console.log('[BE updateUser] Partial property / manager update mode.')
+      const updatePayload: Record<string, unknown> = { updatedBy: operatingUserId }
+      if (targetRoleId) updatePayload.roleId = targetRoleId
+      if (companyId !== undefined) updatePayload.companyId = cleanCompId
+      if (departmentId !== undefined) updatePayload.departmentId = cleanDeptId
+      if (jCategoryId !== undefined) updatePayload.jobCategoryId = cleanJobCatId
+
+      if (Object.keys(updatePayload).length > 1) {
+        console.log('[BE updateUser] Updating UserLocation common fields:', updatePayload)
+        await UserLocation.update(updatePayload, { where: { userId: user.id } })
+      }
+
+      if (hasPropMgrMap) {
+        for (const [pId, mId] of Object.entries(propMgrMap)) {
+          console.log(`[BE updateUser] Processing location manager mapping for pId=${pId}, mId=${mId}`)
+          // Ensure UserLocation exists for this property
+          const uLocExists = await UserLocation.findOne({ where: { userId: user.id, locId: pId } })
+          if (!uLocExists) {
+            console.log(`[BE updateUser] UserLocation for pId=${pId} did not exist. Creating default UserLocation.`)
+            await UserLocation.create({
+              userId: user.id,
+              locId: pId,
+              roleId: targetRoleId || primaryUserLoc?.roleId || null,
+              companyId: cleanCompId || primaryUserLoc?.companyId || null,
+              departmentId: cleanDeptId || primaryUserLoc?.departmentId || null,
+              jobCategoryId: cleanJobCatId || primaryUserLoc?.jobCategoryId || null,
+              createdBy: operatingUserId,
+              updatedBy: operatingUserId,
+            })
+          }
+
+          // Update employee_managers table for pId
+          console.log(`[BE updateUser] Destroying existing EmployeeManager entries for userId=${user.id}, locId=${pId}`)
+          const deletedCount = await EmployeeManager.destroy({ where: { userId: user.id, locId: pId }, force: true })
+          console.log(`[BE updateUser] Successfully destroyed ${deletedCount} EmployeeManager record(s).`)
+
+          if (mId) {
+            console.log(
+              `[BE updateUser] Inserting new EmployeeManager entry: userId=${user.id}, locId=${pId}, managerId=${mId}`,
+            )
+            const createdEmpMgr = await EmployeeManager.create({
+              userId: user.id,
+              managerId: mId,
+              locId: pId,
+              createdBy: operatingUserId,
+              updatedBy: operatingUserId,
+            })
+            console.log(`[BE updateUser] Inserted EmployeeManager record ID: ${createdEmpMgr.id}`)
+          } else {
+            console.log(
+              `[BE updateUser] Manager unassigned for locId=${pId}. Old manager record removed, no new entry created.`,
+            )
+          }
+        }
+      } else if (cleanMgrId) {
+        const currentLocs = await UserLocation.findAll({ where: { userId: user.id } })
+        for (const loc of currentLocs) {
+          console.log(`[BE updateUser] Fallback manager update for locId=${loc.locId}`)
+          await EmployeeManager.destroy({ where: { userId: user.id, locId: loc.locId }, force: true })
+          await EmployeeManager.create({
+            userId: user.id,
+            managerId: cleanMgrId,
+            locId: loc.locId,
+            createdBy: operatingUserId,
+            updatedBy: operatingUserId,
+          })
+        }
+      }
+    } else {
+      console.log('[BE updateUser] No location/manager update fields provided in req.body. Skipping location updates.')
+    }
+    console.log('==================================================')
+    console.log('--------------------------------------------------')
 
     const updatedUser = await User.findByPk(user.id, {
       include: [
         { model: UserDetail, as: 'profile' },
-        { model: UserRole, as: 'userRoles', include: [{ model: Role, as: 'role' }] },
+        {
+          model: UserLocation,
+          as: 'userLocations',
+          include: userLocationInclude,
+        },
+        employeeManagerInclude,
         { model: Property, as: 'assignedProperties', through: { attributes: [] } },
       ],
     })
@@ -438,7 +968,7 @@ export async function updateUser(req: Request, res: Response): Promise<void> {
     res.status(200).json({
       success: true,
       message: 'User updated successfully',
-      data: updatedUser,
+      data: formatUserResponse(updatedUser),
     })
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Unknown error'

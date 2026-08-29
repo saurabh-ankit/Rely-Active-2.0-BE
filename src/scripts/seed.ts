@@ -1,6 +1,7 @@
 import bcrypt from 'bcryptjs'
+import { Op } from 'sequelize'
 import sequelize from '../config/db/index.js'
-import { Department, JobCategory, Resource, Role, User, UserDetail, UserRole } from '../models/index.js'
+import { Department, JobCategory, Property, Resource, Role, User, UserDetail, UserLocation } from '../models/index.js'
 
 export async function seedRbacData() {
   console.log('🌱 Starting RBAC & Super Admin Seeder...')
@@ -41,78 +42,56 @@ export async function seedRbacData() {
       key: 'FNB',
       name: 'Food',
       description: 'Food & Beverage dining and orders',
-      type: 'MODULE',
-      path: '/admin/fnb-history',
     },
     {
       key: 'RESIDENT',
       name: 'Resident',
       description: 'Resident management & directory',
-      type: 'MODULE',
-      path: '/admin/residents',
     },
     {
       key: 'EMPLOYEE',
       name: 'Employee',
       description: 'Employee directory & staff profiles',
-      type: 'MODULE',
-      path: '/admin/employees',
     },
     {
       key: 'ROSTER',
       name: 'Shift & Roster',
       description: 'Shift & roster schedules',
-      type: 'MODULE',
-      path: '/admin/shift-roster-management',
     },
     {
       key: 'TICKETS',
       name: 'Ticket Management',
       description: 'Repair & Maintenance, Concierge, Housekeeping, Food Tickets',
-      type: 'MODULE',
-      path: '/admin/tickets',
     },
     {
       key: 'GNS',
       name: 'Gate & Security',
       description: 'Gate passes, visitor check-ins & security scans',
-      type: 'MODULE',
-      path: '/admin/visitor-history',
     },
     {
       key: 'INVENTORY',
       name: 'Inventory',
       description: 'Inventory & stock management',
-      type: 'MODULE',
-      path: '/admin/inventory/home',
     },
     {
       key: 'ASSET',
       name: 'Asset Management',
       description: 'Asset tracking & maintenance',
-      type: 'MODULE',
-      path: '/admin/asset-management',
     },
     {
       key: 'MEDICAL',
       name: 'Medical',
       description: 'Medical dashboard, care tasks & records',
-      type: 'MODULE',
-      path: '/admin/medical',
     },
     {
       key: 'BILLING',
       name: 'Billing',
       description: 'Invoices, payments & ledgers',
-      type: 'MODULE',
-      path: '/admin/billing-management',
     },
     {
       key: 'EVENTS',
       name: 'Events',
       description: 'Community events & activities',
-      type: 'MODULE',
-      path: '/admin/events',
     },
   ]
 
@@ -149,38 +128,99 @@ export async function seedRbacData() {
 
   // ── 4. Job Categories per Department ───────────────────────────────────────
   const jobCategoriesData = [
-    { departmentCode: 'RNM', code: 'ELEC', name: 'Electrician', description: 'Electrical maintenance & repairs' },
-    { departmentCode: 'RNM', code: 'PLUM', name: 'Plumber', description: 'Plumbing maintenance & repairs' },
+    // Housekeeping (HK)
+    { departmentCode: 'HK', code: 'HK_OPS', name: 'Housekeeping Operations', description: 'Housekeeping Operations' },
+    { departmentCode: 'HK', code: 'HK_CLEAN', name: 'Cleaning Services', description: 'Cleaning Services' },
+    { departmentCode: 'HK', code: 'HK_LAUNDRY', name: 'Laundry Services', description: 'Laundry Services' },
+    { departmentCode: 'HK', code: 'HK_WASTE', name: 'Waste Management', description: 'Waste Management' },
+    { departmentCode: 'HK', code: 'HK_ATTENDANT', name: 'Room Attendant', description: 'Room Attendant' },
+
+    // Attendance & Workforce (ATT)
+    { departmentCode: 'ATT', code: 'ATT_MGMT', name: 'Attendance Management', description: 'Attendance Management' },
+    { departmentCode: 'ATT', code: 'ATT_WORKFORCE', name: 'Workforce Planning', description: 'Workforce Planning' },
+    { departmentCode: 'ATT', code: 'ATT_HROPS', name: 'HR Operations', description: 'HR Operations' },
+    { departmentCode: 'ATT', code: 'ATT_PAYROLL', name: 'Payroll & Timekeeping', description: 'Payroll & Timekeeping' },
+
+    // Nursing (NUR)
+    { departmentCode: 'NUR', code: 'NUR_OPS', name: 'Nursing Operations', description: 'Nursing Operations' },
+    { departmentCode: 'NUR', code: 'NUR_CLINICAL', name: 'Clinical Nursing', description: 'Clinical Nursing' },
+    { departmentCode: 'NUR', code: 'NUR_PATIENT_CARE', name: 'Patient Care', description: 'Patient Care' },
+    { departmentCode: 'NUR', code: 'NUR_ADMIN', name: 'Nursing Administration', description: 'Nursing Administration' },
+
+    // Repair & Maintenance (RNM)
+    { departmentCode: 'RNM', code: 'RNM_ELEC', name: 'Electrical', description: 'Electrical maintenance & repairs' },
+    { departmentCode: 'RNM', code: 'RNM_PLUM', name: 'Plumbing', description: 'Plumbing maintenance & repairs' },
+    { departmentCode: 'RNM', code: 'RNM_HVAC', name: 'HVAC', description: 'HVAC Technician & cooling' },
     {
       departmentCode: 'RNM',
-      code: 'HVAC',
-      name: 'HVAC Technician',
-      description: 'Air conditioning & ventilation technician',
+      code: 'RNM_CIVIL',
+      name: 'Civil Maintenance',
+      description: 'Civil & structural maintenance',
     },
     {
-      departmentCode: 'CON',
-      code: 'FDESK',
-      name: 'Front Desk Executive',
-      description: 'Concierge reception & desk management',
+      departmentCode: 'RNM',
+      code: 'RNM_BIOMED',
+      name: 'Biomedical Equipment',
+      description: 'Biomedical equipment maintenance',
     },
-    { departmentCode: 'FNB', code: 'CHEF', name: 'Head Chef', description: 'Kitchen culinary lead' },
-    { departmentCode: 'FNB', code: 'WAIT', name: 'F&B Steward', description: 'Dining service steward' },
-    { departmentCode: 'SEC', code: 'GUARD', name: 'Security Guard', description: 'Gate & perimeter security guard' },
-    { departmentCode: 'HK', code: 'CLEAN', name: 'Housekeeper', description: 'Facility cleaning staff' },
-    { departmentCode: 'NUR', code: 'SNURSE', name: 'Staff Nurse', description: 'Registered nursing staff' },
     {
-      departmentCode: 'DOC',
-      code: 'PHYS',
-      name: 'General Physician',
-      description: 'Medical doctor & healthcare practitioner',
+      departmentCode: 'RNM',
+      code: 'RNM_GEN',
+      name: 'General Maintenance',
+      description: 'General facility maintenance',
     },
+
+    // Food & Beverage (FNB)
+    { departmentCode: 'FNB', code: 'FNB_KITCHEN', name: 'Kitchen Operations', description: 'Kitchen Operations' },
+    { departmentCode: 'FNB', code: 'FNB_PROD', name: 'Food Production', description: 'Food Production' },
+    { departmentCode: 'FNB', code: 'FNB_SERVICE', name: 'Food Service', description: 'Food Service' },
+    { departmentCode: 'FNB', code: 'FNB_CATERING', name: 'Catering', description: 'Catering' },
+    { departmentCode: 'FNB', code: 'FNB_STEWARD', name: 'Stewarding', description: 'Stewarding' },
+    { departmentCode: 'FNB', code: 'FNB_NUTRITION', name: 'Nutrition & Dietary', description: 'Nutrition & Dietary' },
+
+    // Gate & Security (SEC)
+    { departmentCode: 'SEC', code: 'SEC_OPS', name: 'Security Operations', description: 'Security Operations' },
+    { departmentCode: 'SEC', code: 'SEC_ACCESS', name: 'Access Control', description: 'Access Control' },
+    { departmentCode: 'SEC', code: 'SEC_SURV', name: 'Surveillance', description: 'Surveillance' },
+    { departmentCode: 'SEC', code: 'SEC_VISITOR', name: 'Visitor Management', description: 'Visitor Management' },
+    { departmentCode: 'SEC', code: 'SEC_EMERGENCY', name: 'Emergency & Safety', description: 'Emergency & Safety' },
+
+    // Concierge (CON)
+    { departmentCode: 'CON', code: 'CON_FDESK', name: 'Front Desk', description: 'Front Desk' },
+    { departmentCode: 'CON', code: 'CON_GUEST', name: 'Guest Services', description: 'Guest Services' },
+    { departmentCode: 'CON', code: 'CON_RESIDENT', name: 'Resident Services', description: 'Resident Services' },
+    { departmentCode: 'CON', code: 'CON_TRANS', name: 'Transportation', description: 'Transportation' },
+    { departmentCode: 'CON', code: 'CON_SUPPORT', name: 'Customer Support', description: 'Customer Support' },
+
+    // Events (EVT)
+    { departmentCode: 'EVT', code: 'EVT_PLANNING', name: 'Event Planning', description: 'Event Planning' },
+    { departmentCode: 'EVT', code: 'EVT_OPS', name: 'Event Operations', description: 'Event Operations' },
+    { departmentCode: 'EVT', code: 'EVT_COMMUNITY', name: 'Community Activities', description: 'Community Activities' },
+    { departmentCode: 'EVT', code: 'EVT_REC', name: 'Recreation', description: 'Recreation' },
+    { departmentCode: 'EVT', code: 'EVT_ENTERTAIN', name: 'Entertainment', description: 'Entertainment' },
+
+    // Medical / Doctor (DOC)
+    { departmentCode: 'DOC', code: 'DOC_GEN', name: 'General Medicine', description: 'General Medicine' },
+    { departmentCode: 'DOC', code: 'DOC_SPEC', name: 'Specialist Medicine', description: 'Specialist Medicine' },
+    { departmentCode: 'DOC', code: 'DOC_CLINICAL', name: 'Clinical Services', description: 'Clinical Services' },
+    { departmentCode: 'DOC', code: 'DOC_DIAG', name: 'Diagnostics', description: 'Diagnostics' },
+    { departmentCode: 'DOC', code: 'DOC_EMERGENCY', name: 'Emergency Care', description: 'Emergency Care' },
   ]
+
+  const validCodes = jobCategoriesData.map((jc) => jc.code)
+  await JobCategory.destroy({
+    where: {
+      code: {
+        [Op.notIn]: validCodes,
+      },
+    },
+  })
 
   let categoryCount = 0
   for (const jc of jobCategoriesData) {
     const parentDept = createdDepartments[jc.departmentCode]
     if (parentDept) {
-      await JobCategory.findOrCreate({
+      const [cat, created] = await JobCategory.findOrCreate({
         where: { code: jc.code },
         defaults: {
           departmentId: parentDept.id,
@@ -190,6 +230,14 @@ export async function seedRbacData() {
           isActive: true,
         },
       })
+      if (!created) {
+        await cat.update({
+          departmentId: parentDept.id,
+          name: jc.name,
+          description: jc.description,
+          isActive: true,
+        })
+      }
       categoryCount++
     }
   }
@@ -228,20 +276,23 @@ export async function seedRbacData() {
       userId: superAdminUser.id,
       firstName: 'Super',
       lastName: 'Admin',
-      designation: 'Platform Administrator',
-      employeeCode: 'SA-001',
+      dateOfJoining: '2026-08-28',
+      employeeCode: 'EMP-20260828-0001',
     },
   })
 
   const superAdminRole = createdRoles['SUPER_ADMIN']
   if (superAdminRole) {
-    await UserRole.findOrCreate({
+    const firstProperty = await Property.findOne()
+    const locId = firstProperty?.id || '00000000-0000-0000-0000-000000000000'
+    await UserLocation.findOrCreate({
       where: {
         userId: superAdminUser.id,
         roleId: superAdminRole.id,
       },
       defaults: {
         userId: superAdminUser.id,
+        locId,
         roleId: superAdminRole.id,
         isActive: true,
       },
