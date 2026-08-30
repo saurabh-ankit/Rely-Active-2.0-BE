@@ -56,6 +56,7 @@ interface FloorInputItem {
   is_sellable?: boolean
   description?: string | null
   units?: Array<{
+    id?: string
     unit_number: string
     unit_type?: string
     position?: number | null
@@ -73,45 +74,127 @@ interface FloorInputItem {
   }>
 }
 
-function resolveBlockFloorsAndUnits(blockInput: {
+interface BHKPositionItem {
+  position: number
+  direction?: string | null
+  view_facing?: string | null
+}
+
+interface BHKTemplateItem {
+  type?: string
+  carpet_area?: number | null
+  super_built_up_area?: number | null
+  built_up_area?: number | null
+  positions?: BHKPositionItem[]
+}
+
+interface BlockInputItem {
   total_floors?: number | string | null
   units_per_floor?: number | string | null
   prefix?: string | null
+  nomenclature_template?: string | null
+  bhk_templates?: BHKTemplateItem[]
   floors?: FloorInputItem[]
-}): FloorInputItem[] {
-  if (blockInput.floors && Array.isArray(blockInput.floors) && blockInput.floors.length > 0) {
-    return blockInput.floors
+}
+
+function generateUnitNumber(
+  template: string | null | undefined,
+  prefix: string,
+  floorNumber: number,
+  position: number,
+): string {
+  if (template) {
+    return template
+      .replace(/\{\{TowerPrefix\}\}/g, prefix)
+      .replace(/\{\{FloorNumber\}\}/g, String(floorNumber))
+      .replace(/\{\{Position\}\}/g, String(position))
   }
+  return `${prefix}-${floorNumber}${position}`
+}
 
-  const totalF = blockInput.total_floors ? Number(blockInput.total_floors) : 0
+function resolveBlockFloorsAndUnits(blockInput: BlockInputItem): FloorInputItem[] {
+  const customFloors = Array.isArray(blockInput.floors) ? blockInput.floors : []
+  const maxCustomFloorNum = customFloors.reduce((max, fl) => Math.max(max, Number(fl.floor_number) || 0), 0)
+  const totalF = blockInput.total_floors ? Number(blockInput.total_floors) : maxCustomFloorNum
+
+  if (totalF <= 0 && customFloors.length === 0) return []
+
   const unitsPerF = blockInput.units_per_floor ? Number(blockInput.units_per_floor) : 0
-  if (totalF <= 0) return []
-
   const prefix = blockInput.prefix || 'A'
+  const bhkTemplates = Array.isArray(blockInput.bhk_templates) ? blockInput.bhk_templates : []
+  const template = blockInput.nomenclature_template || null
+
   const generated: FloorInputItem[] = []
+  const floorCount = totalF > 0 ? totalF : maxCustomFloorNum
 
-  for (let fNum = 1; fNum <= totalF; fNum++) {
+  for (let fNum = 1; fNum <= floorCount; fNum++) {
     const isGround = fNum === 1
-    const floorUnits = []
+    const existingFloor = customFloors.find((fl) => Number(fl.floor_number) === fNum)
 
-    if (unitsPerF > 0) {
-      for (let uNum = 1; uNum <= unitsPerF; uNum++) {
-        const uNo = `${prefix}-${fNum}${String(uNum).padStart(2, '0')}`
+    const floorName = existingFloor?.floor_name || (isGround ? 'Ground Floor' : `Floor ${fNum}`)
+    const floorType = existingFloor?.floor_type || (isGround ? 'GROUND_FLOOR' : 'FLOOR')
+    const isSellable = existingFloor?.is_sellable !== undefined ? Boolean(existingFloor.is_sellable) : true
+    const description = existingFloor?.description || null
+
+    const floorUnits: FloorInputItem['units'] = []
+    const existingUnits = existingFloor?.units && Array.isArray(existingFloor.units) ? existingFloor.units : []
+
+    if (isSellable && unitsPerF > 0) {
+      for (let pos = 1; pos <= unitsPerF; pos++) {
+        const existingUnit = existingUnits.find(
+          (u) => Number(u.position) === pos || u.unit_number === generateUnitNumber(template, prefix, fNum, pos),
+        )
+
+        const assignedBHK = bhkTemplates.find((t) => t.positions?.some((p) => Number(p.position) === pos))
+        const posObj = assignedBHK?.positions?.find((p) => Number(p.position) === pos)
+
+        const unitNum = generateUnitNumber(template, prefix, fNum, pos)
+        const unitType = assignedBHK?.type || existingUnit?.unit_type || '2BHK'
+        const carpetArea =
+          assignedBHK?.carpet_area !== undefined && assignedBHK?.carpet_area !== null
+            ? Number(assignedBHK.carpet_area)
+            : existingUnit?.carpet_area !== undefined && existingUnit?.carpet_area !== null
+              ? Number(existingUnit.carpet_area)
+              : null
+        const sbaArea =
+          assignedBHK?.super_built_up_area !== undefined && assignedBHK?.super_built_up_area !== null
+            ? Number(assignedBHK.super_built_up_area)
+            : existingUnit?.super_built_up_area !== undefined && existingUnit?.super_built_up_area !== null
+              ? Number(existingUnit.super_built_up_area)
+              : null
+        const buaArea =
+          assignedBHK?.built_up_area !== undefined && assignedBHK?.built_up_area !== null
+            ? Number(assignedBHK.built_up_area)
+            : existingUnit?.built_up_area !== undefined && existingUnit?.built_up_area !== null
+              ? Number(existingUnit.built_up_area)
+              : sbaArea
+        const direction = posObj?.direction || existingUnit?.direction || null
+        const viewFacing = posObj?.view_facing || existingUnit?.view_facing || null
+
         floorUnits.push({
-          unit_number: uNo,
-          unit_type: '2BHK',
-          position: uNum,
-          is_sellable: true,
-          status: 'available',
+          ...(existingUnit?.id ? { id: existingUnit.id } : {}),
+          unit_number: unitNum,
+          unit_type: unitType,
+          position: pos,
+          direction,
+          view_facing: viewFacing,
+          is_sellable: existingUnit?.is_sellable !== undefined ? Boolean(existingUnit.is_sellable) : true,
+          carpet_area: carpetArea,
+          built_up_area: buaArea,
+          super_built_up_area: sbaArea,
+          status: existingUnit?.status || 'available',
         })
       }
+    } else if (existingUnits.length > 0) {
+      floorUnits.push(...existingUnits)
     }
 
     generated.push({
       floor_number: fNum,
-      floor_name: isGround ? 'Ground Floor' : `Floor ${fNum}`,
-      floor_type: isGround ? 'GROUND_FLOOR' : 'FLOOR',
-      is_sellable: true,
+      floor_name: floorName,
+      floor_type: floorType,
+      is_sellable: isSellable,
+      description,
       units: floorUnits,
     })
   }
@@ -384,67 +467,154 @@ export const updateProperty = async (req: Request, res: Response, next: NextFunc
     await existing.update({ ...propertyFields, updatedBy: operatingUserId })
 
     if (blocksInput && Array.isArray(blocksInput)) {
-      // Deactivate existing blocks for this property
-      await PropertyBlock.update(
-        { isDeleted: true, isActive: false, updatedBy: operatingUserId },
-        { where: { propertyId: id, isDeleted: false } },
-      )
+      const existingBlocks = await PropertyBlock.findAll({
+        where: { propertyId: id, isDeleted: false },
+      })
+
+      const incomingBlockIds = blocksInput
+        .map((b: { id?: string }) => b.id)
+        .filter((bId): bId is string => Boolean(bId))
+
+      // Soft-delete blocks that were removed in edit
+      const blocksToDelete = existingBlocks.filter((b) => !incomingBlockIds.includes(b.id))
+      for (const bToDelete of blocksToDelete) {
+        await bToDelete.update({ isDeleted: true, isActive: false, updatedBy: operatingUserId })
+      }
 
       for (const blockInput of blocksInput) {
-        const block = await PropertyBlock.create({
-          propertyId: id,
-          block_name: blockInput.block_name,
-          total_floors: blockInput.total_floors ? Number(blockInput.total_floors) : null,
-          units_per_floor: blockInput.units_per_floor ? Number(blockInput.units_per_floor) : null,
-          prefix: blockInput.prefix || null,
-          price_per_sqft: blockInput.price_per_sqft ? Number(blockInput.price_per_sqft) : null,
-          nomenclature_template: blockInput.nomenclature_template || null,
-          bhk_templates: blockInput.bhk_templates || null,
-          description: blockInput.description || null,
-          isActive: true,
-          isDeleted: false,
-          createdBy: operatingUserId,
-          updatedBy: operatingUserId,
-        })
+        let block = blockInput.id
+          ? existingBlocks.find((b) => b.id === blockInput.id)
+          : existingBlocks.find((b) => b.block_name === blockInput.block_name)
 
-        const resolvedFloors = resolveBlockFloorsAndUnits(blockInput)
-        for (const floorInput of resolvedFloors) {
-          const floor = await PropertyFloor.create({
-            blockId: block.id,
-            floor_number: Number(floorInput.floor_number),
-            floor_name: floorInput.floor_name || null,
-            floor_type: floorInput.floor_type || 'FLOOR',
-            is_sellable: floorInput.is_sellable ?? true,
-            description: floorInput.description || null,
+        if (block) {
+          await block.update({
+            block_name: blockInput.block_name,
+            total_floors: blockInput.total_floors ? Number(blockInput.total_floors) : null,
+            units_per_floor: blockInput.units_per_floor ? Number(blockInput.units_per_floor) : null,
+            prefix: blockInput.prefix || null,
+            price_per_sqft: blockInput.price_per_sqft ? Number(blockInput.price_per_sqft) : null,
+            nomenclature_template: blockInput.nomenclature_template || null,
+            bhk_templates: blockInput.bhk_templates || null,
+            description: blockInput.description || null,
+            updatedBy: operatingUserId,
+          })
+        } else {
+          block = await PropertyBlock.create({
+            propertyId: id,
+            block_name: blockInput.block_name,
+            total_floors: blockInput.total_floors ? Number(blockInput.total_floors) : null,
+            units_per_floor: blockInput.units_per_floor ? Number(blockInput.units_per_floor) : null,
+            prefix: blockInput.prefix || null,
+            price_per_sqft: blockInput.price_per_sqft ? Number(blockInput.price_per_sqft) : null,
+            nomenclature_template: blockInput.nomenclature_template || null,
+            bhk_templates: blockInput.bhk_templates || null,
+            description: blockInput.description || null,
             isActive: true,
             isDeleted: false,
             createdBy: operatingUserId,
             updatedBy: operatingUserId,
           })
+        }
+
+        const existingFloors = await PropertyFloor.findAll({
+          where: { blockId: block.id, isDeleted: false },
+        })
+
+        const resolvedFloors = resolveBlockFloorsAndUnits(blockInput)
+        const incomingFloorNumbers = resolvedFloors.map((f) => Number(f.floor_number))
+
+        const floorsToDelete = existingFloors.filter((f) => !incomingFloorNumbers.includes(f.floor_number))
+        for (const fToDelete of floorsToDelete) {
+          await fToDelete.update({ isDeleted: true, isActive: false, updatedBy: operatingUserId })
+        }
+
+        for (const floorInput of resolvedFloors) {
+          let floor = existingFloors.find((f) => f.floor_number === Number(floorInput.floor_number))
+
+          if (floor) {
+            await floor.update({
+              floor_name: floorInput.floor_name || null,
+              floor_type: floorInput.floor_type || 'FLOOR',
+              is_sellable: floorInput.is_sellable ?? true,
+              description: floorInput.description || null,
+              updatedBy: operatingUserId,
+            })
+          } else {
+            floor = await PropertyFloor.create({
+              blockId: block.id,
+              floor_number: Number(floorInput.floor_number),
+              floor_name: floorInput.floor_name || null,
+              floor_type: floorInput.floor_type || 'FLOOR',
+              is_sellable: floorInput.is_sellable ?? true,
+              description: floorInput.description || null,
+              isActive: true,
+              isDeleted: false,
+              createdBy: operatingUserId,
+              updatedBy: operatingUserId,
+            })
+          }
 
           if (floorInput.units && Array.isArray(floorInput.units)) {
+            const existingUnits = await PropertyUnit.findAll({
+              where: { floorId: floor.id, isDeleted: false },
+            })
+
+            const incomingUnitNumbers = floorInput.units.map((u) => u.unit_number)
+            const incomingUnitIds = floorInput.units.map((u) => u.id).filter((uId): uId is string => Boolean(uId))
+
+            const unitsToDelete = existingUnits.filter(
+              (u) => !incomingUnitNumbers.includes(u.unit_number) && !incomingUnitIds.includes(u.id),
+            )
+            for (const uToDelete of unitsToDelete) {
+              await uToDelete.update({ isDeleted: true, isActive: false, updatedBy: operatingUserId })
+            }
+
             for (const unitInput of floorInput.units) {
-              await PropertyUnit.create({
-                floorId: floor.id,
-                unit_number: unitInput.unit_number,
-                unit_type: (unitInput.unit_type || '2BHK') as UnitType,
-                position: unitInput.position ? Number(unitInput.position) : null,
-                direction: unitInput.direction || null,
-                view_facing: unitInput.view_facing || null,
-                is_sellable: unitInput.is_sellable ?? true,
-                carpet_area: unitInput.carpet_area ? Number(unitInput.carpet_area) : null,
-                built_up_area: unitInput.built_up_area ? Number(unitInput.built_up_area) : null,
-                super_built_up_area: unitInput.super_built_up_area ? Number(unitInput.super_built_up_area) : null,
-                area_unit: (unitInput.area_unit || null) as UnitAreaUnit | null,
-                facing: (unitInput.facing || null) as UnitFacing | null,
-                price: unitInput.price ? Number(unitInput.price) : null,
-                price_per_sqft: unitInput.price_per_sqft ? Number(unitInput.price_per_sqft) : null,
-                status: (unitInput.status || 'available') as UnitStatus,
-                isActive: true,
-                isDeleted: false,
-                createdBy: operatingUserId,
-                updatedBy: operatingUserId,
-              })
+              const unit = unitInput.id
+                ? existingUnits.find((u) => u.id === unitInput.id)
+                : existingUnits.find((u) => u.unit_number === unitInput.unit_number)
+
+              if (unit) {
+                await unit.update({
+                  unit_number: unitInput.unit_number,
+                  unit_type: (unitInput.unit_type || '2BHK') as UnitType,
+                  position: unitInput.position ? Number(unitInput.position) : null,
+                  direction: unitInput.direction || null,
+                  view_facing: unitInput.view_facing || null,
+                  is_sellable: unitInput.is_sellable ?? true,
+                  carpet_area: unitInput.carpet_area ? Number(unitInput.carpet_area) : null,
+                  built_up_area: unitInput.built_up_area ? Number(unitInput.built_up_area) : null,
+                  super_built_up_area: unitInput.super_built_up_area ? Number(unitInput.super_built_up_area) : null,
+                  area_unit: (unitInput.area_unit || null) as UnitAreaUnit | null,
+                  facing: (unitInput.facing || null) as UnitFacing | null,
+                  price: unitInput.price ? Number(unitInput.price) : null,
+                  price_per_sqft: unitInput.price_per_sqft ? Number(unitInput.price_per_sqft) : null,
+                  status: (unitInput.status || unit.status || 'available') as UnitStatus,
+                  updatedBy: operatingUserId,
+                })
+              } else {
+                await PropertyUnit.create({
+                  floorId: floor.id,
+                  unit_number: unitInput.unit_number,
+                  unit_type: (unitInput.unit_type || '2BHK') as UnitType,
+                  position: unitInput.position ? Number(unitInput.position) : null,
+                  direction: unitInput.direction || null,
+                  view_facing: unitInput.view_facing || null,
+                  is_sellable: unitInput.is_sellable ?? true,
+                  carpet_area: unitInput.carpet_area ? Number(unitInput.carpet_area) : null,
+                  built_up_area: unitInput.built_up_area ? Number(unitInput.built_up_area) : null,
+                  super_built_up_area: unitInput.super_built_up_area ? Number(unitInput.super_built_up_area) : null,
+                  area_unit: (unitInput.area_unit || null) as UnitAreaUnit | null,
+                  facing: (unitInput.facing || null) as UnitFacing | null,
+                  price: unitInput.price ? Number(unitInput.price) : null,
+                  price_per_sqft: unitInput.price_per_sqft ? Number(unitInput.price_per_sqft) : null,
+                  status: (unitInput.status || 'available') as UnitStatus,
+                  isActive: true,
+                  isDeleted: false,
+                  createdBy: operatingUserId,
+                  updatedBy: operatingUserId,
+                })
+              }
             }
           }
         }
@@ -505,7 +675,16 @@ export const addBlock = async (req: Request, res: Response, next: NextFunction) 
     }
 
     const operatingUserId = (req as AuthenticatedRequest).user?.id || null
-    const { block_name, total_floors, description, floors } = req.body
+    const {
+      block_name,
+      total_floors,
+      units_per_floor,
+      prefix,
+      price_per_sqft,
+      nomenclature_template,
+      bhk_templates,
+      description,
+    } = req.body
     if (!block_name) {
       return res.status(400).json({ success: false, message: 'block_name is required' })
     }
@@ -514,6 +693,11 @@ export const addBlock = async (req: Request, res: Response, next: NextFunction) 
       propertyId,
       block_name,
       total_floors: total_floors ? Number(total_floors) : null,
+      units_per_floor: units_per_floor ? Number(units_per_floor) : null,
+      prefix: prefix || null,
+      price_per_sqft: price_per_sqft ? Number(price_per_sqft) : null,
+      nomenclature_template: nomenclature_template || null,
+      bhk_templates: bhk_templates || null,
       description: description || null,
       isActive: true,
       isDeleted: false,
@@ -521,40 +705,44 @@ export const addBlock = async (req: Request, res: Response, next: NextFunction) 
       updatedBy: operatingUserId,
     })
 
-    // Optionally seed floors immediately
-    if (floors && Array.isArray(floors)) {
-      for (const floorInput of floors) {
-        const floor = await PropertyFloor.create({
-          blockId: block.id,
-          floor_number: Number(floorInput.floor_number),
-          floor_name: floorInput.floor_name || null,
-          description: floorInput.description || null,
-          isActive: true,
-          isDeleted: false,
-          createdBy: operatingUserId,
-          updatedBy: operatingUserId,
-        })
+    const resolvedFloors = resolveBlockFloorsAndUnits(req.body)
+    for (const floorInput of resolvedFloors) {
+      const floor = await PropertyFloor.create({
+        blockId: block.id,
+        floor_number: Number(floorInput.floor_number),
+        floor_name: floorInput.floor_name || null,
+        floor_type: floorInput.floor_type || 'FLOOR',
+        is_sellable: floorInput.is_sellable ?? true,
+        description: floorInput.description || null,
+        isActive: true,
+        isDeleted: false,
+        createdBy: operatingUserId,
+        updatedBy: operatingUserId,
+      })
 
-        if (floorInput.units && Array.isArray(floorInput.units)) {
-          for (const unitInput of floorInput.units) {
-            await PropertyUnit.create({
-              floorId: floor.id,
-              unit_number: unitInput.unit_number,
-              unit_type: unitInput.unit_type || '2BHK',
-              carpet_area: unitInput.carpet_area ? Number(unitInput.carpet_area) : null,
-              built_up_area: unitInput.built_up_area ? Number(unitInput.built_up_area) : null,
-              super_built_up_area: unitInput.super_built_up_area ? Number(unitInput.super_built_up_area) : null,
-              area_unit: unitInput.area_unit || null,
-              facing: unitInput.facing || null,
-              price: unitInput.price ? Number(unitInput.price) : null,
-              price_per_sqft: unitInput.price_per_sqft ? Number(unitInput.price_per_sqft) : null,
-              status: unitInput.status || 'available',
-              isActive: true,
-              isDeleted: false,
-              createdBy: operatingUserId,
-              updatedBy: operatingUserId,
-            })
-          }
+      if (floorInput.units && Array.isArray(floorInput.units)) {
+        for (const unitInput of floorInput.units) {
+          await PropertyUnit.create({
+            floorId: floor.id,
+            unit_number: unitInput.unit_number,
+            unit_type: (unitInput.unit_type || '2BHK') as UnitType,
+            position: unitInput.position ? Number(unitInput.position) : null,
+            direction: unitInput.direction || null,
+            view_facing: unitInput.view_facing || null,
+            is_sellable: unitInput.is_sellable ?? true,
+            carpet_area: unitInput.carpet_area ? Number(unitInput.carpet_area) : null,
+            built_up_area: unitInput.built_up_area ? Number(unitInput.built_up_area) : null,
+            super_built_up_area: unitInput.super_built_up_area ? Number(unitInput.super_built_up_area) : null,
+            area_unit: (unitInput.area_unit || null) as UnitAreaUnit | null,
+            facing: (unitInput.facing || null) as UnitFacing | null,
+            price: unitInput.price ? Number(unitInput.price) : null,
+            price_per_sqft: unitInput.price_per_sqft ? Number(unitInput.price_per_sqft) : null,
+            status: (unitInput.status || 'available') as UnitStatus,
+            isActive: true,
+            isDeleted: false,
+            createdBy: operatingUserId,
+            updatedBy: operatingUserId,
+          })
         }
       }
     }

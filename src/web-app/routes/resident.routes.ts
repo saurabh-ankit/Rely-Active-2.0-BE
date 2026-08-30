@@ -3,6 +3,7 @@ import {
   createResident,
   deleteResident,
   getAllResidents,
+  getResidentById,
   getResidentsByUnit,
   updateResident,
 } from '../controllers/resident.controller.js'
@@ -17,6 +18,7 @@ router.post('/auth/login', residentLogin)
 router.post('/', createResident)
 router.get('/', getAllResidents)
 router.get('/unit/:unitId', getResidentsByUnit)
+router.get('/:id', getResidentById)
 router.put('/:id', updateResident)
 router.delete('/:id', deleteResident)
 

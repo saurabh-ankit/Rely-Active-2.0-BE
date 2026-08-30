@@ -1,7 +1,7 @@
 import { DataTypes, Optional } from 'sequelize'
 import sequelize from '../config/db/index.js'
 import { BaseAttributes, BaseModel, baseModelColumns } from './base.model.js'
-import { OwnershipType, ResidentStatus, ResidentType } from '../enums/resident.enum.js'
+import { Gender, OwnershipType, ResidentStatus, ResidentType } from '../enums/resident.enum.js'
 
 import { PropertyUnit } from './propertyUnit.model.js'
 import { ResidentFamilyMember } from './residentFamilyMember.model.js'
@@ -15,6 +15,8 @@ export interface ResidentAttributes extends BaseAttributes {
   isResiding: boolean
   firstName: string
   lastName?: string | null
+  gender?: Gender | null
+  dob?: Date | string | null
   username?: string | null
   passwordHash?: string | null
   email?: string | null
@@ -36,6 +38,8 @@ export type ResidentCreationAttributes = Optional<
   | 'ownershipType'
   | 'isResiding'
   | 'lastName'
+  | 'gender'
+  | 'dob'
   | 'username'
   | 'passwordHash'
   | 'email'
@@ -65,6 +69,8 @@ export class Resident extends BaseModel<ResidentAttributes, ResidentCreationAttr
   declare isResiding: boolean
   declare firstName: string
   declare lastName: string | null
+  declare gender: Gender | null
+  declare dob: Date | string | null
   declare username: string | null
   declare passwordHash: string | null
   declare email: string | null
@@ -118,6 +124,14 @@ Resident.init(
       type: DataTypes.STRING(100),
       allowNull: true,
     },
+    gender: {
+      type: DataTypes.ENUM('MALE', 'FEMALE', 'OTHER'),
+      allowNull: true,
+    },
+    dob: {
+      type: DataTypes.DATEONLY,
+      allowNull: true,
+    },
     username: {
       type: DataTypes.STRING(100),
       allowNull: true,
@@ -144,7 +158,7 @@ Resident.init(
       allowNull: true,
     },
     photoUrl: {
-      type: DataTypes.STRING(255),
+      type: DataTypes.TEXT('long'),
       allowNull: true,
     },
     moveInDate: {

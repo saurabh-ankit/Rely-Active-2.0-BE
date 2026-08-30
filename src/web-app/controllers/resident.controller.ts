@@ -1,6 +1,7 @@
 import type { Request, Response } from 'express'
 import bcrypt from 'bcryptjs'
-import { PropertyUnit, Resident, ResidentFamilyMember } from '../../models/index.js'
+import { Op } from 'sequelize'
+import { Property, PropertyFloor, PropertyUnit, Resident, ResidentFamilyMember } from '../../models/index.js'
 import { OwnershipType, ResidentStatus, ResidentType } from '../../enums/resident.enum.js'
 import { OccupancyStatus } from '../../enums/propertyUnit.enum.js'
 
@@ -15,6 +16,8 @@ export async function createResident(req: Request, res: Response): Promise<void>
       isResiding,
       firstName,
       lastName,
+      gender,
+      dob,
       username,
       password,
       email,
@@ -26,12 +29,33 @@ export async function createResident(req: Request, res: Response): Promise<void>
       familyMembers,
     } = req.body
 
-    if (!unitId || !locId || !firstName || !residentType) {
+    if (!unitId || !locId || !firstName || !residentType || !email || !phone) {
       res.status(400).json({
         success: false,
-        message: 'unitId, locId, firstName, and residentType are required.',
+        message: 'unitId, locId, firstName, residentType, email, and phone are required.',
       })
       return
+    }
+
+    const phoneRegex = /^[6-9]\d{9}$/
+    const cleanPhone = String(phone).replace(/[\s-]/g, '')
+    if (!phoneRegex.test(cleanPhone)) {
+      res.status(400).json({
+        success: false,
+        message: 'Mobile phone must be a 10-digit number starting with 6, 7, 8, or 9.',
+      })
+      return
+    }
+
+    if (emergencyContact) {
+      const cleanEmergency = String(emergencyContact).replace(/[\s-]/g, '')
+      if (!phoneRegex.test(cleanEmergency)) {
+        res.status(400).json({
+          success: false,
+          message: 'Emergency contact phone must be a 10-digit number starting with 6, 7, 8, or 9.',
+        })
+        return
+      }
     }
 
     const unit = await PropertyUnit.findByPk(unitId)
@@ -117,6 +141,8 @@ export async function createResident(req: Request, res: Response): Promise<void>
       isResiding: residingFlag,
       firstName: firstName.trim(),
       lastName: lastName ? lastName.trim() : null,
+      gender: gender || null,
+      dob: dob || null,
       username: username ? username.trim() : null,
       passwordHash: hashedPassword,
       email: email ? email.trim() : null,
@@ -151,6 +177,8 @@ export async function createResident(req: Request, res: Response): Promise<void>
             isResiding: fmResiding,
             gender: fm.gender || null,
             dob: fm.dob || null,
+            bloodGroup: fm.bloodGroup || null,
+            photoUrl: fm.photoUrl || null,
             phone: fm.phone ? fm.phone.trim() : null,
             username: fm.username ? fm.username.trim() : null,
             passwordHash: fmPasswordHash,
@@ -223,18 +251,35 @@ export async function getResidentsByUnit(req: Request, res: Response): Promise<v
 
 export async function getAllResidents(req: Request, res: Response): Promise<void> {
   try {
-    const { locId, unitId, residentType, isResiding } = req.query
+    const { locId, unitId, residentType, isResiding, search } = req.query
 
     const whereClause: Record<string, unknown> = { isDeleted: false }
     if (locId) whereClause.locId = locId
     if (unitId) whereClause.unitId = unitId
-    if (residentType) whereClause.residentType = residentType
-    if (isResiding !== undefined) whereClause.isResiding = isResiding === 'true'
+    if (residentType && residentType !== 'ALL') whereClause.residentType = residentType
+    if (isResiding !== undefined && isResiding !== 'ALL') whereClause.isResiding = isResiding === 'true'
+
+    if (search && typeof search === 'string' && search.trim().length > 0) {
+      const q = `%${search.trim()}%`
+      whereClause[Op.or as unknown as string] = [
+        { firstName: { [Op.like]: q } },
+        { lastName: { [Op.like]: q } },
+        { username: { [Op.like]: q } },
+        { phone: { [Op.like]: q } },
+        { email: { [Op.like]: q } },
+        { '$unit.unit_number$': { [Op.like]: q } },
+      ]
+    }
 
     const residents = await Resident.findAll({
       where: whereClause,
       include: [
-        { model: PropertyUnit, as: 'unit' },
+        { model: Property, as: 'property' },
+        {
+          model: PropertyUnit,
+          as: 'unit',
+          include: [{ model: PropertyFloor, as: 'floor' }],
+        },
         { model: ResidentFamilyMember, as: 'familyMembers', where: { isDeleted: false }, required: false },
       ],
       order: [['createdAt', 'DESC']],
@@ -246,6 +291,37 @@ export async function getAllResidents(req: Request, res: Response): Promise<void
     })
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Error fetching residents'
+    res.status(500).json({ success: false, message })
+  }
+}
+
+export async function getResidentById(req: Request, res: Response): Promise<void> {
+  try {
+    const id = req.params.id as string
+    const resident = await Resident.findOne({
+      where: { id, isDeleted: false },
+      include: [
+        { model: Property, as: 'property' },
+        {
+          model: PropertyUnit,
+          as: 'unit',
+          include: [{ model: PropertyFloor, as: 'floor' }],
+        },
+        { model: ResidentFamilyMember, as: 'familyMembers', where: { isDeleted: false }, required: false },
+      ],
+    })
+
+    if (!resident) {
+      res.status(404).json({ success: false, message: 'Resident profile not found' })
+      return
+    }
+
+    res.status(200).json({
+      success: true,
+      data: resident,
+    })
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : 'Error fetching resident profile'
     res.status(500).json({ success: false, message })
   }
 }
@@ -263,10 +339,13 @@ export async function updateResident(req: Request, res: Response): Promise<void>
     const {
       firstName,
       lastName,
+      gender,
+      dob,
       email,
       phone,
       emergencyContact,
       bloodGroup,
+      photoUrl,
       moveOutDate,
       status,
       isResiding,
@@ -277,13 +356,39 @@ export async function updateResident(req: Request, res: Response): Promise<void>
     const operatorId = userPayload?.id || userPayload?.username || 'system'
     const updatedResiding = isResiding !== undefined ? Boolean(isResiding) : resident.isResiding
 
+    const phoneRegex = /^[6-9]\d{9}$/
+    if (phone) {
+      const cleanPhone = String(phone).replace(/[\s-]/g, '')
+      if (!phoneRegex.test(cleanPhone)) {
+        res.status(400).json({
+          success: false,
+          message: 'Mobile phone must be a 10-digit number starting with 6, 7, 8, or 9.',
+        })
+        return
+      }
+    }
+
+    if (emergencyContact) {
+      const cleanEmergency = String(emergencyContact).replace(/[\s-]/g, '')
+      if (!phoneRegex.test(cleanEmergency)) {
+        res.status(400).json({
+          success: false,
+          message: 'Emergency contact phone must be a 10-digit number starting with 6, 7, 8, or 9.',
+        })
+        return
+      }
+    }
+
     await resident.update({
       firstName: firstName ? firstName.trim() : resident.firstName,
       lastName: lastName !== undefined ? lastName : resident.lastName,
+      gender: gender !== undefined ? gender : resident.gender,
+      dob: dob !== undefined ? dob : resident.dob,
       email: email !== undefined ? email : resident.email,
       phone: phone !== undefined ? phone : resident.phone,
       emergencyContact: emergencyContact !== undefined ? emergencyContact : resident.emergencyContact,
       bloodGroup: bloodGroup !== undefined ? bloodGroup : resident.bloodGroup,
+      photoUrl: photoUrl !== undefined ? photoUrl : resident.photoUrl,
       moveOutDate: moveOutDate !== undefined ? moveOutDate : resident.moveOutDate,
       status: status || resident.status,
       isResiding: updatedResiding,
@@ -312,6 +417,8 @@ export async function updateResident(req: Request, res: Response): Promise<void>
               isResiding: fmResiding,
               gender: fm.gender || null,
               dob: fm.dob || null,
+              bloodGroup: fm.bloodGroup || null,
+              photoUrl: fm.photoUrl || null,
               phone: fm.phone ? fm.phone.trim() : null,
               username: fm.username ? fm.username.trim() : null,
               passwordHash: fmPasswordHash,
