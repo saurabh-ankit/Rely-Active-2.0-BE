@@ -104,6 +104,9 @@ export async function createResident(req: Request, res: Response): Promise<void>
       )
     }
 
+    const userPayload = (req as Request & { user?: { id?: string; username?: string } }).user
+    const operatorId = userPayload?.id || userPayload?.username || 'system'
+
     // 4. Create Resident Record
     const resident = await Resident.create({
       unitId,
@@ -124,6 +127,8 @@ export async function createResident(req: Request, res: Response): Promise<void>
       moveInDate: moveInDate || null,
       status: ResidentStatus.ACTIVE,
       isActive: true,
+      createdBy: operatorId,
+      updatedBy: operatorId,
     })
 
     // 5. Create Family Members if provided
@@ -135,17 +140,23 @@ export async function createResident(req: Request, res: Response): Promise<void>
             const rawPass = fm.password || 'Resident@123'
             fmPasswordHash = await bcrypt.hash(rawPass, 10)
           }
+
+          const fmResiding = residingFlag ? (fm.isResiding !== undefined ? Boolean(fm.isResiding) : true) : false
+
           return {
             residentId: resident.id,
             firstName: fm.firstName.trim(),
             lastName: fm.lastName ? fm.lastName.trim() : null,
             relation: fm.relation ? fm.relation.trim() : 'Family',
+            isResiding: fmResiding,
             gender: fm.gender || null,
-            age: fm.age ? Number(fm.age) : null,
+            dob: fm.dob || null,
             phone: fm.phone ? fm.phone.trim() : null,
             username: fm.username ? fm.username.trim() : null,
             passwordHash: fmPasswordHash,
             email: fm.email ? fm.email.trim() : null,
+            createdBy: operatorId,
+            updatedBy: operatorId,
             isDeleted: false,
           }
         }),
@@ -262,6 +273,10 @@ export async function updateResident(req: Request, res: Response): Promise<void>
       familyMembers,
     } = req.body
 
+    const userPayload = (req as Request & { user?: { id?: string; username?: string } }).user
+    const operatorId = userPayload?.id || userPayload?.username || 'system'
+    const updatedResiding = isResiding !== undefined ? Boolean(isResiding) : resident.isResiding
+
     await resident.update({
       firstName: firstName ? firstName.trim() : resident.firstName,
       lastName: lastName !== undefined ? lastName : resident.lastName,
@@ -271,7 +286,8 @@ export async function updateResident(req: Request, res: Response): Promise<void>
       bloodGroup: bloodGroup !== undefined ? bloodGroup : resident.bloodGroup,
       moveOutDate: moveOutDate !== undefined ? moveOutDate : resident.moveOutDate,
       status: status || resident.status,
-      isResiding: isResiding !== undefined ? Boolean(isResiding) : resident.isResiding,
+      isResiding: updatedResiding,
+      updatedBy: operatorId,
     })
 
     // Sync Family Members if provided
@@ -285,23 +301,32 @@ export async function updateResident(req: Request, res: Response): Promise<void>
               const rawPass = fm.password || 'Resident@123'
               fmPasswordHash = await bcrypt.hash(rawPass, 10)
             }
+
+            const fmResiding = updatedResiding ? (fm.isResiding !== undefined ? Boolean(fm.isResiding) : true) : false
+
             return {
               residentId: resident.id,
               firstName: fm.firstName.trim(),
               lastName: fm.lastName ? fm.lastName.trim() : null,
               relation: fm.relation ? fm.relation.trim() : 'Family',
+              isResiding: fmResiding,
               gender: fm.gender || null,
-              age: fm.age ? Number(fm.age) : null,
+              dob: fm.dob || null,
               phone: fm.phone ? fm.phone.trim() : null,
               username: fm.username ? fm.username.trim() : null,
               passwordHash: fmPasswordHash,
               email: fm.email ? fm.email.trim() : null,
+              createdBy: operatorId,
+              updatedBy: operatorId,
               isDeleted: false,
             }
           }),
         )
         await ResidentFamilyMember.bulkCreate(familyMemberRecords)
       }
+    } else if (!updatedResiding) {
+      // If owner changed to non-residing, update existing family members to non-residing as well
+      await ResidentFamilyMember.update({ isResiding: false }, { where: { residentId: resident.id } })
     }
 
     // Re-evaluate PropertyUnit OccupancyStatus

@@ -9,8 +9,9 @@ export interface ResidentFamilyMemberAttributes extends BaseAttributes {
   firstName: string
   lastName?: string | null
   relation: string
+  isResiding?: boolean
   gender?: Gender | null
-  age?: number | null
+  dob?: Date | string | null
   phone?: string | null
   username?: string | null
   passwordHash?: string | null
@@ -22,8 +23,9 @@ export type ResidentFamilyMemberCreationAttributes = Optional<
   ResidentFamilyMemberAttributes,
   | 'id'
   | 'lastName'
+  | 'isResiding'
   | 'gender'
-  | 'age'
+  | 'dob'
   | 'phone'
   | 'username'
   | 'passwordHash'
@@ -44,8 +46,9 @@ export class ResidentFamilyMember
   declare firstName: string
   declare lastName: string | null
   declare relation: string
+  declare isResiding: boolean
   declare gender: Gender | null
-  declare age: number | null
+  declare dob: Date | string | null
   declare phone: string | null
   declare username: string | null
   declare passwordHash: string | null
@@ -73,12 +76,17 @@ ResidentFamilyMember.init(
       type: DataTypes.STRING(50),
       allowNull: false,
     },
+    isResiding: {
+      type: DataTypes.BOOLEAN,
+      allowNull: false,
+      defaultValue: true,
+    },
     gender: {
       type: DataTypes.ENUM('MALE', 'FEMALE', 'OTHER'),
       allowNull: true,
     },
-    age: {
-      type: DataTypes.INTEGER,
+    dob: {
+      type: DataTypes.DATEONLY,
       allowNull: true,
     },
     phone: {

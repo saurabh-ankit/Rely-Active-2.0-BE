@@ -168,7 +168,8 @@ property_units
 
 1. **Owner (`OWNER`)**: Can be marked as `Physically Residing` (`isResiding = true`) or `Off-site Landlord` (`isResiding = false`).
 2. **Tenant (`TENANT`)**: Must be `Physically Residing` (`isResiding = true`). Tenants can ONLY be onboarded to flats that have a registered **Off-site Owner**.
-3. **Family Members (`resident_family_members`)**: Stored with relation, gender, age, contact info, and optional **individual mobile app login credentials** (`username`, `passwordHash`, `email`).
+3. **Family Members (`resident_family_members`)**: Stored with `firstName`, `lastName`, `relation`, `gender`, `dob` (Date of Birth), `phone`, `email`, `isResiding` (inherits `false` if primary owner is non-residing), `createdBy`, `updatedBy`, and optional **individual mobile app login credentials** (`username`, `passwordHash`).
+4. **Audit Tracking**: `createdBy` and `updatedBy` are automatically populated with operator identity (`req.user.id || req.user.username || 'system'`) across both `residents` and `resident_family_members`.
 
 ### Mobile App Authentication Endpoint
 

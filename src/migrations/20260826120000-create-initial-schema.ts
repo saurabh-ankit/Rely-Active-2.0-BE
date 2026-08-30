@@ -1250,12 +1250,17 @@ export async function up({ context: queryInterface }: { context: QueryInterface 
       type: DataTypes.STRING(50),
       allowNull: false,
     },
+    isResiding: {
+      type: DataTypes.BOOLEAN,
+      allowNull: false,
+      defaultValue: true,
+    },
     gender: {
       type: DataTypes.ENUM('MALE', 'FEMALE', 'OTHER'),
       allowNull: true,
     },
-    age: {
-      type: DataTypes.INTEGER,
+    dob: {
+      type: DataTypes.DATEONLY,
       allowNull: true,
     },
     phone: {

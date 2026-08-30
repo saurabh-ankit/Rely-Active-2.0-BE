@@ -94,7 +94,7 @@ function resolveBlockFloorsAndUnits(blockInput: {
     const isGround = fNum === 1
     const floorUnits = []
 
-    if (!isGround && unitsPerF > 0) {
+    if (unitsPerF > 0) {
       for (let uNum = 1; uNum <= unitsPerF; uNum++) {
         const uNo = `${prefix}-${fNum}${String(uNum).padStart(2, '0')}`
         floorUnits.push({
@@ -111,7 +111,7 @@ function resolveBlockFloorsAndUnits(blockInput: {
       floor_number: fNum,
       floor_name: isGround ? 'Ground Floor' : `Floor ${fNum}`,
       floor_type: isGround ? 'GROUND_FLOOR' : 'FLOOR',
-      is_sellable: !isGround,
+      is_sellable: true,
       units: floorUnits,
     })
   }
