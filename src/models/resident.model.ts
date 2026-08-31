@@ -3,8 +3,10 @@ import sequelize from '../config/db/index.js'
 import { BaseAttributes, BaseModel, baseModelColumns } from './base.model.js'
 import { Gender, OwnershipType, ResidentStatus, ResidentType } from '../enums/resident.enum.js'
 
-import { PropertyUnit } from './propertyUnit.model.js'
-import { ResidentFamilyMember } from './residentFamilyMember.model.js'
+import type { PropertyUnit } from './propertyUnit.model.js'
+import type { ResidentFamilyMember } from './residentFamilyMember.model.js'
+import type { FnbResidentPackage } from './fnbResidentPackage.model.js'
+import type { Property } from './property.model.js'
 
 export interface ResidentAttributes extends BaseAttributes {
   unitId: string
@@ -63,7 +65,9 @@ export class Resident extends BaseModel<ResidentAttributes, ResidentCreationAttr
   declare locId: string
   declare companyId: string | null
   declare unit?: PropertyUnit
+  declare property?: Property
   declare familyMembers?: ResidentFamilyMember[]
+  declare fnbPackages?: FnbResidentPackage[]
   declare residentType: ResidentType
   declare ownershipType: OwnershipType | null
   declare isResiding: boolean

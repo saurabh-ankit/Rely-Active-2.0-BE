@@ -214,21 +214,48 @@ router.put(
   completeServiceLog,
 )
 
-router.post('/maintenance/warranties', authenticate, createWarrantyValidation, validateRequest, createWarranty)
+const uploadDoc = upload.fields([
+  { name: 'document', maxCount: 1 },
+  { name: 'file', maxCount: 1 },
+])
+
+router.post(
+  '/maintenance/warranties',
+  authenticate,
+  uploadDoc,
+  createWarrantyValidation,
+  validateRequest,
+  createWarranty,
+)
 
 router.get('/maintenance/warranties', authenticate, getWarrantiesValidation, validateRequest, getWarranties)
 
-router.put('/maintenance/warranties/:id', authenticate, updateWarrantyValidation, validateRequest, updateWarranty)
+router.put(
+  '/maintenance/warranties/:id',
+  authenticate,
+  uploadDoc,
+  updateWarrantyValidation,
+  validateRequest,
+  updateWarranty,
+)
 
 router.delete('/maintenance/warranties/:id', authenticate, deleteWarrantyValidation, validateRequest, deleteWarranty)
 
-router.post('/maintenance/calibrations', authenticate, createCalibrationValidation, validateRequest, createCalibration)
+router.post(
+  '/maintenance/calibrations',
+  authenticate,
+  uploadDoc,
+  createCalibrationValidation,
+  validateRequest,
+  createCalibration,
+)
 
 router.get('/maintenance/calibrations', authenticate, getCalibrationsValidation, validateRequest, getCalibrations)
 
 router.put(
   '/maintenance/calibrations/:id',
   authenticate,
+  uploadDoc,
   updateCalibrationValidation,
   validateRequest,
   updateCalibration,
@@ -254,6 +281,7 @@ router.get(
 router.post(
   '/compliance/certifications',
   authenticate,
+  uploadDoc,
   createCertificationValidation,
   validateRequest,
   createCertification,
@@ -264,6 +292,7 @@ router.get('/compliance/certifications', authenticate, getCertificationsValidati
 router.put(
   '/compliance/certifications/:id',
   authenticate,
+  uploadDoc,
   updateCertificationValidation,
   validateRequest,
   updateCertification,
@@ -277,11 +306,25 @@ router.delete(
   deleteCertification,
 )
 
-router.post('/compliance/inspections', authenticate, createInspectionValidation, validateRequest, createInspection)
+router.post(
+  '/compliance/inspections',
+  authenticate,
+  uploadDoc,
+  createInspectionValidation,
+  validateRequest,
+  createInspection,
+)
 
 router.get('/compliance/inspections', authenticate, getInspectionsValidation, validateRequest, getInspections)
 
-router.put('/compliance/inspections/:id', authenticate, updateInspectionValidation, validateRequest, updateInspection)
+router.put(
+  '/compliance/inspections/:id',
+  authenticate,
+  uploadDoc,
+  updateInspectionValidation,
+  validateRequest,
+  updateInspection,
+)
 
 router.delete(
   '/compliance/inspections/:id',

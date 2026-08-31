@@ -8,6 +8,7 @@ import { logger } from './config/logger.js'
 import { errorHandler } from './middlewares/error/errorHandler.js'
 import { notFound } from './middlewares/error/notFound.js'
 import { apiRouter } from './web-app/routes/index.js'
+import { mobileApiRouter } from './mobile-app/routes/index.js'
 
 const corsOrigins = (process.env.CORS_ORIGINS || 'http://localhost:5173,http://localhost:5174')
   .split(',')
@@ -51,6 +52,7 @@ export function createApp() {
 
   app.get('/health', (_request, response) => response.json({ status: 'ok', service: 'rely-active-backend' }))
   app.use('/api/v1', apiRouter)
+  app.use('/api/v1/mobile', mobileApiRouter)
   app.use(notFound)
   app.use(errorHandler)
   return app

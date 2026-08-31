@@ -12,6 +12,7 @@ import {
 } from '../../../models/index.js'
 import { AppError } from '../../../utils/appError.js'
 import { errorResponse, successResponse } from '../../../utils/response/index.js'
+import { uploadFileToS3, uploadBase64ToS3 } from '../../../middlewares/s3/index.js'
 
 // ==================== SERVICE LOG CONTROLLERS ====================
 
@@ -249,11 +250,20 @@ export const completeServiceLog = async (req: AuthenticatedRequest, res: Respons
 
 export const createWarranty = async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const { assetId, vendorId, warrantyStartDate, warrantyEndDate, warrantyType, coverageDetails } = req.body
+    const { assetId, vendorId, warrantyStartDate, warrantyEndDate, warrantyType, coverageDetails, documentUrl } =
+      req.body
 
     const asset = await Asset.findByPk(assetId)
     if (!asset) {
       throw new AppError('Asset not found', 404)
+    }
+
+    let finalDocUrl: string | null = documentUrl || null
+    if (req.file) {
+      const s3Res = await uploadFileToS3(req.file, 'assets/warranties')
+      finalDocUrl = s3Res.location
+    } else if (finalDocUrl) {
+      finalDocUrl = await uploadBase64ToS3(finalDocUrl, 'assets/warranties')
     }
 
     const warranty = await AssetWarranty.create({
@@ -263,6 +273,7 @@ export const createWarranty = async (req: AuthenticatedRequest, res: Response) =
       warrantyEndDate,
       warrantyType,
       coverageDetails,
+      documentUrl: finalDocUrl,
       createdBy: req.user?.id || null,
     })
 
@@ -372,11 +383,19 @@ export const getWarranties = async (req: AuthenticatedRequest, res: Response) =>
 export const updateWarranty = async (req: AuthenticatedRequest, res: Response) => {
   try {
     const id = req.params.id as string
-    const { vendorId, warrantyStartDate, warrantyEndDate, warrantyType, coverageDetails } = req.body
+    const { vendorId, warrantyStartDate, warrantyEndDate, warrantyType, coverageDetails, documentUrl } = req.body
 
     const warranty = await AssetWarranty.findByPk(id)
     if (!warranty) {
       throw new AppError('Warranty not found', 404)
+    }
+
+    let finalDocUrl = warranty.documentUrl
+    if (req.file) {
+      const s3Res = await uploadFileToS3(req.file, 'assets/warranties')
+      finalDocUrl = s3Res.location
+    } else if (documentUrl !== undefined) {
+      finalDocUrl = await uploadBase64ToS3(documentUrl, 'assets/warranties')
     }
 
     await warranty.update({
@@ -385,6 +404,7 @@ export const updateWarranty = async (req: AuthenticatedRequest, res: Response) =
       ...(warrantyEndDate && { warrantyEndDate }),
       ...(warrantyType && { warrantyType }),
       ...(coverageDetails !== undefined && { coverageDetails }),
+      documentUrl: finalDocUrl,
       updatedBy: req.user?.id || null,
     })
 
@@ -444,11 +464,28 @@ export const deleteWarranty = async (req: AuthenticatedRequest, res: Response) =
 
 export const createCalibration = async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const { assetId, calibrationDate, nextCalibrationDate, calibratedBy, certificateNumber, result, notes } = req.body
+    const {
+      assetId,
+      calibrationDate,
+      nextCalibrationDate,
+      calibratedBy,
+      certificateNumber,
+      result,
+      notes,
+      documentUrl,
+    } = req.body
 
     const asset = await Asset.findByPk(assetId)
     if (!asset) {
       throw new AppError('Asset not found', 404)
+    }
+
+    let finalDocUrl: string | null = documentUrl || null
+    if (req.file) {
+      const s3Res = await uploadFileToS3(req.file, 'assets/calibrations')
+      finalDocUrl = s3Res.location
+    } else if (finalDocUrl) {
+      finalDocUrl = await uploadBase64ToS3(finalDocUrl, 'assets/calibrations')
     }
 
     const calibration = await AssetCalibration.create({
@@ -459,6 +496,7 @@ export const createCalibration = async (req: AuthenticatedRequest, res: Response
       certificateNumber,
       result,
       notes,
+      documentUrl: finalDocUrl,
       createdBy: req.user?.id || null,
     })
 
@@ -554,11 +592,20 @@ export const getCalibrations = async (req: AuthenticatedRequest, res: Response) 
 export const updateCalibration = async (req: AuthenticatedRequest, res: Response) => {
   try {
     const id = req.params.id as string
-    const { calibrationDate, nextCalibrationDate, calibratedBy, certificateNumber, result, notes } = req.body
+    const { calibrationDate, nextCalibrationDate, calibratedBy, certificateNumber, result, notes, documentUrl } =
+      req.body
 
     const calibration = await AssetCalibration.findByPk(id)
     if (!calibration) {
       throw new AppError('Calibration record not found', 404)
+    }
+
+    let finalDocUrl = calibration.documentUrl
+    if (req.file) {
+      const s3Res = await uploadFileToS3(req.file, 'assets/calibrations')
+      finalDocUrl = s3Res.location
+    } else if (documentUrl !== undefined) {
+      finalDocUrl = await uploadBase64ToS3(documentUrl, 'assets/calibrations')
     }
 
     await calibration.update({
@@ -568,6 +615,7 @@ export const updateCalibration = async (req: AuthenticatedRequest, res: Response
       ...(certificateNumber !== undefined && { certificateNumber }),
       ...(result && { result }),
       ...(notes !== undefined && { notes }),
+      documentUrl: finalDocUrl,
       updatedBy: req.user?.id || null,
     })
 

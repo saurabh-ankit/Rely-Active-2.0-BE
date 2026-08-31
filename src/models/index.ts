@@ -31,6 +31,14 @@ import { AssetCalibration } from './assetCalibration.model.js'
 import { AssetComplianceInspection } from './assetComplianceInspection.model.js'
 import { AssetComplianceCertification } from './assetComplianceCertification.model.js'
 import { AssetComplianceTraining } from './assetComplianceTraining.model.js'
+import { FnbGlobalPackage } from './fnbGlobalPackage.model.js'
+import { FnbPropertyPackage } from './fnbPropertyPackage.model.js'
+import { FnbResidentPackage } from './fnbResidentPackage.model.js'
+import { FnbDish } from './fnbDish.model.js'
+import { FnbPropertyDish } from './fnbPropertyDish.model.js'
+import { FnbMenu } from './fnbMenu.model.js'
+import { FnbMenuItem } from './fnbMenuItem.model.js'
+import { FnbResidentOrder } from './fnbResidentOrder.model.js'
 
 // ── Company associations ────────────────────────────────────────────────────
 Company.hasMany(CompanyCustomField, { foreignKey: 'companyId', as: 'customFields' })
@@ -185,6 +193,31 @@ AssetComplianceCertification.belongsTo(Asset, { foreignKey: 'assetId', as: 'asse
 
 AssetComplianceTraining.belongsTo(Asset, { foreignKey: 'assetId', as: 'asset' })
 
+// ── F&B associations ───────────────────────────────────────────────────
+FnbGlobalPackage.hasMany(FnbPropertyPackage, { foreignKey: 'globalPackageId', as: 'propertyPackages' })
+FnbPropertyPackage.belongsTo(FnbGlobalPackage, { foreignKey: 'globalPackageId', as: 'globalPackage' })
+FnbPropertyPackage.belongsTo(Property, { foreignKey: 'locId', as: 'property' })
+
+FnbResidentPackage.belongsTo(Resident, { foreignKey: 'residentId', as: 'resident' })
+FnbResidentPackage.belongsTo(ResidentFamilyMember, { foreignKey: 'familyMemberId', as: 'familyMember' })
+FnbResidentPackage.belongsTo(FnbPropertyPackage, { foreignKey: 'propertyPackageId', as: 'propertyPackage' })
+Resident.hasMany(FnbResidentPackage, { foreignKey: 'residentId', as: 'fnbPackages' })
+ResidentFamilyMember.hasMany(FnbResidentPackage, { foreignKey: 'familyMemberId', as: 'fnbPackages' })
+
+FnbPropertyDish.belongsTo(FnbDish, { foreignKey: 'dishId', as: 'dish' })
+FnbPropertyDish.belongsTo(Property, { foreignKey: 'locId', as: 'property' })
+FnbDish.hasMany(FnbPropertyDish, { foreignKey: 'dishId', as: 'propertyDishes' })
+
+FnbMenu.belongsTo(Property, { foreignKey: 'locId', as: 'property' })
+FnbMenu.hasMany(FnbMenuItem, { foreignKey: 'menuId', as: 'menuItems' })
+FnbMenuItem.belongsTo(FnbMenu, { foreignKey: 'menuId', as: 'menu' })
+FnbMenuItem.belongsTo(FnbDish, { foreignKey: 'dishId', as: 'dish' })
+
+FnbResidentOrder.belongsTo(Resident, { foreignKey: 'residentId', as: 'resident' })
+FnbResidentOrder.belongsTo(FnbDish, { foreignKey: 'dishId', as: 'dish' })
+FnbResidentOrder.belongsTo(FnbMenuItem, { foreignKey: 'menuItemId', as: 'menuItem' })
+FnbResidentOrder.belongsTo(FnbResidentPackage, { foreignKey: 'residentPackageId', as: 'residentPackage' })
+
 export {
   BaseModel,
   baseModelColumns,
@@ -222,4 +255,12 @@ export {
   AssetComplianceInspection,
   AssetComplianceCertification,
   AssetComplianceTraining,
+  FnbGlobalPackage,
+  FnbPropertyPackage,
+  FnbResidentPackage,
+  FnbDish,
+  FnbPropertyDish,
+  FnbMenu,
+  FnbMenuItem,
+  FnbResidentOrder,
 }

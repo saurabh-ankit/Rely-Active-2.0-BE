@@ -14,6 +14,7 @@ import {
 } from '../../models/index.js'
 import { AuthorizationService } from '../../services/authorization.service.js'
 import sequelize from '../../config/db/index.js'
+import { uploadFileToS3, uploadBase64ToS3 } from '../../middlewares/s3/index.js'
 
 function sanitizeUuid(id: string | null | undefined): string | null {
   if (!id || typeof id !== 'string') return null
@@ -258,6 +259,21 @@ export async function createUser(req: Request, res: Response): Promise<void> {
       updatedBy: operatingUserId,
     })
 
+    let photoUrl: string | null = req.body.photoUrl || req.body.photo_url || null
+    const uploadedFile =
+      req.file ||
+      (req.files && typeof req.files === 'object' && ('photo' in req.files || 'avatar' in req.files)
+        ? (req.files as Record<string, Express.Multer.File[]>).photo?.[0] ||
+          (req.files as Record<string, Express.Multer.File[]>).avatar?.[0]
+        : undefined)
+
+    if (uploadedFile) {
+      const s3Res = await uploadFileToS3(uploadedFile, 'users/avatars')
+      photoUrl = s3Res.location
+    } else if (photoUrl) {
+      photoUrl = await uploadBase64ToS3(photoUrl, 'users/avatars')
+    }
+
     await UserDetail.create({
       userId: user.id,
       firstName: fName,
@@ -272,6 +288,7 @@ export async function createUser(req: Request, res: Response): Promise<void> {
       qualification: req.body.qualification || null,
       experience: req.body.experience || null,
       address: req.body.address || null,
+      photoUrl: photoUrl || null,
       createdBy: operatingUserId,
       updatedBy: operatingUserId,
     })
@@ -674,7 +691,20 @@ export async function updateUser(req: Request, res: Response): Promise<void> {
     }
     if (req.body.qualification !== undefined) detailUpdatePayload.qualification = req.body.qualification || null
     if (req.body.experience !== undefined) detailUpdatePayload.experience = req.body.experience || null
-    if (req.body.address !== undefined) detailUpdatePayload.address = req.body.address || null
+    const uploadedFile =
+      req.file ||
+      (req.files && typeof req.files === 'object' && ('photo' in req.files || 'avatar' in req.files)
+        ? (req.files as Record<string, Express.Multer.File[]>).photo?.[0] ||
+          (req.files as Record<string, Express.Multer.File[]>).avatar?.[0]
+        : undefined)
+
+    if (uploadedFile) {
+      const s3Res = await uploadFileToS3(uploadedFile, 'users/avatars')
+      detailUpdatePayload.photoUrl = s3Res.location
+    } else if (req.body.photoUrl !== undefined || req.body.photo_url !== undefined) {
+      const rawPhoto = req.body.photoUrl || req.body.photo_url || null
+      detailUpdatePayload.photoUrl = await uploadBase64ToS3(rawPhoto, 'users/avatars')
+    }
 
     const existingDetail = await UserDetail.findOne({ where: { userId: user.id } })
     if (existingDetail) {
@@ -694,6 +724,7 @@ export async function updateUser(req: Request, res: Response): Promise<void> {
         qualification: req.body.qualification || null,
         experience: req.body.experience || null,
         address: req.body.address || null,
+        photoUrl: (detailUpdatePayload.photoUrl as string) || null,
         createdBy: operatingUserId,
         updatedBy: operatingUserId,
       })

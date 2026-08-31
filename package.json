@@ -36,6 +36,9 @@
     "*.{json,md,yml,yaml}": "prettier --write"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.1121.0",
+    "@aws-sdk/lib-storage": "^3.1121.0",
+    "aws-sdk": "^2.1693.0",
     "bcryptjs": "^3.0.3",
     "bullmq": "^6.2.2",
     "cors": "^2.8.6",
@@ -62,6 +65,7 @@
     "@types/multer": "^2.2.0",
     "@types/node": "^24.13.3",
     "@types/supertest": "^7.2.1",
+    "@types/uuid": "^10.0.0",
     "eslint": "^9.36.0",
     "globals": "^17.11.0",
     "husky": "^9.1.7",

@@ -2,6 +2,7 @@ import type { NextFunction, Request, Response } from 'express'
 import type { AuthenticatedRequest } from '../../middlewares/authenticate.js'
 import { Company, CompanyCustomField } from '../../models/index.js'
 import { validateCompanyCreateInput, validateCompanyUpdateInput } from '../../validations/company.validation.js'
+import { uploadFileToS3, uploadBase64ToS3 } from '../../middlewares/s3/index.js'
 
 interface CustomFieldInput {
   fieldName?: string
@@ -48,22 +49,28 @@ export const createCompany = async (req: Request, res: Response, next: NextFunct
     const finalAddress = head_office_address || company_head_office_address
     const finalGst = gst_number || company_gst_number
 
-    let document_url = ''
-    let document_name = ''
+    let document_url = req.body.document_path || req.body.document_url || ''
+    let document_name = req.body.document_name || ''
     if (req.files && typeof req.files === 'object' && 'document' in req.files) {
       const files = req.files['document'] as Express.Multer.File[]
       if (files[0]) {
-        document_url = `/uploads/${files[0].filename}`
+        const s3Res = await uploadFileToS3(files[0], 'company/documents')
+        document_url = s3Res.location
         document_name = files[0].originalname
       }
+    } else if (document_url && document_url.startsWith('data:')) {
+      document_url = (await uploadBase64ToS3(document_url, 'company/documents')) || ''
     }
 
-    let accountant_signature_url = ''
+    let accountant_signature_url = req.body.accountant_signature || ''
     if (req.files && typeof req.files === 'object' && 'accountant_signature' in req.files) {
       const files = req.files['accountant_signature'] as Express.Multer.File[]
       if (files[0]) {
-        accountant_signature_url = `/uploads/${files[0].filename}`
+        const s3Res = await uploadFileToS3(files[0], 'company/signatures')
+        accountant_signature_url = s3Res.location
       }
+    } else if (accountant_signature_url && accountant_signature_url.startsWith('data:')) {
+      accountant_signature_url = (await uploadBase64ToS3(accountant_signature_url, 'company/signatures')) || ''
     }
 
     const operatingUserId = (req as AuthenticatedRequest).user?.id || null
@@ -117,8 +124,11 @@ export const createCompany = async (req: Request, res: Response, next: NextFunct
             const docFields = parsedCustomFields.filter((f) => f.fieldType === 'document')
             const idx = docFields.findIndex((f) => f.fieldName === fieldName)
             if (idx >= 0 && idx < documents.length && documents[idx]) {
-              fieldValue = `/uploads/${documents[idx].filename}`
+              const s3Res = await uploadFileToS3(documents[idx], 'company/custom-fields')
+              fieldValue = s3Res.location
             }
+          } else if (fieldValue && fieldValue.startsWith('data:')) {
+            fieldValue = await uploadBase64ToS3(fieldValue, 'company/custom-fields')
           }
         }
 
@@ -256,16 +266,22 @@ export const updateCompany = async (req: Request, res: Response, next: NextFunct
     if (req.files && typeof req.files === 'object' && 'document' in req.files) {
       const files = req.files['document'] as Express.Multer.File[]
       if (files[0]) {
-        updates.document_path = `/uploads/${files[0].filename}`
+        const s3Res = await uploadFileToS3(files[0], 'company/documents')
+        updates.document_path = s3Res.location
         updates.document_name = files[0].originalname
       }
+    } else if (typeof updates.document_path === 'string' && updates.document_path.startsWith('data:')) {
+      updates.document_path = await uploadBase64ToS3(updates.document_path, 'company/documents')
     }
 
     if (req.files && typeof req.files === 'object' && 'accountant_signature' in req.files) {
       const files = req.files['accountant_signature'] as Express.Multer.File[]
       if (files[0]) {
-        updates.accountant_signature = `/uploads/${files[0].filename}`
+        const s3Res = await uploadFileToS3(files[0], 'company/signatures')
+        updates.accountant_signature = s3Res.location
       }
+    } else if (typeof updates.accountant_signature === 'string' && updates.accountant_signature.startsWith('data:')) {
+      updates.accountant_signature = await uploadBase64ToS3(updates.accountant_signature, 'company/signatures')
     }
 
     await existing.update(updates)
@@ -303,8 +319,11 @@ export const updateCompany = async (req: Request, res: Response, next: NextFunct
             const docFields = parsedCustomFields.filter((f) => f.fieldType === 'document')
             const idx = docFields.findIndex((f) => f.fieldName === fieldName)
             if (idx >= 0 && idx < documents.length && documents[idx]) {
-              fieldValue = `/uploads/${documents[idx].filename}`
+              const s3Res = await uploadFileToS3(documents[idx], 'company/custom-fields')
+              fieldValue = s3Res.location
             }
+          } else if (fieldValue && fieldValue.startsWith('data:')) {
+            fieldValue = await uploadBase64ToS3(fieldValue, 'company/custom-fields')
           }
         }
 

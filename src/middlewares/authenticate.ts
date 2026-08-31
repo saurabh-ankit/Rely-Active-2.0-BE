@@ -1,6 +1,6 @@
 import type { NextFunction, Request, Response } from 'express'
 import { verifyToken } from '../utils/jwt.js'
-import { User } from '../models/index.js'
+import { Resident, ResidentFamilyMember, User } from '../models/index.js'
 
 export interface AuthenticatedRequest extends Request {
   user?: {
@@ -26,6 +26,52 @@ export async function authenticate(req: AuthenticatedRequest, res: Response, nex
 
     const token = authHeader.substring(7)
     const decoded = verifyToken(token)
+
+    if (decoded.roles?.includes('RESIDENT')) {
+      const resident = await Resident.findByPk(decoded.userId)
+      if (!resident || resident.isDeleted || resident.status !== 'ACTIVE') {
+        res.status(401).json({
+          success: false,
+          message: 'Invalid token or resident account deactivated.',
+        })
+        return
+      }
+
+      req.user = {
+        id: resident.id,
+        email: resident.email,
+        companyId: resident.companyId,
+        defaultLocationId: resident.locId,
+        roles: decoded.roles || ['RESIDENT'],
+      }
+      req.locationId = resident.locId || null
+      next()
+      return
+    }
+
+    if (decoded.roles?.includes('RESIDENT_FAMILY_MEMBER')) {
+      const familyMember = await ResidentFamilyMember.findByPk(decoded.userId, {
+        include: [{ model: Resident, as: 'resident' }],
+      })
+      if (!familyMember || familyMember.isDeleted || !familyMember.resident) {
+        res.status(401).json({
+          success: false,
+          message: 'Invalid token or family member account deactivated.',
+        })
+        return
+      }
+
+      req.user = {
+        id: familyMember.resident.id,
+        email: familyMember.email || familyMember.resident.email,
+        companyId: familyMember.resident.companyId,
+        defaultLocationId: familyMember.resident.locId,
+        roles: decoded.roles || ['RESIDENT_FAMILY_MEMBER'],
+      }
+      req.locationId = familyMember.resident.locId || null
+      next()
+      return
+    }
 
     const user = await User.findByPk(decoded.userId)
     if (!user || !user.isActive || user.isDeleted) {

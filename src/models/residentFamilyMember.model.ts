@@ -3,6 +3,7 @@ import sequelize from '../config/db/index.js'
 import { BaseAttributes, BaseModel, baseModelColumns } from './base.model.js'
 import { Gender } from '../enums/resident.enum.js'
 import type { Resident } from './resident.model.js'
+import type { FnbResidentPackage } from './fnbResidentPackage.model.js'
 
 export interface ResidentFamilyMemberAttributes extends BaseAttributes {
   residentId: string
@@ -47,6 +48,7 @@ export class ResidentFamilyMember
 {
   declare residentId: string
   declare resident?: Resident
+  declare fnbPackages?: FnbResidentPackage[]
   declare firstName: string
   declare lastName: string | null
   declare relation: string

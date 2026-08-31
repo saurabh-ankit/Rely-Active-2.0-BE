@@ -11,16 +11,34 @@ import {
 } from '../../../models/index.js'
 import { AppError } from '../../../utils/appError.js'
 import { errorResponse, successResponse } from '../../../utils/response/index.js'
+import { uploadFileToS3, uploadBase64ToS3 } from '../../../middlewares/s3/index.js'
 
 // ==================== CERTIFICATION CONTROLLERS ====================
 
 export const createCertification = async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const { assetId, certificationType, certificateNumber, issuingAuthority, issueDate, expiryDate, status } = req.body
+    const {
+      assetId,
+      certificationType,
+      certificateNumber,
+      issuingAuthority,
+      issueDate,
+      expiryDate,
+      status,
+      documentUrl,
+    } = req.body
 
     const asset = await Asset.findByPk(assetId)
     if (!asset) {
       throw new AppError('Asset not found', 404)
+    }
+
+    let finalDocUrl: string | null = documentUrl || null
+    if (req.file) {
+      const s3Res = await uploadFileToS3(req.file, 'assets/certifications')
+      finalDocUrl = s3Res.location
+    } else if (finalDocUrl) {
+      finalDocUrl = await uploadBase64ToS3(finalDocUrl, 'assets/certifications')
     }
 
     const certification = await AssetComplianceCertification.create({
@@ -31,6 +49,7 @@ export const createCertification = async (req: AuthenticatedRequest, res: Respon
       issueDate,
       expiryDate,
       status,
+      documentUrl: finalDocUrl,
       createdBy: req.user?.id || null,
     })
 
@@ -130,11 +149,20 @@ export const getCertifications = async (req: AuthenticatedRequest, res: Response
 export const updateCertification = async (req: AuthenticatedRequest, res: Response) => {
   try {
     const id = req.params.id as string
-    const { certificationType, certificateNumber, issuingAuthority, issueDate, expiryDate, status } = req.body
+    const { certificationType, certificateNumber, issuingAuthority, issueDate, expiryDate, status, documentUrl } =
+      req.body
 
     const certification = await AssetComplianceCertification.findByPk(id)
     if (!certification) {
       throw new AppError('Certification not found', 404)
+    }
+
+    let finalDocUrl = certification.documentUrl
+    if (req.file) {
+      const s3Res = await uploadFileToS3(req.file, 'assets/certifications')
+      finalDocUrl = s3Res.location
+    } else if (documentUrl !== undefined) {
+      finalDocUrl = await uploadBase64ToS3(documentUrl, 'assets/certifications')
     }
 
     await certification.update({
@@ -144,6 +172,7 @@ export const updateCertification = async (req: AuthenticatedRequest, res: Respon
       ...(issueDate && { issueDate }),
       ...(expiryDate && { expiryDate }),
       ...(status && { status }),
+      documentUrl: finalDocUrl,
       updatedBy: req.user?.id || null,
     })
 
@@ -207,11 +236,20 @@ export const createInspection = async (req: AuthenticatedRequest, res: Response)
       result,
       findings,
       recommendations,
+      documentUrl,
     } = req.body
 
     const asset = await Asset.findByPk(assetId)
     if (!asset) {
       throw new AppError('Asset not found', 404)
+    }
+
+    let finalDocUrl: string | null = documentUrl || null
+    if (req.file) {
+      const s3Res = await uploadFileToS3(req.file, 'assets/inspections')
+      finalDocUrl = s3Res.location
+    } else if (finalDocUrl) {
+      finalDocUrl = await uploadBase64ToS3(finalDocUrl, 'assets/inspections')
     }
 
     const inspection = await AssetComplianceInspection.create({
@@ -223,6 +261,7 @@ export const createInspection = async (req: AuthenticatedRequest, res: Response)
       result,
       findings,
       recommendations,
+      documentUrl: finalDocUrl,
       createdBy: req.user?.id || null,
     })
 
@@ -322,12 +361,28 @@ export const getInspections = async (req: AuthenticatedRequest, res: Response) =
 export const updateInspection = async (req: AuthenticatedRequest, res: Response) => {
   try {
     const id = req.params.id as string
-    const { inspectionType, inspectorName, inspectionDate, nextInspectionDate, result, findings, recommendations } =
-      req.body
+    const {
+      inspectionType,
+      inspectorName,
+      inspectionDate,
+      nextInspectionDate,
+      result,
+      findings,
+      recommendations,
+      documentUrl,
+    } = req.body
 
     const inspection = await AssetComplianceInspection.findByPk(id)
     if (!inspection) {
       throw new AppError('Inspection not found', 404)
+    }
+
+    let finalDocUrl = inspection.documentUrl
+    if (req.file) {
+      const s3Res = await uploadFileToS3(req.file, 'assets/inspections')
+      finalDocUrl = s3Res.location
+    } else if (documentUrl !== undefined) {
+      finalDocUrl = await uploadBase64ToS3(documentUrl, 'assets/inspections')
     }
 
     await inspection.update({
@@ -338,6 +393,7 @@ export const updateInspection = async (req: AuthenticatedRequest, res: Response)
       ...(result && { result }),
       ...(findings !== undefined && { findings }),
       ...(recommendations !== undefined && { recommendations }),
+      documentUrl: finalDocUrl,
       updatedBy: req.user?.id || null,
     })
 

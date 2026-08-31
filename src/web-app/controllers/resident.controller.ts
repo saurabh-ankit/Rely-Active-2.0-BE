@@ -4,6 +4,7 @@ import { Op } from 'sequelize'
 import { Property, PropertyFloor, PropertyUnit, Resident, ResidentFamilyMember } from '../../models/index.js'
 import { OwnershipType, ResidentStatus, ResidentType } from '../../enums/resident.enum.js'
 import { OccupancyStatus } from '../../enums/propertyUnit.enum.js'
+import { uploadFileToS3, uploadBase64ToS3 } from '../../middlewares/s3/index.js'
 
 export async function createResident(req: Request, res: Response): Promise<void> {
   try {
@@ -131,6 +132,21 @@ export async function createResident(req: Request, res: Response): Promise<void>
     const userPayload = (req as Request & { user?: { id?: string; username?: string } }).user
     const operatorId = userPayload?.id || userPayload?.username || 'system'
 
+    let finalPhotoUrl: string | null = photoUrl || null
+    const uploadedFile =
+      req.file ||
+      (req.files && typeof req.files === 'object' && ('photo' in req.files || 'avatar' in req.files)
+        ? (req.files as Record<string, Express.Multer.File[]>).photo?.[0] ||
+          (req.files as Record<string, Express.Multer.File[]>).avatar?.[0]
+        : undefined)
+
+    if (uploadedFile) {
+      const s3Res = await uploadFileToS3(uploadedFile, 'residents/avatars')
+      finalPhotoUrl = s3Res.location
+    } else if (finalPhotoUrl) {
+      finalPhotoUrl = await uploadBase64ToS3(finalPhotoUrl, 'residents/avatars')
+    }
+
     // 4. Create Resident Record
     const resident = await Resident.create({
       unitId,
@@ -149,7 +165,7 @@ export async function createResident(req: Request, res: Response): Promise<void>
       phone: phone ? phone.trim() : null,
       emergencyContact: emergencyContact || null,
       bloodGroup: bloodGroup || null,
-      photoUrl: photoUrl || null,
+      photoUrl: finalPhotoUrl,
       moveInDate: moveInDate || null,
       status: ResidentStatus.ACTIVE,
       isActive: true,
@@ -167,7 +183,8 @@ export async function createResident(req: Request, res: Response): Promise<void>
             fmPasswordHash = await bcrypt.hash(rawPass, 10)
           }
 
-          const fmResiding = residingFlag ? (fm.isResiding !== undefined ? Boolean(fm.isResiding) : true) : false
+          const fmResiding = residingFlag
+          const fmPhotoUrl = await uploadBase64ToS3(fm.photoUrl, 'residents/avatars')
 
           return {
             residentId: resident.id,
@@ -178,7 +195,7 @@ export async function createResident(req: Request, res: Response): Promise<void>
             gender: fm.gender || null,
             dob: fm.dob || null,
             bloodGroup: fm.bloodGroup || null,
-            photoUrl: fm.photoUrl || null,
+            photoUrl: fmPhotoUrl,
             phone: fm.phone ? fm.phone.trim() : null,
             username: fm.username ? fm.username.trim() : null,
             passwordHash: fmPasswordHash,
@@ -341,6 +358,8 @@ export async function updateResident(req: Request, res: Response): Promise<void>
       lastName,
       gender,
       dob,
+      username,
+      password,
       email,
       phone,
       emergencyContact,
@@ -355,6 +374,38 @@ export async function updateResident(req: Request, res: Response): Promise<void>
     const userPayload = (req as Request & { user?: { id?: string; username?: string } }).user
     const operatorId = userPayload?.id || userPayload?.username || 'system'
     const updatedResiding = isResiding !== undefined ? Boolean(isResiding) : resident.isResiding
+
+    // Handle username uniqueness and password hashing for resident
+    let updatedUsername = resident.username
+    let updatedPasswordHash = resident.passwordHash
+
+    if (username !== undefined) {
+      const trimmedUsername = username ? String(username).trim() : null
+      if (trimmedUsername && trimmedUsername !== resident.username) {
+        const existingUser = await Resident.findOne({
+          where: { username: trimmedUsername, isDeleted: false, id: { [Op.ne]: resident.id } },
+        })
+        const existingFm = await ResidentFamilyMember.findOne({
+          where: { username: trimmedUsername, isDeleted: false },
+        })
+        if (existingUser || existingFm) {
+          res.status(400).json({
+            success: false,
+            message: 'Username is already taken by another resident or family member.',
+          })
+          return
+        }
+        updatedUsername = trimmedUsername
+      } else if (!trimmedUsername) {
+        updatedUsername = null
+      }
+    }
+
+    if (password) {
+      updatedPasswordHash = await bcrypt.hash(String(password), 10)
+    } else if (updatedUsername && !updatedPasswordHash) {
+      updatedPasswordHash = await bcrypt.hash('Resident@123', 10)
+    }
 
     const phoneRegex = /^[6-9]\d{9}$/
     if (phone) {
@@ -379,16 +430,33 @@ export async function updateResident(req: Request, res: Response): Promise<void>
       }
     }
 
+    let finalPhotoUrl = resident.photoUrl
+    const uploadedFile =
+      req.file ||
+      (req.files && typeof req.files === 'object' && ('photo' in req.files || 'avatar' in req.files)
+        ? (req.files as Record<string, Express.Multer.File[]>).photo?.[0] ||
+          (req.files as Record<string, Express.Multer.File[]>).avatar?.[0]
+        : undefined)
+
+    if (uploadedFile) {
+      const s3Res = await uploadFileToS3(uploadedFile, 'residents/avatars')
+      finalPhotoUrl = s3Res.location
+    } else if (photoUrl !== undefined) {
+      finalPhotoUrl = await uploadBase64ToS3(photoUrl, 'residents/avatars')
+    }
+
     await resident.update({
       firstName: firstName ? firstName.trim() : resident.firstName,
       lastName: lastName !== undefined ? lastName : resident.lastName,
       gender: gender !== undefined ? gender : resident.gender,
       dob: dob !== undefined ? dob : resident.dob,
+      username: updatedUsername,
+      passwordHash: updatedPasswordHash,
       email: email !== undefined ? email : resident.email,
       phone: phone !== undefined ? phone : resident.phone,
       emergencyContact: emergencyContact !== undefined ? emergencyContact : resident.emergencyContact,
       bloodGroup: bloodGroup !== undefined ? bloodGroup : resident.bloodGroup,
-      photoUrl: photoUrl !== undefined ? photoUrl : resident.photoUrl,
+      photoUrl: finalPhotoUrl,
       moveOutDate: moveOutDate !== undefined ? moveOutDate : resident.moveOutDate,
       status: status || resident.status,
       isResiding: updatedResiding,
@@ -407,7 +475,8 @@ export async function updateResident(req: Request, res: Response): Promise<void>
               fmPasswordHash = await bcrypt.hash(rawPass, 10)
             }
 
-            const fmResiding = updatedResiding ? (fm.isResiding !== undefined ? Boolean(fm.isResiding) : true) : false
+            const fmResiding = updatedResiding
+            const fmPhotoUrl = await uploadBase64ToS3(fm.photoUrl, 'residents/avatars')
 
             return {
               residentId: resident.id,
@@ -418,7 +487,7 @@ export async function updateResident(req: Request, res: Response): Promise<void>
               gender: fm.gender || null,
               dob: fm.dob || null,
               bloodGroup: fm.bloodGroup || null,
-              photoUrl: fm.photoUrl || null,
+              photoUrl: fmPhotoUrl,
               phone: fm.phone ? fm.phone.trim() : null,
               username: fm.username ? fm.username.trim() : null,
               passwordHash: fmPasswordHash,

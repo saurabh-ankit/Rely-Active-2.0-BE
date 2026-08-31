@@ -9,6 +9,7 @@ import departmentRouter from './department.routes.js'
 import resourceRouter from './resource.routes.js'
 import residentRouter from './resident.routes.js'
 import assetRouter from './asset/index.js'
+import fnbRouter from './fnb.routes.js'
 
 export const apiRouter = Router()
 
@@ -24,6 +25,8 @@ apiRouter.use('/resources', resourceRouter)
 apiRouter.use('/departments', departmentRouter)
 apiRouter.use('/company', companyRouter)
 apiRouter.use('/property', propertyRouter)
+apiRouter.use('/properties', propertyRouter)
 apiRouter.use('/residents', residentRouter)
 apiRouter.use('/assets', assetRouter)
 apiRouter.use('/location/:locationId/assets', assetRouter)
+apiRouter.use('/fnb', fnbRouter)
