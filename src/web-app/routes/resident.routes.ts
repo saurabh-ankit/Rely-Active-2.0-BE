@@ -7,7 +7,6 @@ import {
   getResidentsByUnit,
   updateResident,
 } from '../controllers/resident.controller.js'
-import { residentLogin } from '../controllers/residentAuth.controller.js'
 import { upload } from '../../middlewares/upload.js'
 
 const router = Router()
@@ -17,9 +16,6 @@ const uploadResidentPhoto = upload.fields([
   { name: 'avatar', maxCount: 1 },
   { name: 'image', maxCount: 1 },
 ])
-
-// Mobile App Resident Login Endpoint
-router.post('/auth/login', residentLogin)
 
 // Resident Onboarding & Operations
 router.post('/', uploadResidentPhoto, createResident)

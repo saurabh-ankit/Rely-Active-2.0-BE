@@ -246,7 +246,7 @@ export async function createUser(req: Request, res: Response): Promise<void> {
       }
     }
 
-    const passwordHash = password ? await bcrypt.hash(password, 10) : await bcrypt.hash('123456', 10)
+    const passwordHash = password ? await bcrypt.hash(password, 10) : await bcrypt.hash('Password@123', 10)
     const operatingUserId = (req as AuthenticatedRequest).user?.id || null
 
     const user = await User.create({
@@ -274,11 +274,25 @@ export async function createUser(req: Request, res: Response): Promise<void> {
       photoUrl = await uploadBase64ToS3(photoUrl, 'users/avatars')
     }
 
+    let finalEmpCode = empCode && String(empCode).trim() ? String(empCode).trim() : null
+    if (!finalEmpCode) {
+      const todayStr = (new Date().toISOString().split('T')[0] as string).replace(/-/g, '')
+      let count = await UserDetail.count()
+      let candidate = `EMP-${todayStr}-${String(count + 1).padStart(4, '0')}`
+      let exists = await UserDetail.findOne({ where: { employeeCode: candidate } })
+      while (exists) {
+        count++
+        candidate = `EMP-${todayStr}-${String(count + 1).padStart(4, '0')}`
+        exists = await UserDetail.findOne({ where: { employeeCode: candidate } })
+      }
+      finalEmpCode = candidate
+    }
+
     await UserDetail.create({
       userId: user.id,
       firstName: fName,
       lastName: lName || null,
-      employeeCode: empCode || null,
+      employeeCode: finalEmpCode,
       dateOfJoining: req.body.dateOfJoining || req.body.date_of_joining || new Date().toISOString().split('T')[0],
       phone: phone || null,
       gender: req.body.gender || null,
@@ -318,6 +332,15 @@ export async function createUser(req: Request, res: Response): Promise<void> {
 
     if (pIdsToCreate.length === 0) {
       res.status(400).json({ success: false, message: 'At least one property location is required' })
+      return
+    }
+
+    const isMultiPropertyRole = ['SUPER_ADMIN', 'ADMIN'].includes((roleCode || '').toUpperCase())
+    if (!isMultiPropertyRole && pIdsToCreate.length > 1) {
+      res.status(400).json({
+        success: false,
+        message: `Users with role '${roleCode || 'non-Admin'}' can only be assigned to a single property location.`,
+      })
       return
     }
 
@@ -419,19 +442,23 @@ export async function getUserAccessibleProperties(req: Request, res: Response): 
 
       // Ensure user_locations has entries for all properties for this superadmin
       if (userId) {
-        const superAdminRole = await Role.findOne({ where: { code: 'SUPER_ADMIN' } })
-        for (const prop of allProperties) {
-          const exists = await UserLocation.findOne({ where: { userId, locId: prop.id } })
-          if (!exists) {
-            await UserLocation.create({
-              userId,
-              locId: prop.id,
-              roleId: superAdminRole?.id || null,
-              companyId: prop.companyId || null,
-              createdBy: userId,
-              updatedBy: userId,
-            })
+        try {
+          const superAdminRole = await Role.findOne({ where: { code: 'SUPER_ADMIN' } })
+          for (const prop of allProperties) {
+            const exists = await UserLocation.findOne({ where: { userId, locId: prop.id, isDeleted: false } })
+            if (!exists) {
+              await UserLocation.create({
+                userId,
+                locId: prop.id,
+                roleId: superAdminRole?.id || null,
+                companyId: prop.companyId || null,
+                createdBy: userId,
+                updatedBy: userId,
+              })
+            }
           }
+        } catch (dbErr) {
+          console.warn('Note: Could not sync all superadmin locations:', dbErr)
         }
       }
 
@@ -498,8 +525,21 @@ export async function updateUserProperties(req: Request, res: Response): Promise
       return
     }
 
-    const existingLocs = await UserLocation.findAll({ where: { userId } })
+    const existingLocs = await UserLocation.findAll({
+      where: { userId },
+      include: [{ model: Role, as: 'role' }],
+    })
     const primaryLoc = existingLocs[0]
+    const roleCodeToUse = (primaryLoc as (UserLocation & { role?: Role }) | undefined)?.role?.code || ''
+    const isMultiPropRole = ['SUPER_ADMIN', 'ADMIN'].includes((roleCodeToUse || '').toUpperCase())
+    if (!isMultiPropRole && pIds.length > 1) {
+      res.status(400).json({
+        success: false,
+        message: `Users with role '${roleCodeToUse || 'non-Admin'}' can only be assigned to a single property location.`,
+      })
+      return
+    }
+
     const roleIdToUse = primaryLoc?.roleId || null
     const companyIdToUse = primaryLoc?.companyId || null
     const deptIdToUse = primaryLoc?.departmentId || null
@@ -852,6 +892,17 @@ export async function updateUser(req: Request, res: Response): Promise<void> {
         res.status(400).json({ success: false, message: 'At least one property location is required' })
         return
       }
+
+      const effectiveRoleCode =
+        roleCode || (primaryUserLoc as (UserLocation & { role?: Role }) | undefined)?.role?.code || ''
+      const isMultiPropRole = ['SUPER_ADMIN', 'ADMIN'].includes((effectiveRoleCode || '').toUpperCase())
+      if (!isMultiPropRole && pIds.length > 1) {
+        res.status(400).json({
+          success: false,
+          message: `Users with role '${effectiveRoleCode || 'non-Admin'}' can only be assigned to a single property location.`,
+        })
+        return
+      }
       const transaction = await sequelize.transaction()
       try {
         await UserLocation.destroy({ where: { userId: user.id }, force: true, transaction })
@@ -999,6 +1050,133 @@ export async function updateUser(req: Request, res: Response): Promise<void> {
     res.status(200).json({
       success: true,
       message: 'User updated successfully',
+      data: formatUserResponse(updatedUser),
+    })
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : 'Unknown error'
+    res.status(500).json({ success: false, message })
+  }
+}
+
+export async function getSelfProfile(req: Request, res: Response): Promise<void> {
+  try {
+    const userId = (req as AuthenticatedRequest).user?.id
+    if (!userId) {
+      res.status(401).json({ success: false, message: 'Authentication required' })
+      return
+    }
+
+    const user = await User.findByPk(userId, {
+      include: [
+        { model: UserDetail, as: 'profile' },
+        {
+          model: UserLocation,
+          as: 'userLocations',
+          include: userLocationInclude,
+        },
+        employeeManagerInclude,
+        {
+          model: Property,
+          as: 'assignedProperties',
+          through: { attributes: [] },
+        },
+      ],
+    })
+
+    if (!user) {
+      res.status(404).json({ success: false, message: 'User profile not found' })
+      return
+    }
+
+    res.status(200).json({
+      success: true,
+      data: formatUserResponse(user),
+    })
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : 'Unknown error'
+    res.status(500).json({ success: false, message })
+  }
+}
+
+export async function updateSelfProfile(req: Request, res: Response): Promise<void> {
+  try {
+    const userId = (req as AuthenticatedRequest).user?.id
+    if (!userId) {
+      res.status(401).json({ success: false, message: 'Authentication required' })
+      return
+    }
+
+    const user = await User.findByPk(userId)
+    if (!user) {
+      res.status(404).json({ success: false, message: 'User not found' })
+      return
+    }
+
+    const { firstName, first_name, lastName, last_name, phone, email, password } = req.body
+
+    const fName = firstName || first_name
+    const lName = lastName || last_name
+
+    // Update User core record
+    const userPayload: Record<string, unknown> = { updatedBy: userId }
+    if (email !== undefined && email) userPayload.email = email
+    if (phone !== undefined) userPayload.phone = phone || null
+    if (password) userPayload.passwordHash = await bcrypt.hash(password, 10)
+
+    await user.update(userPayload)
+
+    // Handle photo upload if file or base64 provided
+    const detailPayload: Record<string, unknown> = { updatedBy: userId }
+    if (fName !== undefined) detailPayload.firstName = fName
+    if (lName !== undefined) detailPayload.lastName = lName || null
+    if (phone !== undefined) detailPayload.phone = phone || null
+
+    const uploadedFile =
+      req.file ||
+      (req.files && typeof req.files === 'object' && ('photo' in req.files || 'avatar' in req.files)
+        ? (req.files as Record<string, Express.Multer.File[]>).photo?.[0] ||
+          (req.files as Record<string, Express.Multer.File[]>).avatar?.[0]
+        : undefined)
+
+    if (uploadedFile) {
+      const s3Res = await uploadFileToS3(uploadedFile, 'users/avatars')
+      detailPayload.photoUrl = s3Res.location
+    } else if (req.body.photoUrl !== undefined || req.body.photo_url !== undefined) {
+      const rawPhoto = req.body.photoUrl || req.body.photo_url || null
+      detailPayload.photoUrl = await uploadBase64ToS3(rawPhoto, 'users/avatars')
+    }
+
+    const existingDetail = await UserDetail.findOne({ where: { userId: user.id } })
+    if (existingDetail) {
+      await existingDetail.update(detailPayload)
+    } else {
+      await UserDetail.create({
+        userId: user.id,
+        firstName: fName || 'Admin',
+        lastName: lName || null,
+        phone: phone || null,
+        photoUrl: (detailPayload.photoUrl as string) || null,
+        createdBy: userId,
+        updatedBy: userId,
+      })
+    }
+
+    const updatedUser = await User.findByPk(user.id, {
+      include: [
+        { model: UserDetail, as: 'profile' },
+        {
+          model: UserLocation,
+          as: 'userLocations',
+          include: userLocationInclude,
+        },
+        employeeManagerInclude,
+        { model: Property, as: 'assignedProperties', through: { attributes: [] } },
+      ],
+    })
+
+    res.status(200).json({
+      success: true,
+      message: 'Profile updated successfully',
       data: formatUserResponse(updatedUser),
     })
   } catch (err: unknown) {

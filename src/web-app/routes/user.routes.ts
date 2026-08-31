@@ -3,8 +3,10 @@ import {
   assignUserRole,
   createUser,
   getAllUsers,
+  getSelfProfile,
   getUserAccessibleProperties,
   getUserById,
+  updateSelfProfile,
   updateUser,
   updateUserProperties,
 } from '../controllers/user.controller.js'
@@ -24,6 +26,8 @@ const uploadUserPhoto = upload.fields([
 
 router.use(authenticate)
 
+router.get('/profile/me', getSelfProfile)
+router.put('/profile/me', uploadUserPhoto, updateSelfProfile)
 router.get('/accessible-properties', getUserAccessibleProperties)
 router.get('/user-properties', getUserAccessibleProperties)
 router.get('/me/properties', getUserAccessibleProperties)

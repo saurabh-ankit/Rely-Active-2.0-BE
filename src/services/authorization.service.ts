@@ -37,7 +37,8 @@ export class AuthorizationService {
     }
 
     const userLocations = user.userLocations || []
-    const roleCodes = userLocations.map((ul) => ul.role?.code).filter((c): c is string => Boolean(c))
+    const rawRoleCodes = userLocations.map((ul) => ul.role?.code).filter((c): c is string => Boolean(c))
+    const roleCodes = Array.from(new Set(rawRoleCodes))
     const isSuperAdmin =
       user.username === 'superadmin' || user.email === 'superadmin@rely.com' || roleCodes.includes('SUPER_ADMIN')
 
