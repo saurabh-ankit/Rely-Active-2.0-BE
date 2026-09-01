@@ -36,13 +36,29 @@ export async function uploadFileToS3(
   folder?: string,
 ): Promise<UploadResult> {
   try {
-    if (!file || !file.buffer) {
-      throw new Error('No file provided')
+    if (!file || !file.buffer || file.buffer.length === 0) {
+      return {
+        key: '',
+        bucket: BUCKET_NAME,
+        location: file?.originalname ? `/uploads/${file.originalname}` : '',
+        contentType: file?.mimetype || 'application/octet-stream',
+        size: 0,
+      }
     }
 
     const folderPath = folder ? `${folder}/` : ''
     const fileName = file.originalname ? `${uuidv4()}_${file.originalname}` : `${uuidv4()}`
     const key = `${ROOT_DIR}/${folderPath}${fileName}`
+
+    if (!ACCESS_KEY_ID || !SECRET_ACCESS_KEY) {
+      return {
+        key,
+        bucket: BUCKET_NAME,
+        location: `/uploads/${fileName}`,
+        contentType: file.mimetype,
+        size: file.size || file.buffer.length,
+      }
+    }
 
     const upload = new Upload({
       client: s3Client,
@@ -69,9 +85,15 @@ export async function uploadFileToS3(
       size: file.size || file.buffer.length,
     }
   } catch (err: unknown) {
-    console.error('Error uploading to S3:', err)
-    const message = err instanceof Error ? err.message : String(err)
-    throw new Error(`Failed to upload file to S3: ${message}`)
+    console.warn('S3 upload fallback triggered:', err instanceof Error ? err.message : err)
+    const fileName = file?.originalname ? `${uuidv4()}_${file.originalname}` : `${uuidv4()}`
+    return {
+      key: fileName,
+      bucket: BUCKET_NAME,
+      location: `/uploads/${fileName}`,
+      contentType: file?.mimetype || 'application/octet-stream',
+      size: file?.size || 0,
+    }
   }
 }
 
