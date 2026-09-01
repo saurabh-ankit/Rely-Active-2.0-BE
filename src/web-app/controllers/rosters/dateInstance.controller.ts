@@ -2,12 +2,14 @@ import type { Response, NextFunction } from 'express'
 import type { AuthenticatedRequest } from '../../../middlewares/authenticate.js'
 import { Op } from 'sequelize'
 import {
+  RosterAssignment,
   RosterAssignmentDate,
   RosterReplacement,
   SchedulingResource,
   User,
   RosterDoctorProfile,
 } from '../../../models/index.js'
+import { RosterGenerationService } from '../../../modules/rosters/domain/roster-generation.service.js'
 
 /**
  * Unified Date Instance Query (Calendar & Grid Engine)
@@ -66,7 +68,7 @@ export async function getRosterDates(req: AuthenticatedRequest, res: Response, n
       includeResource[0].where = { resourceType: String(resourceType) }
     }
 
-    const dates = await RosterAssignmentDate.findAll({
+    let dates = await RosterAssignmentDate.findAll({
       where: whereClause,
       include: includeResource as any,
       order: [
@@ -74,6 +76,35 @@ export async function getRosterDates(req: AuthenticatedRequest, res: Response, n
         ['scheduledStart', 'ASC'],
       ],
     })
+
+    // If no concrete date instances exist yet, auto-publish any pending DRAFT assignments
+    if (dates.length === 0) {
+      const draftAssignments = await RosterAssignment.findAll({
+        where: { isDeleted: false, status: 'DRAFT' },
+      })
+      for (const draft of draftAssignments) {
+        try {
+          await RosterGenerationService.generateDatesForAssignment({
+            rosterAssignmentId: draft.id,
+            companyId: draft.companyId,
+            locationId: draft.locationId,
+            performedBy: req.user?.id || 'system',
+          })
+        } catch (e) {
+          console.warn('Auto-publish draft roster assignment failed:', e)
+        }
+      }
+      if (draftAssignments.length > 0) {
+        dates = await RosterAssignmentDate.findAll({
+          where: whereClause,
+          include: includeResource as any,
+          order: [
+            ['assignmentDate', 'ASC'],
+            ['scheduledStart', 'ASC'],
+          ],
+        })
+      }
+    }
 
     return res.status(200).json({
       success: true,

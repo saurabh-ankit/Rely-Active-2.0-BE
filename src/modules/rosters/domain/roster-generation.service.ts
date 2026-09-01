@@ -101,8 +101,11 @@ export class RosterGenerationService {
         const dayName: string = daysOfWeekMap[curr.getDay()] || 'sunday'
 
         let isMatch = true
-        if (assignment.frequency && assignment.frequency.allowedDaysOfWeek && Array.isArray(assignment.frequency.allowedDaysOfWeek)) {
-          isMatch = assignment.frequency.allowedDaysOfWeek.map((d: string) => String(d).toLowerCase()).includes(dayName)
+        const allowedDays = assignment.selectedWorkingDays || (assignment.frequency?.allowedDaysOfWeek)
+        if (allowedDays && Array.isArray(allowedDays) && allowedDays.length > 0) {
+          const lowerDays = allowedDays.map((d: string) => String(d).toLowerCase())
+          const shortDay = dayName.substring(0, 3)
+          isMatch = lowerDays.includes(dayName) || lowerDays.includes(shortDay)
         }
 
         if (isMatch) {

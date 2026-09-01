@@ -152,13 +152,25 @@ export async function createAssignment(req: AuthenticatedRequest, res: Response,
       }
     }
 
+    // 3. Auto-publish assignment pattern to generate concrete date instances
+    try {
+      await RosterGenerationService.generateDatesForAssignment({
+        rosterAssignmentId: assignment.id,
+        companyId,
+        locationId,
+        performedBy: req.user?.id || 'system',
+      })
+    } catch (pubErr) {
+      console.warn('Auto-publish during assignment creation warning:', pubErr)
+    }
+
     const createdWithTargets = await RosterAssignment.findByPk(assignment.id, {
       include: [{ model: RosterAssignmentTarget, as: 'targets' }],
     })
 
     return res.status(201).json({
       success: true,
-      message: 'Roster assignment pattern created in DRAFT state.',
+      message: 'Roster assignment pattern created and published successfully.',
       data: createdWithTargets,
     })
   } catch (error) {
