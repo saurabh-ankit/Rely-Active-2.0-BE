@@ -11,6 +11,7 @@ import { createFrequencyTemplate, getFrequencyTemplates } from '../controllers/r
 import {
   validateAssignment,
   createAssignment,
+  getAssignments,
   publishAssignment,
   copyAssignment,
 } from '../controllers/rosters/assignment.controller.js'
@@ -49,6 +50,7 @@ router.get('/companies/:companyId/locations/:locationId/frequencies', getFrequen
 // ── Roster Assignments ───────────────────────────────────────────────────────
 router.post('/companies/:companyId/locations/:locationId/assignments/validate', validateAssignment)
 router.post('/companies/:companyId/locations/:locationId/assignments', createAssignment)
+router.get('/companies/:companyId/locations/:locationId/assignments', getAssignments)
 router.post('/companies/:companyId/locations/:locationId/assignments/:assignmentId/publish', publishAssignment)
 router.post('/companies/:companyId/locations/:locationId/assignments/:assignmentId/copy-forward', copyAssignment)
 

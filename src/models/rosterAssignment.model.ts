@@ -108,11 +108,13 @@ RosterAssignment.init(
       type: DataTypes.ENUM('SHIFT', 'OPD_SESSION'),
       allowNull: false,
       defaultValue: 'SHIFT',
+      field: 'duty_type',
     },
     holidayPolicy: {
       type: DataTypes.ENUM('IGNORE', 'SKIP', 'RESCHEDULE', 'REQUIRE_COVERAGE'),
       allowNull: false,
       defaultValue: 'SKIP',
+      field: 'holiday_policy',
     },
     schedulingResourceId: {
       type: DataTypes.UUID,
@@ -154,14 +156,17 @@ RosterAssignment.init(
     cancellationReason: {
       type: DataTypes.STRING(255),
       allowNull: true,
+      field: 'cancellation_reason',
     },
     cancelledBy: {
       type: DataTypes.STRING(100),
       allowNull: true,
+      field: 'cancelled_by',
     },
     cancelledAt: {
       type: DataTypes.DATE,
       allowNull: true,
+      field: 'cancelled_at',
     },
     isDeleted: {
       type: DataTypes.BOOLEAN,

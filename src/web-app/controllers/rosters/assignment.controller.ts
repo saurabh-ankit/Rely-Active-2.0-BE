@@ -1,8 +1,66 @@
 import type { Response, NextFunction } from 'express'
 import type { AuthenticatedRequest } from '../../../middlewares/authenticate.js'
-import { RosterAssignment, RosterAssignmentTarget } from '../../../models/index.js'
+import { RosterAssignment, RosterAssignmentTarget, SchedulingResource, RosterFrequency } from '../../../models/index.js'
+import type { RosterTargetType } from '../../../models/rosterAssignmentTarget.model.js'
 import { RosterValidationEngine } from '../../../modules/rosters/domain/roster-validation.engine.js'
 import { RosterGenerationService } from '../../../modules/rosters/domain/roster-generation.service.js'
+import { resolveCompanyId } from '../../../utils/resolveCompanyId.js'
+
+const UUID_REGEX = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/
+
+async function resolveSchedulingResourceId(companyId: string, rawResourceId?: string): Promise<string> {
+  if (rawResourceId && UUID_REGEX.test(rawResourceId)) {
+    return rawResourceId
+  }
+  const existing = await SchedulingResource.findOne({ where: { companyId, isDeleted: false } })
+  if (existing) {
+    return existing.id
+  }
+  const created = await SchedulingResource.create({
+    companyId,
+    resourceType: 'EMPLOYEE',
+    status: 'ACTIVE',
+    effectiveFrom: '2026-01-01',
+  })
+  return created.id
+}
+
+async function resolveFrequencyId(companyId: string, locationId: string, rawFrequencyId?: string): Promise<string> {
+  if (rawFrequencyId && UUID_REGEX.test(rawFrequencyId)) {
+    return rawFrequencyId
+  }
+  const existing = await RosterFrequency.findOne({ where: { companyId, isDeleted: false } })
+  if (existing) {
+    return existing.id
+  }
+  const created = await RosterFrequency.create({
+    companyId,
+    locationId,
+    frequencyName: rawFrequencyId || 'WEEKLY',
+    frequencyType: 'WEEKLY',
+    interval: 1,
+    timeUnit: 'WEEKS',
+    status: 'ACTIVE',
+  })
+  return created.id
+}
+
+function mapTargetType(rawType: string): RosterTargetType {
+  const upper = (rawType || '').toUpperCase()
+  if (upper === 'FLOOR' || upper === 'PROPERTY_FLOOR') return 'PROPERTY_FLOOR'
+  if (upper === 'UNIT' || upper === 'ROOM_UNIT' || upper === 'PROPERTY_UNIT') return 'PROPERTY_UNIT'
+  if (upper === 'BLOCK' || upper === 'PROPERTY_BLOCK') return 'PROPERTY_BLOCK'
+  if (upper === 'PROPERTY') return 'PROPERTY'
+  if (upper === 'CLINIC_VENUE' || upper === 'CLINIC') return 'CLINIC_VENUE'
+  if (upper === 'DEPARTMENT') return 'DEPARTMENT'
+  if (upper === 'SERVICE') return 'SERVICE'
+  return 'PROPERTY_FLOOR'
+}
+
+function cleanTargetId(rawId: string): string {
+  if (!rawId) return rawId
+  return rawId.replace(/^(prop|block|floor|unit|clinic|dept)-/, '')
+}
 
 /**
  * Validate Roster Assignment (Pre-flight dry run)
@@ -10,14 +68,16 @@ import { RosterGenerationService } from '../../../modules/rosters/domain/roster-
  */
 export async function validateAssignment(req: AuthenticatedRequest, res: Response, next: NextFunction) {
   try {
-    const companyId = req.params.companyId as string
+    const companyId = await resolveCompanyId(req.params.companyId as string, req.user?.companyId)
     const locationId = req.params.locationId as string
     const { schedulingResourceId, effectiveFrom, effectiveUntil, proposedDates, overrideReason } = req.body
+
+    const resolvedResourceId = await resolveSchedulingResourceId(companyId, schedulingResourceId as string)
 
     const validation = await RosterValidationEngine.validate({
       companyId,
       locationId,
-      schedulingResourceId: schedulingResourceId as string,
+      schedulingResourceId: resolvedResourceId,
       effectiveFrom: effectiveFrom as string,
       effectiveUntil: effectiveUntil as string,
       proposedDates: proposedDates || [],
@@ -39,7 +99,7 @@ export async function validateAssignment(req: AuthenticatedRequest, res: Respons
  */
 export async function createAssignment(req: AuthenticatedRequest, res: Response, next: NextFunction) {
   try {
-    const companyId = req.params.companyId as string
+    const companyId = await resolveCompanyId(req.params.companyId as string, req.user?.companyId)
     const locationId = req.params.locationId as string
     const {
       rosterName,
@@ -56,6 +116,9 @@ export async function createAssignment(req: AuthenticatedRequest, res: Response,
       targets,
     } = req.body
 
+    const resolvedResourceId = await resolveSchedulingResourceId(companyId, schedulingResourceId as string)
+    const resolvedFreqId = await resolveFrequencyId(companyId, locationId, frequencyId as string)
+
     // 1. Create Roster Assignment Pattern Header
     const assignment = await RosterAssignment.create({
       companyId,
@@ -63,10 +126,10 @@ export async function createAssignment(req: AuthenticatedRequest, res: Response,
       rosterName: rosterName as string,
       dutyType: dutyType || 'SHIFT',
       holidayPolicy: holidayPolicy || 'SKIP',
-      schedulingResourceId: schedulingResourceId as string,
+      schedulingResourceId: resolvedResourceId,
       shiftId: shiftId || null,
       slotTimeRange: slotTimeRange || null,
-      frequencyId: frequencyId as string,
+      frequencyId: resolvedFreqId,
       effectiveFrom: effectiveFrom as string,
       effectiveUntil: effectiveUntil as string,
       selectedWorkingDays: selectedWorkingDays || null,
@@ -81,8 +144,8 @@ export async function createAssignment(req: AuthenticatedRequest, res: Response,
       for (const t of targets) {
         await RosterAssignmentTarget.create({
           rosterAssignmentId: assignment.id,
-          targetType: t.targetType,
-          targetId: t.targetId,
+          targetType: mapTargetType(t.targetType),
+          targetId: cleanTargetId(t.targetId),
           createdBy: req.user?.id || 'system',
           updatedBy: req.user?.id || 'system',
         })
@@ -99,6 +162,7 @@ export async function createAssignment(req: AuthenticatedRequest, res: Response,
       data: createdWithTargets,
     })
   } catch (error) {
+    console.error('CREATE ASSIGNMENT ERROR:', error)
     next(error)
   }
 }
@@ -109,7 +173,7 @@ export async function createAssignment(req: AuthenticatedRequest, res: Response,
  */
 export async function publishAssignment(req: AuthenticatedRequest, res: Response, next: NextFunction) {
   try {
-    const companyId = req.params.companyId as string
+    const companyId = await resolveCompanyId(req.params.companyId as string, req.user?.companyId)
     const locationId = req.params.locationId as string
     const assignmentId = req.params.assignmentId as string
     const { overrideReason } = req.body
@@ -141,12 +205,37 @@ export async function publishAssignment(req: AuthenticatedRequest, res: Response
 }
 
 /**
+ * Get Roster Assignments List
+ * GET /api/v1/roster/companies/:companyId/locations/:locationId/assignments
+ */
+export async function getAssignments(req: AuthenticatedRequest, res: Response, next: NextFunction) {
+  try {
+    const companyId = await resolveCompanyId(req.params.companyId as string, req.user?.companyId)
+    const locationId = req.params.locationId as string
+
+    const assignments = await RosterAssignment.findAll({
+      where: { companyId, locationId, isDeleted: false },
+      include: [{ model: RosterAssignmentTarget, as: 'targets' }],
+      order: [['createdAt', 'DESC']],
+    })
+
+    return res.status(200).json({
+      success: true,
+      message: 'Roster assignments fetched successfully.',
+      data: assignments,
+    })
+  } catch (error) {
+    next(error)
+  }
+}
+
+/**
  * Copy Roster Pattern to Future Date Window (P1 Copy-Forward Feature)
  * POST /api/v1/roster/companies/:companyId/locations/:locationId/assignments/:assignmentId/copy-forward
  */
 export async function copyAssignment(req: AuthenticatedRequest, res: Response, next: NextFunction) {
   try {
-    const companyId = req.params.companyId as string
+    const companyId = await resolveCompanyId(req.params.companyId as string, req.user?.companyId)
     const locationId = req.params.locationId as string
     const assignmentId = req.params.assignmentId as string
     const { targetEffectiveFrom, targetEffectiveUntil, newRosterName } = req.body
