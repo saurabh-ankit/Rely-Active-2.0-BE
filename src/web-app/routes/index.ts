@@ -32,4 +32,3 @@ apiRouter.use('/assets', assetRouter)
 apiRouter.use('/location/:locationId/assets', assetRouter)
 apiRouter.use('/fnb', fnbRouter)
 apiRouter.use('/roster', rosterRouter)
-

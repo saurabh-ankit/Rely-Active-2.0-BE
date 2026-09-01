@@ -2,6 +2,9 @@ import { type QueryInterface } from 'sequelize'
 import { randomUUID } from 'node:crypto'
 
 export async function up({ context: queryInterface }: { context: QueryInterface }): Promise<void> {
+  // Do not seed sample data in production environments
+  if (process.env.NODE_ENV === 'production') return
+
   const now = new Date()
 
   // Look up existing company or insert fallback
@@ -172,7 +175,7 @@ export async function up({ context: queryInterface }: { context: QueryInterface 
       frequencyType: 'WEEKLY',
       interval: 1,
       timeUnit: 'WEEKS',
-      allowedDaysOfWeek: JSON.stringify([1, 2, 3, 4, 5]),
+      allowedDaysOfWeek: JSON.stringify(['monday', 'tuesday', 'wednesday', 'thursday', 'friday']),
       monthlyDays: null,
       description: 'Repeats Monday through Friday',
       status: 'ACTIVE',
@@ -190,7 +193,7 @@ export async function up({ context: queryInterface }: { context: QueryInterface 
       frequencyType: 'BI_WEEKLY',
       interval: 2,
       timeUnit: 'WEEKS',
-      allowedDaysOfWeek: JSON.stringify([2, 4]),
+      allowedDaysOfWeek: JSON.stringify(['tuesday', 'thursday']),
       monthlyDays: null,
       description: 'Every alternate Tuesday and Thursday',
       status: 'ACTIVE',
