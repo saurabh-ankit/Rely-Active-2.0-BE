@@ -39,6 +39,10 @@ import { FnbPropertyDish } from './fnbPropertyDish.model.js'
 import { FnbMenu } from './fnbMenu.model.js'
 import { FnbMenuItem } from './fnbMenuItem.model.js'
 import { FnbResidentOrder } from './fnbResidentOrder.model.js'
+import { TicketCategory } from './ticketCategory.model.js'
+import { TicketSubCategory } from './ticketSubCategory.model.js'
+import { Ticket } from './ticket.model.js'
+import { TicketActivityLog } from './ticketActivityLog.model.js'
 
 // ── Company associations ────────────────────────────────────────────────────
 Company.hasMany(CompanyCustomField, { foreignKey: 'companyId', as: 'customFields' })
@@ -218,6 +222,53 @@ FnbResidentOrder.belongsTo(FnbDish, { foreignKey: 'dishId', as: 'dish' })
 FnbResidentOrder.belongsTo(FnbMenuItem, { foreignKey: 'menuItemId', as: 'menuItem' })
 FnbResidentOrder.belongsTo(FnbResidentPackage, { foreignKey: 'residentPackageId', as: 'residentPackage' })
 
+// ── Ticket Management associations ─────────────────────────────────────────
+TicketCategory.hasMany(TicketSubCategory, { foreignKey: 'categoryId', as: 'subCategories' })
+TicketSubCategory.belongsTo(TicketCategory, { foreignKey: 'categoryId', as: 'category' })
+
+Property.hasMany(Ticket, { foreignKey: 'locId', as: 'tickets' })
+Ticket.belongsTo(Property, { foreignKey: 'locId', as: 'property' })
+
+PropertyUnit.hasMany(Ticket, { foreignKey: 'unitId', as: 'tickets' })
+Ticket.belongsTo(PropertyUnit, { foreignKey: 'unitId', as: 'unit' })
+
+Resident.hasMany(Ticket, { foreignKey: 'residentId', as: 'tickets' })
+Ticket.belongsTo(Resident, { foreignKey: 'residentId', as: 'resident' })
+
+ResidentFamilyMember.hasMany(Ticket, { foreignKey: 'familyMemberId', as: 'tickets' })
+Ticket.belongsTo(ResidentFamilyMember, { foreignKey: 'familyMemberId', as: 'familyMember' })
+
+User.hasMany(Ticket, { foreignKey: 'raisedByUserId', as: 'raisedTickets' })
+Ticket.belongsTo(User, { foreignKey: 'raisedByUserId', as: 'raisedByUser' })
+
+User.hasMany(Ticket, { foreignKey: 'assignedToUserId', as: 'assignedTickets' })
+Ticket.belongsTo(User, { foreignKey: 'assignedToUserId', as: 'assignedToUser' })
+
+User.hasMany(Ticket, { foreignKey: 'approvedByUserId', as: 'approvedTickets' })
+Ticket.belongsTo(User, { foreignKey: 'approvedByUserId', as: 'approvedByUser' })
+
+Department.hasMany(Ticket, { foreignKey: 'departmentId', as: 'tickets' })
+Ticket.belongsTo(Department, { foreignKey: 'departmentId', as: 'department' })
+
+JobCategory.hasMany(Ticket, { foreignKey: 'jobCategoryId', as: 'tickets' })
+Ticket.belongsTo(JobCategory, { foreignKey: 'jobCategoryId', as: 'jobCategory' })
+
+TicketCategory.hasMany(Ticket, { foreignKey: 'categoryId', as: 'tickets' })
+Ticket.belongsTo(TicketCategory, { foreignKey: 'categoryId', as: 'categoryObj' })
+
+TicketSubCategory.hasMany(Ticket, { foreignKey: 'subCategoryId', as: 'tickets' })
+Ticket.belongsTo(TicketSubCategory, { foreignKey: 'subCategoryId', as: 'subCategoryObj' })
+
+AssetVendor.hasMany(Ticket, { foreignKey: 'vendorId', as: 'tickets' })
+Ticket.belongsTo(AssetVendor, { foreignKey: 'vendorId', as: 'vendor' })
+
+Asset.hasMany(Ticket, { foreignKey: 'assetId', as: 'tickets' })
+Ticket.belongsTo(Asset, { foreignKey: 'assetId', as: 'asset' })
+
+Ticket.hasMany(TicketActivityLog, { foreignKey: 'ticketId', as: 'activityLogs' })
+TicketActivityLog.belongsTo(Ticket, { foreignKey: 'ticketId', as: 'ticket' })
+TicketActivityLog.belongsTo(User, { foreignKey: 'performedByUserId', as: 'performedByUser' })
+
 export {
   BaseModel,
   baseModelColumns,
@@ -263,4 +314,8 @@ export {
   FnbMenu,
   FnbMenuItem,
   FnbResidentOrder,
+  TicketCategory,
+  TicketSubCategory,
+  Ticket,
+  TicketActivityLog,
 }

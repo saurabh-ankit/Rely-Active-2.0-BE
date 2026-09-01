@@ -10,9 +10,9 @@ import {
   PropertyUnit,
   Resident,
   ResidentFamilyMember,
-} from '../../models/index.js'
-import { generateToken, verifyToken } from '../../utils/jwt.js'
-import { uploadFileToS3, uploadBase64ToS3 } from '../../middlewares/s3/index.js'
+} from '../../../models/index.js'
+import { generateToken, verifyToken } from '../../../utils/jwt.js'
+import { uploadFileToS3, uploadBase64ToS3 } from '../../../middlewares/s3/index.js'
 
 interface PkgType {
   id?: string
