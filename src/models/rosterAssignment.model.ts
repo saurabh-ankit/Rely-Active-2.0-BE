@@ -6,7 +6,7 @@ import type { RosterShift } from './rosterShift.model.js'
 import type { RosterFrequency } from './rosterFrequency.model.js'
 import type { RosterAssignmentTarget } from './rosterAssignmentTarget.model.js'
 
-export type RosterDutyType = 'SHIFT' | 'OPD_SESSION' | 'ON_CALL' | 'EMERGENCY' | 'AD_HOC'
+export type RosterDutyType = 'SHIFT' | 'OPD_SESSION'
 export type RosterHolidayPolicy = 'IGNORE' | 'SKIP' | 'RESCHEDULE' | 'REQUIRE_COVERAGE'
 
 export type RosterAssignmentStatus =
@@ -105,7 +105,7 @@ RosterAssignment.init(
       allowNull: false,
     },
     dutyType: {
-      type: DataTypes.ENUM('SHIFT', 'OPD_SESSION', 'ON_CALL', 'EMERGENCY', 'AD_HOC'),
+      type: DataTypes.ENUM('SHIFT', 'OPD_SESSION'),
       allowNull: false,
       defaultValue: 'SHIFT',
     },

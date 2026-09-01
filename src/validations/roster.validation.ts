@@ -33,7 +33,7 @@ export const createFrequencySchema = z.object({
 
 export const createAssignmentSchema = z.object({
   rosterName: z.string().min(1, 'Roster assignment name is required'),
-  dutyType: z.enum(['SHIFT', 'OPD_SESSION', 'ON_CALL', 'EMERGENCY', 'AD_HOC']).optional().default('SHIFT'),
+  dutyType: z.enum(['SHIFT', 'OPD_SESSION']).optional().default('SHIFT'),
   schedulingResourceId: z.string().min(1, 'Scheduling resource ID is required'),
   schedulingResourceIds: z.array(z.string()).optional(),
   shiftId: z.string().optional(),

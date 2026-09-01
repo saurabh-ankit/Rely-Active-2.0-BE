@@ -2,7 +2,7 @@ import { DataTypes, Optional } from 'sequelize'
 import sequelize from '../config/db/index.js'
 import { BaseAttributes, BaseModel, baseModelColumns } from './base.model.js'
 
-export type RosterDateDutyType = 'SHIFT' | 'OPD_SESSION' | 'ON_CALL' | 'EMERGENCY' | 'AD_HOC'
+export type RosterDateDutyType = 'SHIFT' | 'OPD_SESSION'
 export type RosterAttendanceStatus = 'NOT_MARKED' | 'PRESENT' | 'LATE' | 'HALF_DAY' | 'ABSENT' | 'ON_LEAVE'
 
 export type RosterDateStatus =
@@ -117,7 +117,7 @@ RosterAssignmentDate.init(
       allowNull: false,
     },
     dutyType: {
-      type: DataTypes.ENUM('SHIFT', 'OPD_SESSION', 'ON_CALL', 'EMERGENCY', 'AD_HOC'),
+      type: DataTypes.ENUM('SHIFT', 'OPD_SESSION'),
       field: 'duty_type',
       allowNull: false,
       defaultValue: 'SHIFT',
