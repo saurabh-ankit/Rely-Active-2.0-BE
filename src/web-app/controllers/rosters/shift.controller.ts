@@ -1,6 +1,7 @@
 import type { Response, NextFunction } from 'express'
 import type { AuthenticatedRequest } from '../../../middlewares/authenticate.js'
 import { RosterShift } from '../../../models/index.js'
+import { resolveCompanyId } from '../../../utils/resolveCompanyId.js'
 
 /**
  * Create a Shift Master Template
@@ -8,7 +9,7 @@ import { RosterShift } from '../../../models/index.js'
  */
 export async function createShiftTemplate(req: AuthenticatedRequest, res: Response, next: NextFunction) {
   try {
-    const companyId = req.params.companyId as string
+    const companyId = await resolveCompanyId(req.params.companyId as string, req.user?.companyId)
     const locationId = req.params.locationId as string
     const {
       shiftName,
@@ -57,7 +58,7 @@ export async function createShiftTemplate(req: AuthenticatedRequest, res: Respon
  */
 export async function getShiftTemplates(req: AuthenticatedRequest, res: Response, next: NextFunction) {
   try {
-    const companyId = req.params.companyId as string
+    const companyId = await resolveCompanyId(req.params.companyId as string, req.user?.companyId)
     const locationId = req.params.locationId as string
 
     const shifts = await RosterShift.findAll({

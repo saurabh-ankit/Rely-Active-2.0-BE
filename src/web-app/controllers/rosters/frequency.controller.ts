@@ -1,6 +1,7 @@
 import type { Response, NextFunction } from 'express'
 import type { AuthenticatedRequest } from '../../../middlewares/authenticate.js'
 import { RosterFrequency } from '../../../models/index.js'
+import { resolveCompanyId } from '../../../utils/resolveCompanyId.js'
 
 /**
  * Create a Frequency Template
@@ -8,7 +9,7 @@ import { RosterFrequency } from '../../../models/index.js'
  */
 export async function createFrequencyTemplate(req: AuthenticatedRequest, res: Response, next: NextFunction) {
   try {
-    const companyId = req.params.companyId as string
+    const companyId = await resolveCompanyId(req.params.companyId as string, req.user?.companyId)
     const locationId = req.params.locationId as string
     const { frequencyName, frequencyType, interval, timeUnit, allowedDaysOfWeek, monthlyDays, description } = req.body
 
@@ -43,7 +44,7 @@ export async function createFrequencyTemplate(req: AuthenticatedRequest, res: Re
  */
 export async function getFrequencyTemplates(req: AuthenticatedRequest, res: Response, next: NextFunction) {
   try {
-    const companyId = req.params.companyId as string
+    const companyId = await resolveCompanyId(req.params.companyId as string, req.user?.companyId)
     const locationId = req.params.locationId as string
 
     const frequencies = await RosterFrequency.findAll({
