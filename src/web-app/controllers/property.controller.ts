@@ -400,8 +400,14 @@ export const getAllProperties = async (req: Request, res: Response, next: NextFu
   try {
     const { companyId } = req.query
 
+    const UUID_REGEX = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/
+    let resolvedCompanyId = typeof companyId === 'string' ? companyId : undefined
+    if (resolvedCompanyId && !UUID_REGEX.test(resolvedCompanyId)) {
+      resolvedCompanyId = undefined
+    }
+
     const whereClause: Record<string, unknown> = { isDeleted: false }
-    if (companyId) whereClause.companyId = companyId
+    if (resolvedCompanyId) whereClause.companyId = resolvedCompanyId
 
     const properties = await Property.findAll({
       where: whereClause,
