@@ -1,5 +1,6 @@
 import type { Request, Response } from 'express'
 import bcrypt from 'bcryptjs'
+import { Op } from 'sequelize'
 import { User, UserDetail } from '../../models/index.js'
 import { generateToken } from '../../utils/jwt.js'
 import { AuthorizationService } from '../../services/authorization.service.js'
@@ -21,11 +22,12 @@ export async function login(req: Request, res: Response): Promise<void> {
 
     const user = await User.findOne({
       where: {
-        username: trimmedUsername,
+        [Op.or]: [{ username: trimmedUsername }, { email: trimmedUsername }],
         isDeleted: false,
       },
       include: [{ model: UserDetail, as: 'profile' }],
     })
+
 
     if (!user || !user.passwordHash) {
       res.status(401).json({
