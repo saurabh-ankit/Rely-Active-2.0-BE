@@ -1,6 +1,6 @@
 import type { Response, NextFunction } from 'express'
 import type { AuthenticatedRequest } from '../../../middlewares/authenticate.js'
-import { RosterAssignment, RosterAssignmentTarget, SchedulingResource, RosterFrequency } from '../../../models/index.js'
+import { RosterAssignment, RosterAssignmentTarget, SchedulingResource, RosterFrequency, User } from '../../../models/index.js'
 import type { RosterTargetType } from '../../../models/rosterAssignmentTarget.model.js'
 import { RosterValidationEngine } from '../../../modules/rosters/domain/roster-validation.engine.js'
 import { RosterGenerationService } from '../../../modules/rosters/domain/roster-generation.service.js'
@@ -10,15 +10,41 @@ const UUID_REGEX = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}
 
 async function resolveSchedulingResourceId(companyId: string, rawResourceId?: string): Promise<string> {
   if (rawResourceId && UUID_REGEX.test(rawResourceId)) {
-    return rawResourceId
+    const sr = await SchedulingResource.findOne({ where: { id: rawResourceId, isDeleted: false } })
+    if (sr) return sr.id
+
+    const user = await User.findByPk(rawResourceId)
+    if (user) {
+      let srUser = await SchedulingResource.findOne({ where: { userId: user.id, isDeleted: false } })
+      if (!srUser) {
+        srUser = await SchedulingResource.create({
+          companyId,
+          resourceType: 'EMPLOYEE',
+          userId: user.id,
+          status: 'ACTIVE',
+          effectiveFrom: '2026-01-01',
+        })
+      }
+      return srUser.id
+    }
   }
+
   const existing = await SchedulingResource.findOne({ where: { companyId, isDeleted: false } })
   if (existing) {
+    if (!existing.userId) {
+      const firstUser = await User.findOne()
+      if (firstUser) {
+        await existing.update({ userId: firstUser.id })
+      }
+    }
     return existing.id
   }
+
+  const firstUser = await User.findOne()
   const created = await SchedulingResource.create({
     companyId,
     resourceType: 'EMPLOYEE',
+    userId: firstUser ? firstUser.id : null,
     status: 'ACTIVE',
     effectiveFrom: '2026-01-01',
   })
