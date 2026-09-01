@@ -10,6 +10,7 @@ import resourceRouter from './resource.routes.js'
 import residentRouter from './resident.routes.js'
 import assetRouter from './asset/index.js'
 import fnbRouter from './fnb.routes.js'
+import rosterRouter from './roster.routes.js'
 
 export const apiRouter = Router()
 
@@ -30,3 +31,5 @@ apiRouter.use('/residents', residentRouter)
 apiRouter.use('/assets', assetRouter)
 apiRouter.use('/location/:locationId/assets', assetRouter)
 apiRouter.use('/fnb', fnbRouter)
+apiRouter.use('/roster', rosterRouter)
+

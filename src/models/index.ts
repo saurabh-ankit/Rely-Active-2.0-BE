@@ -40,6 +40,20 @@ import { FnbMenu } from './fnbMenu.model.js'
 import { FnbMenuItem } from './fnbMenuItem.model.js'
 import { FnbResidentOrder } from './fnbResidentOrder.model.js'
 
+// ── Roster & Scheduling Imports ──────────────────────────────────────────────
+import { RosterDoctorProfile } from './rosterDoctorProfile.model.js'
+import { SchedulingResource } from './schedulingResource.model.js'
+import { RosterDoctorLocation } from './rosterDoctorLocation.model.js'
+import { RosterDoctorEngagement } from './rosterDoctorEngagement.model.js'
+import { RosterShift } from './rosterShift.model.js'
+import { RosterFrequency } from './rosterFrequency.model.js'
+import { RosterAssignment } from './rosterAssignment.model.js'
+import { RosterAssignmentTarget } from './rosterAssignmentTarget.model.js'
+import { RosterAssignmentDate } from './rosterAssignmentDate.model.js'
+import { RosterReplacement } from './rosterReplacement.model.js'
+import { RosterSetting } from './rosterSetting.model.js'
+import { RosterAuditLog } from './rosterAuditLog.model.js'
+
 // ── Company associations ────────────────────────────────────────────────────
 Company.hasMany(CompanyCustomField, { foreignKey: 'companyId', as: 'customFields' })
 CompanyCustomField.belongsTo(Company, { foreignKey: 'companyId', as: 'company' })
@@ -218,6 +232,59 @@ FnbResidentOrder.belongsTo(FnbDish, { foreignKey: 'dishId', as: 'dish' })
 FnbResidentOrder.belongsTo(FnbMenuItem, { foreignKey: 'menuItemId', as: 'menuItem' })
 FnbResidentOrder.belongsTo(FnbResidentPackage, { foreignKey: 'residentPackageId', as: 'residentPackage' })
 
+// ── Roster & Scheduling associations ─────────────────────────────────────────
+RosterDoctorProfile.belongsTo(User, { foreignKey: 'userId', as: 'user' })
+User.hasOne(RosterDoctorProfile, { foreignKey: 'userId', as: 'doctorProfile' })
+
+SchedulingResource.belongsTo(Company, { foreignKey: 'companyId', as: 'company' })
+SchedulingResource.belongsTo(User, { foreignKey: 'userId', as: 'user' })
+SchedulingResource.belongsTo(RosterDoctorProfile, { foreignKey: 'doctorProfileId', as: 'doctorProfile' })
+RosterDoctorProfile.hasMany(SchedulingResource, { foreignKey: 'doctorProfileId', as: 'resources' })
+
+RosterDoctorLocation.belongsTo(RosterDoctorProfile, { foreignKey: 'doctorProfileId', as: 'doctorProfile' })
+RosterDoctorLocation.belongsTo(Property, { foreignKey: 'locationId', as: 'location' })
+RosterDoctorProfile.hasMany(RosterDoctorLocation, { foreignKey: 'doctorProfileId', as: 'allowedLocations' })
+
+RosterDoctorEngagement.belongsTo(RosterDoctorProfile, { foreignKey: 'doctorProfileId', as: 'doctorProfile' })
+RosterDoctorEngagement.belongsTo(Company, { foreignKey: 'companyId', as: 'company' })
+RosterDoctorEngagement.belongsTo(Property, { foreignKey: 'locationId', as: 'location' })
+RosterDoctorEngagement.belongsTo(PropertyUnit, { foreignKey: 'clinicRoomId', as: 'clinicRoom' })
+RosterDoctorProfile.hasMany(RosterDoctorEngagement, { foreignKey: 'doctorProfileId', as: 'engagements' })
+
+RosterShift.belongsTo(Company, { foreignKey: 'companyId', as: 'company' })
+RosterShift.belongsTo(Property, { foreignKey: 'locationId', as: 'location' })
+
+RosterFrequency.belongsTo(Company, { foreignKey: 'companyId', as: 'company' })
+RosterFrequency.belongsTo(Property, { foreignKey: 'locationId', as: 'location' })
+
+RosterAssignment.belongsTo(Company, { foreignKey: 'companyId', as: 'company' })
+RosterAssignment.belongsTo(Property, { foreignKey: 'locationId', as: 'location' })
+RosterAssignment.belongsTo(SchedulingResource, { foreignKey: 'schedulingResourceId', as: 'resource' })
+RosterAssignment.belongsTo(RosterShift, { foreignKey: 'shiftId', as: 'shift' })
+RosterAssignment.belongsTo(RosterFrequency, { foreignKey: 'frequencyId', as: 'frequency' })
+RosterAssignment.hasMany(RosterAssignmentTarget, { foreignKey: 'rosterAssignmentId', as: 'targets' })
+RosterAssignment.hasMany(RosterAssignmentDate, { foreignKey: 'rosterAssignmentId', as: 'dateInstances' })
+
+RosterAssignmentTarget.belongsTo(RosterAssignment, { foreignKey: 'rosterAssignmentId', as: 'assignment' })
+
+RosterAssignmentDate.belongsTo(Company, { foreignKey: 'companyId', as: 'company' })
+RosterAssignmentDate.belongsTo(Property, { foreignKey: 'locationId', as: 'location' })
+RosterAssignmentDate.belongsTo(RosterAssignment, { foreignKey: 'rosterAssignmentId', as: 'assignment' })
+RosterAssignmentDate.belongsTo(SchedulingResource, { foreignKey: 'schedulingResourceId', as: 'resource' })
+RosterAssignmentDate.belongsTo(SchedulingResource, { foreignKey: 'coveredByResourceId', as: 'coveredByResource' })
+RosterAssignmentDate.belongsTo(RosterShift, { foreignKey: 'shiftId', as: 'shift' })
+RosterAssignmentDate.hasMany(RosterReplacement, { foreignKey: 'rosterAssignmentDateId', as: 'replacements' })
+
+RosterReplacement.belongsTo(RosterAssignmentDate, { foreignKey: 'rosterAssignmentDateId', as: 'dateInstance' })
+RosterReplacement.belongsTo(SchedulingResource, { foreignKey: 'originalResourceId', as: 'originalResource' })
+RosterReplacement.belongsTo(SchedulingResource, { foreignKey: 'replacementResourceId', as: 'replacementResource' })
+
+RosterSetting.belongsTo(Company, { foreignKey: 'companyId', as: 'company' })
+RosterSetting.belongsTo(Property, { foreignKey: 'locationId', as: 'location' })
+
+RosterAuditLog.belongsTo(Company, { foreignKey: 'companyId', as: 'company' })
+RosterAuditLog.belongsTo(Property, { foreignKey: 'locationId', as: 'location' })
+
 export {
   BaseModel,
   baseModelColumns,
@@ -263,4 +330,17 @@ export {
   FnbMenu,
   FnbMenuItem,
   FnbResidentOrder,
+  RosterDoctorProfile,
+  SchedulingResource,
+  RosterDoctorLocation,
+  RosterDoctorEngagement,
+  RosterShift,
+  RosterFrequency,
+  RosterAssignment,
+  RosterAssignmentTarget,
+  RosterAssignmentDate,
+  RosterReplacement,
+  RosterSetting,
+  RosterAuditLog,
 }
+
