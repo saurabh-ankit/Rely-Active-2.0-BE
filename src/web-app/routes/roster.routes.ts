@@ -15,11 +15,22 @@ import {
   copyAssignment,
 } from '../controllers/rosters/assignment.controller.js'
 import { getRosterDates, requestShiftReplacement, cancelRosterDate } from '../controllers/rosters/dateInstance.controller.js'
+import {
+  getSpecializations,
+  createSpecialization,
+  deleteSpecialization,
+} from '../controllers/rosters/medicalSpecialization.controller.js'
 
 const router = Router()
 
 // All roster management endpoints require authentication
 router.use(authenticate)
+
+// ── Medical Specializations Master ──────────────────────────────────────────
+router.get('/specializations', getSpecializations)
+router.post('/specializations', createSpecialization)
+router.delete('/specializations/:id', deleteSpecialization)
+
 
 // ── Doctor Onboarding & Scoping ──────────────────────────────────────────────
 router.post('/companies/:companyId/locations/:locationId/doctors/onboard', onboardDoctor)

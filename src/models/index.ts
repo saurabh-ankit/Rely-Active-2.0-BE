@@ -53,6 +53,8 @@ import { RosterAssignmentDate } from './rosterAssignmentDate.model.js'
 import { RosterReplacement } from './rosterReplacement.model.js'
 import { RosterSetting } from './rosterSetting.model.js'
 import { RosterAuditLog } from './rosterAuditLog.model.js'
+import { MedicalSpecialization } from './medicalSpecialization.model.js'
+
 
 // ── Company associations ────────────────────────────────────────────────────
 Company.hasMany(CompanyCustomField, { foreignKey: 'companyId', as: 'customFields' })
@@ -342,5 +344,7 @@ export {
   RosterReplacement,
   RosterSetting,
   RosterAuditLog,
+  MedicalSpecialization,
 }
+
 
