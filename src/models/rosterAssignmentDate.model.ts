@@ -118,11 +118,13 @@ RosterAssignmentDate.init(
     },
     dutyType: {
       type: DataTypes.ENUM('SHIFT', 'OPD_SESSION', 'ON_CALL', 'EMERGENCY', 'AD_HOC'),
+      field: 'duty_type',
       allowNull: false,
       defaultValue: 'SHIFT',
     },
     attendanceStatus: {
       type: DataTypes.ENUM('NOT_MARKED', 'PRESENT', 'LATE', 'HALF_DAY', 'ABSENT', 'ON_LEAVE'),
+      field: 'attendance_status',
       allowNull: false,
       defaultValue: 'NOT_MARKED',
     },
@@ -187,14 +189,17 @@ RosterAssignmentDate.init(
     },
     cancellationReason: {
       type: DataTypes.STRING(255),
+      field: 'cancellation_reason',
       allowNull: true,
     },
     cancelledBy: {
       type: DataTypes.STRING(100),
+      field: 'cancelled_by',
       allowNull: true,
     },
     cancelledAt: {
       type: DataTypes.DATE,
+      field: 'cancelled_at',
       allowNull: true,
     },
     overrideReason: {

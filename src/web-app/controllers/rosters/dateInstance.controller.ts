@@ -19,10 +19,18 @@ export async function getRosterDates(req: AuthenticatedRequest, res: Response, n
     const locationId = req.params.locationId as string
     const { startDate, endDate, resourceId, resourceType, status } = req.query
 
+    const isUuid = (val: string) => typeof val === 'string' && /^[0-9a-fA-F-]{36}$/.test(val)
+
     const whereClause: Record<string, unknown> = {
-      companyId,
-      locationId,
       isDeleted: false,
+    }
+
+    if (isUuid(companyId)) {
+      whereClause.companyId = companyId
+    }
+
+    if (isUuid(locationId)) {
+      whereClause.locationId = locationId
     }
 
     if (startDate && endDate) {
@@ -73,6 +81,7 @@ export async function getRosterDates(req: AuthenticatedRequest, res: Response, n
       data: dates,
     })
   } catch (error) {
+    console.error('CRITICAL getRosterDates Error:', error)
     next(error)
   }
 }
