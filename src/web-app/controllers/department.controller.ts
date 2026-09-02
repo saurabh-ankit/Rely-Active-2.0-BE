@@ -66,44 +66,31 @@ async function ensurePrimaryDepartmentsAndJobCategories() {
 
 export async function getAllDepartments(_req: Request, res: Response): Promise<void> {
   try {
-    // Ensure Repair & Maintenance and Concierge with job categories exist
+    // Ensure primary departments and job categories exist
     await ensurePrimaryDepartmentsAndJobCategories()
 
     const departments = await Department.findAll({
       where: {
-        code: ['RNM', 'CON'],
         isActive: true,
       },
-      include: [{ model: JobCategory, as: 'jobCategories' }],
+      include: [{ model: JobCategory, as: 'jobCategories', where: { isActive: true }, required: false }],
       order: [['name', 'ASC']],
     })
 
-    const RNM_CATS = ['Electrical', 'Carpentry', 'Plumbing', 'Miscellaneous']
-    const CON_CATS = ['Housekeeping', 'Laundry', 'Customer Support', 'Transportation', 'Others']
-
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const formattedDepartments = departments.map((d: any) => {
-      const isRNM = d.code === 'RNM'
-      const targetCats = isRNM ? RNM_CATS : CON_CATS
+    const formattedDepartments = departments.map((d: Department & { jobCategories?: Record<string, unknown>[] }) => {
       const existingJobCats = d.jobCategories || []
-
-      const filteredJobCats = targetCats.map((catName) => {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const matched = existingJobCats.find((j: any) => String(j.name || '').toLowerCase() === catName.toLowerCase())
-        return {
-          id: matched?.id || `jc-${catName.toLowerCase()}`,
-          code: matched?.code || `${String(d.code)}_${catName.substring(0, 4).toUpperCase()}`,
-          name: catName,
-          description: matched?.description || catName,
-        }
-      })
 
       return {
         id: d.id,
         code: d.code,
         name: d.name,
         description: d.description,
-        jobCategories: filteredJobCats,
+        jobCategories: existingJobCats.map((jc: Record<string, unknown>) => ({
+          id: jc.id,
+          code: jc.code,
+          name: jc.name,
+          description: jc.description,
+        })),
       }
     })
 

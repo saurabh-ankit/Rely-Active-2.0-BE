@@ -5,6 +5,46 @@ import { randomUUID } from 'node:crypto'
 export async function up({ context: queryInterface }: { context: QueryInterface }): Promise<void> {
   const now = new Date()
 
+  // ── 0. System Company & Property ───────────────────────────────────────────
+  const defaultId = '00000000-0000-0000-0000-000000000000'
+
+  const existingCompany = await queryInterface.rawSelect('company', { where: { id: defaultId } }, ['id'])
+  if (!existingCompany) {
+    await queryInterface.bulkInsert('company', [
+      {
+        id: defaultId,
+        company_name: 'System Default Company',
+        email_id: 'admin@system.local',
+        contact_number: '0000000000',
+        company_head_office_address: 'System',
+        isActive: true,
+        isDeleted: false,
+        createdAt: now,
+        updatedAt: now,
+      },
+    ])
+  }
+
+  const existingProperty = await queryInterface.rawSelect('properties', { where: { id: defaultId } }, ['id'])
+  if (!existingProperty) {
+    await queryInterface.bulkInsert('properties', [
+      {
+        id: defaultId,
+        companyId: defaultId,
+        property_name: 'System Default Property',
+        property_type: 'apartment',
+        city: 'System',
+        state: 'System',
+        pincode: '000000',
+        country: 'System',
+        isActive: true,
+        isDeleted: false,
+        createdAt: now,
+        updatedAt: now,
+      },
+    ])
+  }
+
   // ── 1. Roles ───────────────────────────────────────────────────────────────
   const rolesData = [
     {
@@ -379,6 +419,9 @@ export async function up({ context: queryInterface }: { context: QueryInterface 
     { departmentCode: 'DOC', code: 'DOC_CLINICAL', name: 'Clinical Services', description: 'Clinical Services' },
     { departmentCode: 'DOC', code: 'DOC_DIAG', name: 'Diagnostics', description: 'Diagnostics' },
     { departmentCode: 'DOC', code: 'DOC_EMERGENCY', name: 'Emergency Care', description: 'Emergency Care' },
+
+    // Gate & Security (SEC)
+    { departmentCode: 'SEC', code: 'SEC_GATE', name: 'Gate & Security', description: 'Gate & Security staff' },
   ]
 
   for (const jc of jobCategoriesData) {
@@ -481,4 +524,8 @@ export async function down({ context: queryInterface }: { context: QueryInterfac
     await queryInterface.bulkDelete('user_details', { userId: superAdminId })
     await queryInterface.bulkDelete('users', { id: superAdminId })
   }
+
+  const defaultId = '00000000-0000-0000-0000-000000000000'
+  await queryInterface.bulkDelete('properties', { id: defaultId })
+  await queryInterface.bulkDelete('company', { id: defaultId })
 }
