@@ -43,6 +43,8 @@ import { TicketCategory } from './ticketCategory.model.js'
 import { TicketSubCategory } from './ticketSubCategory.model.js'
 import { Ticket } from './ticket.model.js'
 import { TicketActivityLog } from './ticketActivityLog.model.js'
+import { GateInvite } from './gateInvite.model.js'
+import { GateEntry } from './gateEntry.model.js'
 
 // ── Company associations ────────────────────────────────────────────────────
 Company.hasMany(CompanyCustomField, { foreignKey: 'companyId', as: 'customFields' })
@@ -269,6 +271,29 @@ Ticket.hasMany(TicketActivityLog, { foreignKey: 'ticketId', as: 'activityLogs' }
 TicketActivityLog.belongsTo(Ticket, { foreignKey: 'ticketId', as: 'ticket' })
 TicketActivityLog.belongsTo(User, { foreignKey: 'performedByUserId', as: 'performedByUser' })
 
+// ── Gate Management associations ───────────────────────────────────────────
+Property.hasMany(GateInvite, { foreignKey: 'locId', as: 'gateInvites' })
+GateInvite.belongsTo(Property, { foreignKey: 'locId', as: 'property' })
+
+PropertyUnit.hasMany(GateInvite, { foreignKey: 'unitId', as: 'gateInvites' })
+GateInvite.belongsTo(PropertyUnit, { foreignKey: 'unitId', as: 'unit' })
+
+Resident.hasMany(GateInvite, { foreignKey: 'residentId', as: 'gateInvites' })
+GateInvite.belongsTo(Resident, { foreignKey: 'residentId', as: 'resident' })
+
+Property.hasMany(GateEntry, { foreignKey: 'locId', as: 'gateEntries' })
+GateEntry.belongsTo(Property, { foreignKey: 'locId', as: 'property' })
+
+PropertyUnit.hasMany(GateEntry, { foreignKey: 'unitId', as: 'gateEntries' })
+GateEntry.belongsTo(PropertyUnit, { foreignKey: 'unitId', as: 'unit' })
+
+GateInvite.hasOne(GateEntry, { foreignKey: 'inviteId', as: 'entry' })
+GateEntry.belongsTo(GateInvite, { foreignKey: 'inviteId', as: 'invite' })
+
+GateEntry.belongsTo(User, { foreignKey: 'clockedInBy', as: 'clockedInByUser' })
+GateEntry.belongsTo(User, { foreignKey: 'clockedOutBy', as: 'clockedOutByUser' })
+GateEntry.belongsTo(User, { foreignKey: 'approvedBy', as: 'approvedByUser' })
+
 export {
   BaseModel,
   baseModelColumns,
@@ -318,4 +343,6 @@ export {
   TicketSubCategory,
   Ticket,
   TicketActivityLog,
+  GateInvite,
+  GateEntry,
 }
