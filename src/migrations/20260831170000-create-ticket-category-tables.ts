@@ -87,6 +87,10 @@ export async function up({ context: queryInterface }: { context: QueryInterface 
   }
 
   // Add columns to tickets table if not exists
+  if (!tables.includes('tickets')) {
+    return
+  }
+
   const ticketColumns = (await queryInterface.describeTable('tickets')) as Record<string, unknown>
 
   if (!ticketColumns.categoryId) {
