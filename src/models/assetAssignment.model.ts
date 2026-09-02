@@ -1,7 +1,7 @@
 import { DataTypes, Optional } from 'sequelize'
 import sequelize from '../config/db/index.js'
 import { BaseAttributes, BaseModel, baseModelColumns } from './base.model.js'
-import { AssigneeType } from '../enums/asset/index.js'
+import { AssigneeType } from '../enums/asset.enum.js'
 
 export interface AssetAssignmentAttributes extends BaseAttributes {
   assetId: string

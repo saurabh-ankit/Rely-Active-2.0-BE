@@ -204,7 +204,7 @@ function resolveBlockFloorsAndUnits(blockInput: BlockInputItem): FloorInputItem[
 
 // ─── Create Property ─────────────────────────────────────────────────────────
 
-export const createProperty = async (req: Request, res: Response, next: NextFunction) => {
+export const createProperty = async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
   try {
     const {
       companyId,

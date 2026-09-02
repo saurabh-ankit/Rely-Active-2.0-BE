@@ -35,11 +35,63 @@ import {
   getResidentPackage,
   togglePauseResidentPackage,
 } from '../controllers/fnb/residentPackage.controller.js'
+import {
+  assignMealSlotsToProperty,
+  createGlobalMealSlot,
+  deleteGlobalMealSlot,
+  getGlobalMealSlots,
+  updateGlobalMealSlot,
+} from '../controllers/fnb/globalMealSlot.controller.js'
+import { getPropertyMealSlots, updatePropertyMealSlotOverride } from '../controllers/fnb/propertyMealSlot.controller.js'
+import {
+  addPropertySpecialDish,
+  assignGlobalSpecialSlotLocations,
+  createGlobalSpecialSlot,
+  deleteGlobalSpecialSlot,
+  getGlobalSpecialSlots,
+  getPropertySpecialSlots,
+  removePropertySpecialDish,
+  syncPropertySpecialSlotDishes,
+  updateGlobalSpecialSlot,
+  updatePropertySpecialSlot,
+} from '../controllers/fnb/specialSlot.controller.js'
+import {
+  getResidentOrdersForProperty,
+  updateOrderStatus,
+  assignDeliveryEmployee,
+  completeRoomDelivery,
+  getFnbStaffEmployees,
+} from '../controllers/fnb/residentOrder.controller.js'
 
 const router = Router()
 
 // All routes require authentication
 router.use(authenticate)
+
+// ── Global Special Slots ─────────────────────────────────────────────────────
+router.get('/global-special-slots', getGlobalSpecialSlots)
+router.post('/global-special-slots', createGlobalSpecialSlot)
+router.put('/global-special-slots/:id', updateGlobalSpecialSlot)
+router.delete('/global-special-slots/:id', deleteGlobalSpecialSlot)
+router.post('/global-special-slots/:id/assign-locations', assignGlobalSpecialSlotLocations)
+
+// ── Property Special Slots & Dishes ──────────────────────────────────────────
+router.get('/property-special-slots', getPropertySpecialSlots)
+router.put('/property-special-slots/:id', updatePropertySpecialSlot)
+router.post('/property-special-slots/sync-dishes', syncPropertySpecialSlotDishes)
+router.post('/property-special-slots/:propertySpecialSlotId/dishes', addPropertySpecialDish)
+router.delete('/property-special-dishes/:id', removePropertySpecialDish)
+
+// ── Global Meal Slots ────────────────────────────────────────────────────────
+router.get('/global-meal-slots', getGlobalMealSlots)
+router.post('/global-meal-slots', createGlobalMealSlot)
+router.put('/global-meal-slots/:id', updateGlobalMealSlot)
+router.delete('/global-meal-slots/:id', deleteGlobalMealSlot)
+router.post('/global-meal-slots/assign', assignMealSlotsToProperty)
+
+// ── Property Meal Slots ──────────────────────────────────────────────────────
+router.get('/property-meal-slots', getPropertyMealSlots)
+router.put('/property-meal-slots/:id', updatePropertyMealSlotOverride)
 
 // ── Global Packages ──────────────────────────────────────────────────────────
 router.get('/global-packages', getAllGlobalPackages)
@@ -70,9 +122,18 @@ router.delete('/menus/:id', deleteMenu)
 
 // ── Resident Package Subscription ──────────────────────────────────────────
 router.get('/residents/:residentId/package', getResidentPackage)
+router.get('/resident-package/:residentId', getResidentPackage)
 router.post('/resident-package', assignResidentPackage)
 router.post('/resident-package/change', changeResidentPackage)
 router.patch('/resident-package/:id/toggle-pause', togglePauseResidentPackage)
 router.post('/residents/:residentId/cancel-package', cancelResidentPackage)
+
+// ── Resident Orders Management ──────────────────────────────────────────────
+router.get('/resident-orders', getResidentOrdersForProperty)
+router.get('/properties/:locId/resident-orders', getResidentOrdersForProperty)
+router.patch('/resident-orders/:id/status', updateOrderStatus)
+router.post('/resident-orders/:id/assign-delivery', assignDeliveryEmployee)
+router.post('/resident-orders/:id/complete-delivery', completeRoomDelivery)
+router.get('/staff-employees', getFnbStaffEmployees)
 
 export default router

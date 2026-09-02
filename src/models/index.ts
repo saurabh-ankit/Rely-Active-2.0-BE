@@ -43,6 +43,20 @@ import { TicketCategory } from './ticketCategory.model.js'
 import { TicketSubCategory } from './ticketSubCategory.model.js'
 import { Ticket } from './ticket.model.js'
 import { TicketActivityLog } from './ticketActivityLog.model.js'
+import { FnbGlobalMealSlot } from './fnbGlobalMealSlot.model.js'
+import { FnbPropertyMealSlot } from './fnbPropertyMealSlot.model.js'
+import { FnbGlobalSpecialSlot } from './fnbGlobalSpecialSlot.model.js'
+import { FnbPropertySpecialSlot } from './fnbPropertySpecialSlot.model.js'
+import { FnbPropertySpecialSlotDish } from './fnbPropertySpecialSlotDish.model.js'
+import { FnbResidentOrderDetail } from './fnbResidentOrderDetail.model.js'
+import { FnbFoodDelivery } from './fnbFoodDelivery.model.js'
+
+// ── F&B Meal Slot associations ──────────────────────────────────────────────
+FnbGlobalMealSlot.hasMany(FnbPropertyMealSlot, { foreignKey: 'globalMealSlotId', as: 'propertyMealSlots' })
+FnbPropertyMealSlot.belongsTo(FnbGlobalMealSlot, { foreignKey: 'globalMealSlotId', as: 'globalMealSlot' })
+
+Property.hasMany(FnbPropertyMealSlot, { foreignKey: 'locId', as: 'propertyMealSlots' })
+FnbPropertyMealSlot.belongsTo(Property, { foreignKey: 'locId', as: 'property' })
 
 // ── Company associations ────────────────────────────────────────────────────
 Company.hasMany(CompanyCustomField, { foreignKey: 'companyId', as: 'customFields' })
@@ -166,41 +180,61 @@ AssetItem.belongsToMany(Property, {
 AssetItem.hasMany(Asset, { foreignKey: 'itemId', as: 'assets' })
 Asset.belongsTo(AssetItem, { foreignKey: 'itemId', as: 'item' })
 
-Asset.belongsTo(Property, { foreignKey: 'locationId', as: 'location' })
+Asset.belongsTo(Property, { foreignKey: 'locId', as: 'property' })
+Property.hasMany(Asset, { foreignKey: 'locId', as: 'propertyAssets' })
+
 Asset.belongsTo(AssetVendor, { foreignKey: 'vendorId', as: 'vendor' })
+AssetVendor.hasMany(Asset, { foreignKey: 'vendorId', as: 'vendorAssets' })
+
 Asset.hasMany(AssetAssignment, { foreignKey: 'assetId', as: 'assignments' })
-Asset.hasMany(AssetServiceLog, { foreignKey: 'assetId', as: 'serviceLogs' })
-Asset.hasMany(AssetWarranty, { foreignKey: 'assetId', as: 'warranties' })
-Asset.hasMany(AssetCalibration, { foreignKey: 'assetId', as: 'calibrations' })
-Asset.hasMany(AssetComplianceInspection, { foreignKey: 'assetId', as: 'inspections' })
-Asset.hasMany(AssetComplianceCertification, { foreignKey: 'assetId', as: 'certifications' })
-Asset.hasMany(AssetComplianceTraining, { foreignKey: 'assetId', as: 'trainings' })
-
 AssetAssignment.belongsTo(Asset, { foreignKey: 'assetId', as: 'asset' })
-AssetAssignment.belongsTo(Property, { foreignKey: 'locationId', as: 'location' })
-AssetAssignment.belongsTo(User, { foreignKey: 'assignedBy', as: 'assigner' })
-AssetAssignment.belongsTo(User, { foreignKey: 'assigneeId', constraints: false, as: 'employeeAssignee' })
-AssetAssignment.belongsTo(Resident, { foreignKey: 'assigneeId', constraints: false, as: 'residentAssignee' })
-AssetAssignment.belongsTo(PropertyUnit, { foreignKey: 'assigneeId', constraints: false, as: 'flatAssignee' })
+AssetAssignment.belongsTo(User, { foreignKey: 'assignedToUserId', as: 'assignedToUser' })
+AssetAssignment.belongsTo(Resident, { foreignKey: 'assignedToResidentId', as: 'assignedToResident' })
+AssetAssignment.belongsTo(Department, { foreignKey: 'assignedToDeptId', as: 'assignedToDept' })
+AssetAssignment.belongsTo(PropertyUnit, { foreignKey: 'assignedToUnitId', as: 'assignedToUnit' })
 
+Asset.hasMany(AssetServiceLog, { foreignKey: 'assetId', as: 'serviceLogs' })
 AssetServiceLog.belongsTo(Asset, { foreignKey: 'assetId', as: 'asset' })
 AssetServiceLog.belongsTo(AssetVendor, { foreignKey: 'vendorId', as: 'vendor' })
+AssetServiceLog.belongsTo(User, { foreignKey: 'performedByUserId', as: 'performedByUser' })
 
+Asset.hasMany(AssetWarranty, { foreignKey: 'assetId', as: 'warranties' })
 AssetWarranty.belongsTo(Asset, { foreignKey: 'assetId', as: 'asset' })
-AssetWarranty.belongsTo(AssetVendor, { foreignKey: 'vendorId', as: 'vendor' })
+AssetWarranty.belongsTo(AssetVendor, { foreignKey: 'providerVendorId', as: 'providerVendor' })
 
+Asset.hasMany(AssetCalibration, { foreignKey: 'assetId', as: 'calibrations' })
 AssetCalibration.belongsTo(Asset, { foreignKey: 'assetId', as: 'asset' })
+AssetCalibration.belongsTo(AssetVendor, { foreignKey: 'agencyVendorId', as: 'agencyVendor' })
 
+Asset.hasMany(AssetComplianceInspection, { foreignKey: 'assetId', as: 'complianceInspections' })
 AssetComplianceInspection.belongsTo(Asset, { foreignKey: 'assetId', as: 'asset' })
+AssetComplianceInspection.belongsTo(AssetVendor, { foreignKey: 'agencyVendorId', as: 'agencyVendor' })
+AssetComplianceInspection.belongsTo(User, { foreignKey: 'inspectorUserId', as: 'inspectorUser' })
 
+Asset.hasMany(AssetComplianceCertification, { foreignKey: 'assetId', as: 'complianceCertifications' })
 AssetComplianceCertification.belongsTo(Asset, { foreignKey: 'assetId', as: 'asset' })
+AssetComplianceCertification.belongsTo(AssetVendor, { foreignKey: 'agencyVendorId', as: 'agencyVendor' })
 
+Asset.hasMany(AssetComplianceTraining, { foreignKey: 'assetId', as: 'complianceTrainings' })
 AssetComplianceTraining.belongsTo(Asset, { foreignKey: 'assetId', as: 'asset' })
+AssetComplianceTraining.belongsTo(User, { foreignKey: 'trainerUserId', as: 'trainerUser' })
 
-// ── F&B associations ───────────────────────────────────────────────────
-FnbGlobalPackage.hasMany(FnbPropertyPackage, { foreignKey: 'globalPackageId', as: 'propertyPackages' })
+// ── F&B Package & Order associations ─────────────────────────────────────
 FnbPropertyPackage.belongsTo(FnbGlobalPackage, { foreignKey: 'globalPackageId', as: 'globalPackage' })
 FnbPropertyPackage.belongsTo(Property, { foreignKey: 'locId', as: 'property' })
+FnbGlobalPackage.hasMany(FnbPropertyPackage, { foreignKey: 'globalPackageId', as: 'propertyPackages' })
+
+FnbGlobalSpecialSlot.hasMany(FnbPropertySpecialSlot, { foreignKey: 'globalSpecialSlotId', as: 'propertySpecialSlots' })
+FnbPropertySpecialSlot.belongsTo(FnbGlobalSpecialSlot, { foreignKey: 'globalSpecialSlotId', as: 'globalSpecialSlot' })
+FnbPropertySpecialSlot.belongsTo(Property, { foreignKey: 'locId', as: 'property' })
+Property.hasMany(FnbPropertySpecialSlot, { foreignKey: 'locId', as: 'propertySpecialSlots' })
+
+FnbPropertySpecialSlot.hasMany(FnbPropertySpecialSlotDish, { foreignKey: 'propertySpecialSlotId', as: 'specialDishes' })
+FnbPropertySpecialSlotDish.belongsTo(FnbPropertySpecialSlot, {
+  foreignKey: 'propertySpecialSlotId',
+  as: 'propertySpecialSlot',
+})
+FnbPropertySpecialSlotDish.belongsTo(FnbDish, { foreignKey: 'dishId', as: 'dish' })
 
 FnbResidentPackage.belongsTo(Resident, { foreignKey: 'residentId', as: 'resident' })
 FnbResidentPackage.belongsTo(ResidentFamilyMember, { foreignKey: 'familyMemberId', as: 'familyMember' })
@@ -218,9 +252,24 @@ FnbMenuItem.belongsTo(FnbMenu, { foreignKey: 'menuId', as: 'menu' })
 FnbMenuItem.belongsTo(FnbDish, { foreignKey: 'dishId', as: 'dish' })
 
 FnbResidentOrder.belongsTo(Resident, { foreignKey: 'residentId', as: 'resident' })
-FnbResidentOrder.belongsTo(FnbDish, { foreignKey: 'dishId', as: 'dish' })
-FnbResidentOrder.belongsTo(FnbMenuItem, { foreignKey: 'menuItemId', as: 'menuItem' })
+FnbResidentOrder.belongsTo(ResidentFamilyMember, { foreignKey: 'familyMemberId', as: 'familyMember' })
 FnbResidentOrder.belongsTo(FnbResidentPackage, { foreignKey: 'residentPackageId', as: 'residentPackage' })
+FnbResidentOrder.belongsTo(FnbPropertySpecialSlot, { foreignKey: 'specialMealSlotId', as: 'specialMealSlot' })
+FnbResidentOrder.hasMany(FnbResidentOrderDetail, { foreignKey: 'orderId', as: 'details' })
+
+FnbResidentOrderDetail.belongsTo(FnbResidentOrder, { foreignKey: 'orderId', as: 'order' })
+FnbResidentOrderDetail.belongsTo(FnbDish, { foreignKey: 'dishId', as: 'dish' })
+FnbResidentOrderDetail.belongsTo(FnbGlobalMealSlot, { foreignKey: 'mealSlotId', as: 'globalMealSlot' })
+FnbResidentOrderDetail.belongsTo(FnbPropertySpecialSlot, { foreignKey: 'specialMealSlotId', as: 'specialMealSlot' })
+FnbResidentOrderDetail.belongsTo(FnbPropertySpecialSlotDish, {
+  foreignKey: 'specialMealSlotDishId',
+  as: 'specialMealSlotDish',
+})
+
+FnbResidentOrder.hasOne(FnbFoodDelivery, { foreignKey: 'orderId', as: 'delivery' })
+FnbFoodDelivery.belongsTo(FnbResidentOrder, { foreignKey: 'orderId', as: 'order' })
+FnbFoodDelivery.belongsTo(User, { foreignKey: 'employeeId', as: 'employee' })
+FnbFoodDelivery.belongsTo(UserDetail, { foreignKey: 'employeeId', targetKey: 'userId', as: 'employeeDetail' })
 
 // ── Ticket Management associations ─────────────────────────────────────────
 TicketCategory.hasMany(TicketSubCategory, { foreignKey: 'categoryId', as: 'subCategories' })
@@ -318,4 +367,11 @@ export {
   TicketSubCategory,
   Ticket,
   TicketActivityLog,
+  FnbResidentOrderDetail,
+  FnbFoodDelivery,
+  FnbGlobalMealSlot,
+  FnbPropertyMealSlot,
+  FnbGlobalSpecialSlot,
+  FnbPropertySpecialSlot,
+  FnbPropertySpecialSlotDish,
 }

@@ -23,7 +23,7 @@ export async function getAllRoles(_req: Request, res: Response): Promise<void> {
   }
 }
 
-export async function createRole(req: Request, res: Response): Promise<void> {
+export async function createRole(req: AuthenticatedRequest, res: Response): Promise<void> {
   try {
     const { name, code, description } = req.body
 

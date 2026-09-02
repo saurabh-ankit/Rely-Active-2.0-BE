@@ -15,6 +15,8 @@ import { FnbSubscriptionStatus } from '../../../enums/fnb.enum.js'
 export async function getPropertyPackages(req: Request, res: Response): Promise<void> {
   try {
     const locId = req.params.locId as string
+    const search = typeof req.query.search === 'string' ? req.query.search.trim().toLowerCase() : ''
+
     const packages = await FnbPropertyPackage.findAll({
       where: { locId },
       include: [{ model: FnbGlobalPackage, as: 'globalPackage' }],
@@ -23,10 +25,10 @@ export async function getPropertyPackages(req: Request, res: Response): Promise<
 
     const packagesWithOptIn = await Promise.all(
       packages.map(async (pkg: FnbPropertyPackage) => {
-        const optedSubscriptions = await FnbResidentPackage.findAll({
+        let optedSubscriptions = await FnbResidentPackage.findAll({
           where: {
             propertyPackageId: pkg.id,
-            status: [FnbSubscriptionStatus.ACTIVE, FnbSubscriptionStatus.PAUSED],
+            status: [FnbSubscriptionStatus.ACTIVE, FnbSubscriptionStatus.PAUSED, FnbSubscriptionStatus.CANCELLED],
           },
           include: [
             {
@@ -58,7 +60,35 @@ export async function getPropertyPackages(req: Request, res: Response): Promise<
             {
               model: ResidentFamilyMember,
               as: 'familyMember',
-              attributes: ['id', 'firstName', 'lastName', 'relation', 'phone'],
+              attributes: ['id', 'residentId', 'firstName', 'lastName', 'relation', 'phone'],
+              include: [
+                {
+                  model: Resident,
+                  as: 'resident',
+                  attributes: ['id', 'firstName', 'lastName', 'phone', 'email', 'residentType', 'isResiding'],
+                  include: [
+                    {
+                      model: PropertyUnit,
+                      as: 'unit',
+                      attributes: ['id', 'unit_number'],
+                      include: [
+                        {
+                          model: PropertyFloor,
+                          as: 'floor',
+                          attributes: ['id', 'floor_number', 'floor_name'],
+                          include: [
+                            {
+                              model: PropertyBlock,
+                              as: 'block',
+                              attributes: ['id', 'block_name'],
+                            },
+                          ],
+                        },
+                      ],
+                    },
+                  ],
+                },
+              ],
             },
             {
               model: FnbPropertyPackage,
@@ -68,6 +98,30 @@ export async function getPropertyPackages(req: Request, res: Response): Promise<
           ],
           order: [['createdAt', 'DESC']],
         })
+
+        if (search) {
+          optedSubscriptions = optedSubscriptions.filter((sub) => {
+            const primaryName = sub.resident
+              ? `${sub.resident.firstName} ${sub.resident.lastName || ''}`.toLowerCase()
+              : ''
+            const familyName = sub.familyMember
+              ? `${sub.familyMember.firstName} ${sub.familyMember.lastName || ''}`.toLowerCase()
+              : ''
+            const targetRes = sub.resident || sub.familyMember?.resident
+            const unitNum = targetRes?.unit?.unit_number?.toLowerCase() || ''
+            const unitObj = targetRes?.unit as unknown as { floor?: { block?: { block_name?: string } } } | undefined
+            const blockName = unitObj?.floor?.block?.block_name?.toLowerCase() || ''
+            const pkgName = pkg.globalPackage?.name?.toLowerCase() || ''
+
+            return (
+              primaryName.includes(search) ||
+              familyName.includes(search) ||
+              unitNum.includes(search) ||
+              blockName.includes(search) ||
+              pkgName.includes(search)
+            )
+          })
+        }
 
         return {
           ...pkg.toJSON(),

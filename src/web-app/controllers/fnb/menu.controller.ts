@@ -1,7 +1,7 @@
 import type { Request, Response } from 'express'
 import { FnbDish, FnbMenu, FnbMenuItem } from '../../../models/index.js'
 import type { AuthenticatedRequest } from '../../../middlewares/authenticate.js'
-import { FnbMealSlot, FnbMenuStatus } from '../../../enums/fnb.enum.js'
+import { FnbMenuStatus } from '../../../enums/fnb.enum.js'
 
 export async function getMenus(req: Request, res: Response): Promise<void> {
   try {
@@ -95,7 +95,8 @@ export async function createMenuSchedule(req: AuthenticatedRequest, res: Respons
           dayOfWeek?: 'monday' | 'tuesday' | 'wednesday' | 'thursday' | 'friday' | 'saturday' | 'sunday' | null
           date?: string | null
           isOverride?: boolean
-          mealSlot: FnbMealSlot
+          mealSlot?: string
+          mealSlotId?: string | null
           dishId: string
           isOptional?: boolean
           extraPrice?: number
@@ -106,7 +107,8 @@ export async function createMenuSchedule(req: AuthenticatedRequest, res: Respons
           dayOfWeek: item.dayOfWeek || null,
           date: item.date || null,
           isOverride: item.isOverride || false,
-          mealSlot: item.mealSlot,
+          mealSlot: item.mealSlot || null,
+          mealSlotId: item.mealSlotId || null,
           dishId: item.dishId,
           isOptional: item.isOptional || false,
           extraPrice: item.extraPrice || 0,
@@ -141,15 +143,22 @@ export async function createMenuSchedule(req: AuthenticatedRequest, res: Respons
 
 export async function addOrUpdateMenuItem(req: AuthenticatedRequest, res: Response): Promise<void> {
   try {
-    const { menuId, locId, dayOfWeek, date, isOverride, mealSlot, dishId, isOptional, extraPrice, notes } = req.body
+    const { menuId, locId, dayOfWeek, date, isOverride, mealSlot, mealSlotId, dishId, isOptional, extraPrice, notes } =
+      req.body
 
+    if (!locId || (!mealSlot && !mealSlotId) || !dishId) {
+      res.status(400).json({ success: false, message: 'locId, mealSlot (or mealSlotId), and dishId are required' })
+      return
+    }
+
+    // Find or create active draft menu for location
     let targetMenuId = menuId
     if (!targetMenuId) {
       const [menu] = await FnbMenu.findOrCreate({
-        where: { locId },
+        where: { locId, status: FnbMenuStatus.DRAFT },
         defaults: {
           locId,
-          title: 'Location Food Menu',
+          title: 'Weekly Menu',
           status: FnbMenuStatus.DRAFT,
           createdBy: req.user?.id || null,
         },
@@ -161,9 +170,14 @@ export async function addOrUpdateMenuItem(req: AuthenticatedRequest, res: Respon
     const whereClause: Record<string, unknown> = {
       menuId: targetMenuId,
       locId,
-      mealSlot,
       dishId,
     }
+    if (mealSlotId) {
+      whereClause.mealSlotId = mealSlotId
+    } else {
+      whereClause.mealSlot = mealSlot
+    }
+
     if (date) {
       whereClause.date = date
     } else if (dayOfWeek) {
@@ -191,7 +205,8 @@ export async function addOrUpdateMenuItem(req: AuthenticatedRequest, res: Respon
       dayOfWeek: dayOfWeek || null,
       date: date || null,
       isOverride: isOverride || false,
-      mealSlot,
+      mealSlot: mealSlot || null,
+      mealSlotId: mealSlotId || null,
       dishId,
       isOptional: isOptional || false,
       extraPrice: extraPrice || 0,

@@ -52,7 +52,10 @@ export function createApp() {
 
   app.get('/health', (_request, response) => response.json({ status: 'ok', service: 'rely-active-backend' }))
   app.use('/api/v1', apiRouter)
+
+  // Mobile API Router (/api/v1/mobile/l1 for Resident, /api/v1/mobile/l3 for Staff/Technician)
   app.use('/api/v1/mobile', mobileApiRouter)
+
   app.use(notFound)
   app.use(errorHandler)
   return app

@@ -1,6 +1,69 @@
 import type { Request, Response } from 'express'
-import { FnbGlobalPackage, FnbPropertyPackage, FnbResidentPackage, Property } from '../../../models/index.js'
+import {
+  FnbGlobalPackage,
+  FnbPropertyPackage,
+  FnbResidentPackage,
+  Property,
+  FnbGlobalMealSlot,
+  FnbPropertyMealSlot,
+} from '../../../models/index.js'
 import type { AuthenticatedRequest } from '../../../middlewares/authenticate.js'
+
+async function validateMealSlotsForProperties(
+  includedMealSlots: string[],
+  propertyAssignments: Array<{ locId: string; price?: number }>,
+): Promise<string | null> {
+  if (!Array.isArray(propertyAssignments) || propertyAssignments.length === 0) {
+    return null
+  }
+  if (!Array.isArray(includedMealSlots) || includedMealSlots.length === 0) {
+    return 'Please select at least one meal slot for the package.'
+  }
+
+  for (const pa of propertyAssignments) {
+    if (!pa.locId) continue
+
+    const prop = await Property.findByPk(pa.locId)
+    const propName =
+      (prop as unknown as Record<string, string>)?.property_name ||
+      (prop as unknown as Record<string, string>)?.propertyName ||
+      (prop as unknown as Record<string, string>)?.name ||
+      'Selected Property'
+
+    const propertyMealSlots = await FnbPropertyMealSlot.findAll({
+      where: { locId: pa.locId, isActive: true },
+      include: [{ model: FnbGlobalMealSlot, as: 'globalMealSlot' }],
+    })
+
+    const availableSet = new Set<string>()
+    propertyMealSlots.forEach((ps) => {
+      if (ps.globalMealSlotId) availableSet.add(ps.globalMealSlotId)
+      const g = ps.globalMealSlot as (FnbGlobalMealSlot & { code?: string }) | undefined
+      if (g) {
+        if (g.id) availableSet.add(g.id)
+        if (g.code) {
+          availableSet.add(g.code)
+          availableSet.add(g.code.toLowerCase())
+        }
+        if (g.name) availableSet.add(g.name.toLowerCase())
+      }
+    })
+
+    for (const reqSlot of includedMealSlots) {
+      const isAvailable = availableSet.has(reqSlot) || availableSet.has(reqSlot.toLowerCase())
+
+      if (!isAvailable) {
+        let slotName = reqSlot
+        const gSlot = await FnbGlobalMealSlot.findByPk(reqSlot)
+        if (gSlot) slotName = gSlot.name
+
+        return `Cannot assign package to property "${propName}": Required meal slot "${slotName}" is not configured/available for this property location.`
+      }
+    }
+  }
+
+  return null
+}
 
 export async function getAllGlobalPackages(req: Request, res: Response): Promise<void> {
   try {
@@ -52,9 +115,21 @@ export async function createGlobalPackage(req: AuthenticatedRequest, res: Respon
   try {
     const { name, code, description, dietaryType, includedMealSlots, isActive, propertyAssignments } = req.body
 
+    if (!name || !code) {
+      res.status(400).json({ success: false, message: 'Package Name and Code are required' })
+      return
+    }
+
     const existing = await FnbGlobalPackage.findOne({ where: { code } })
     if (existing) {
       res.status(400).json({ success: false, message: 'Package code already exists' })
+      return
+    }
+
+    const mealSlotsToInclude = includedMealSlots || []
+    const validationErr = await validateMealSlotsForProperties(mealSlotsToInclude, propertyAssignments || [])
+    if (validationErr) {
+      res.status(400).json({ success: false, message: validationErr })
       return
     }
 
@@ -63,7 +138,7 @@ export async function createGlobalPackage(req: AuthenticatedRequest, res: Respon
       code,
       description: description || null,
       dietaryType,
-      includedMealSlots: includedMealSlots || ['breakfast', 'lunch', 'snacks', 'dinner'],
+      includedMealSlots: mealSlotsToInclude,
       isActive: isActive !== undefined ? isActive : true,
       createdBy: req.user?.id || null,
     })
@@ -136,6 +211,15 @@ export async function updateGlobalPackage(req: AuthenticatedRequest, res: Respon
         message: 'Cannot edit global package because one or more residents are currently opted into it.',
       })
       return
+    }
+
+    const slotsToValidate = includedMealSlots || pkg.includedMealSlots || []
+    if (Array.isArray(propertyAssignments)) {
+      const validationErr = await validateMealSlotsForProperties(slotsToValidate, propertyAssignments)
+      if (validationErr) {
+        res.status(400).json({ success: false, message: validationErr })
+        return
+      }
     }
 
     await pkg.update({

@@ -5,6 +5,8 @@ import { Resident, ResidentFamilyMember, User } from '../models/index.js'
 export interface AuthenticatedRequest extends Request {
   user?: {
     id: string
+    residentId?: string
+    familyMemberId?: string
     email?: string | null
     companyId?: string | null
     defaultLocationId?: string | null
@@ -39,6 +41,7 @@ export async function authenticate(req: AuthenticatedRequest, res: Response, nex
 
       req.user = {
         id: resident.id,
+        residentId: resident.id,
         email: resident.email,
         companyId: resident.companyId,
         defaultLocationId: resident.locId,
@@ -62,7 +65,9 @@ export async function authenticate(req: AuthenticatedRequest, res: Response, nex
       }
 
       req.user = {
-        id: familyMember.resident.id,
+        id: familyMember.id,
+        residentId: familyMember.resident.id,
+        familyMemberId: familyMember.id,
         email: familyMember.email || familyMember.resident.email,
         companyId: familyMember.resident.companyId,
         defaultLocationId: familyMember.resident.locId,

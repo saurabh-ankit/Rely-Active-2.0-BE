@@ -56,7 +56,7 @@ import {
   updateTrainingValidation,
   updateVendorValidation,
   updateWarrantyValidation,
-} from '../../../validations/asset/index.js'
+} from '../../../validations/asset.validation.js'
 import {
   completeServiceLog,
   createAsset,

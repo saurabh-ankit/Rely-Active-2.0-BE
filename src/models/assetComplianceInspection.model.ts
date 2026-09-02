@@ -1,7 +1,7 @@
 import { DataTypes, Optional } from 'sequelize'
 import sequelize from '../config/db/index.js'
 import { BaseAttributes, BaseModel, baseModelColumns } from './base.model.js'
-import { CalibrationResult, InspectionType } from '../enums/asset/index.js'
+import { CalibrationResult, InspectionType } from '../enums/asset.enum.js'
 
 export interface AssetComplianceInspectionAttributes extends BaseAttributes {
   assetId: string

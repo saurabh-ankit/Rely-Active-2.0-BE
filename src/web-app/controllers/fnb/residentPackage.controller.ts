@@ -1,8 +1,12 @@
 import type { Request, Response } from 'express'
+import { Op } from 'sequelize'
 import {
   FnbGlobalPackage,
   FnbPropertyPackage,
   FnbResidentPackage,
+  PropertyBlock,
+  PropertyFloor,
+  PropertyUnit,
   Resident,
   ResidentFamilyMember,
 } from '../../../models/index.js'
@@ -12,8 +16,23 @@ import { FnbDietaryType, FnbSubscriptionStatus } from '../../../enums/fnb.enum.j
 export async function getResidentPackage(req: Request, res: Response): Promise<void> {
   try {
     const residentId = req.params.residentId as string
+
+    // Fetch family member IDs under this primary resident
+    const fmList = await ResidentFamilyMember.findAll({
+      where: { residentId, isDeleted: false },
+      attributes: ['id'],
+    })
+    const fmIds = fmList.map((fm) => fm.id)
+
     const subscriptions = await FnbResidentPackage.findAll({
-      where: { residentId, status: FnbSubscriptionStatus.ACTIVE },
+      where: {
+        [Op.or]: [
+          { residentId },
+          { familyMemberId: residentId },
+          ...(fmIds.length > 0 ? [{ familyMemberId: fmIds }] : []),
+        ],
+        status: [FnbSubscriptionStatus.ACTIVE, FnbSubscriptionStatus.PAUSED, 'active', 'ACTIVE', 'paused', 'PAUSED'],
+      },
       include: [
         {
           model: FnbPropertyPackage,
@@ -23,6 +42,34 @@ export async function getResidentPackage(req: Request, res: Response): Promise<v
         {
           model: ResidentFamilyMember,
           as: 'familyMember',
+          include: [
+            {
+              model: Resident,
+              as: 'resident',
+              attributes: ['id', 'firstName', 'lastName', 'phone', 'email', 'residentType', 'isResiding'],
+              include: [
+                {
+                  model: PropertyUnit,
+                  as: 'unit',
+                  attributes: ['id', 'unit_number'],
+                  include: [
+                    {
+                      model: PropertyFloor,
+                      as: 'floor',
+                      attributes: ['id', 'floor_number', 'floor_name'],
+                      include: [
+                        {
+                          model: PropertyBlock,
+                          as: 'block',
+                          attributes: ['id', 'block_name'],
+                        },
+                      ],
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
         },
       ],
     })
@@ -40,11 +87,12 @@ export async function getResidentPackage(req: Request, res: Response): Promise<v
 interface SubscriptionInput {
   familyMemberId?: string | null
   propertyPackageId?: string | null
+  startDate?: string | null
 }
 
 export async function assignResidentPackage(req: AuthenticatedRequest, res: Response): Promise<void> {
   try {
-    const { residentId, propertyPackageId, startDate, endDate, allergiesNotes, subscriptions } = req.body
+    const { residentId, propertyPackageId, startDate, endDate, subscriptions } = req.body
 
     // 1. Verify resident exists & is currently residing!
     const resident = await Resident.findByPk(residentId)
@@ -66,7 +114,7 @@ export async function assignResidentPackage(req: AuthenticatedRequest, res: Resp
     if (Array.isArray(subscriptions) && subscriptions.length > 0) {
       subList = subscriptions
     } else if (propertyPackageId) {
-      subList = [{ familyMemberId: null, propertyPackageId }]
+      subList = [{ familyMemberId: null, propertyPackageId, startDate }]
     }
 
     if (subList.length === 0) {
@@ -78,25 +126,41 @@ export async function assignResidentPackage(req: AuthenticatedRequest, res: Resp
     const todayStr: string = new Date().toISOString().split('T')[0] as string
 
     for (const sub of subList) {
-      const famId = sub.familyMemberId || null
-      const propPkgId = sub.propertyPackageId || null
+      const famId = sub.familyMemberId || (sub as unknown as Record<string, string>).family_member_id || null
+      const propPkgId = sub.propertyPackageId || (sub as unknown as Record<string, string>).property_package_id || null
+      const itemStartDate =
+        sub.startDate || (sub as unknown as Record<string, string>).start_date || startDate || todayStr
 
-      // Deactivate previous active/paused package subscription for this person
+      // Check existing active or paused subscription for this person
       const whereCondition: Record<string, unknown> = {
-        residentId,
-        status: [FnbSubscriptionStatus.ACTIVE, FnbSubscriptionStatus.PAUSED],
+        status: [FnbSubscriptionStatus.ACTIVE, FnbSubscriptionStatus.PAUSED, 'active', 'ACTIVE', 'paused', 'PAUSED'],
       }
+
       if (famId) {
         whereCondition.familyMemberId = famId
       } else {
+        whereCondition.residentId = residentId
         whereCondition.familyMemberId = null
       }
 
-      await FnbResidentPackage.update(
-        { status: FnbSubscriptionStatus.CANCELLED, endDate: todayStr, updatedBy: req.user?.id || null },
-        { where: whereCondition },
-      )
+      const existingActive = await FnbResidentPackage.findOne({ where: whereCondition })
 
+      // If existing subscription already matches the target package, DO NOT re-insert or cancel!
+      if (existingActive && propPkgId && existingActive.propertyPackageId === propPkgId) {
+        createdSubscriptions.push(existingActive)
+        continue
+      }
+
+      // If package changed or set to null, deactivate previous subscription
+      if (existingActive) {
+        await existingActive.update({
+          status: FnbSubscriptionStatus.CANCELLED,
+          endDate: todayStr,
+          updatedBy: req.user?.id || null,
+        })
+      }
+
+      // If a new propertyPackageId is provided, create new subscription
       if (propPkgId) {
         const propertyPackage = await FnbPropertyPackage.findByPk(propPkgId, {
           include: [{ model: FnbGlobalPackage, as: 'globalPackage' }],
@@ -106,13 +170,13 @@ export async function assignResidentPackage(req: AuthenticatedRequest, res: Resp
           const dietaryPref = (propertyPackage.globalPackage?.dietaryType as FnbDietaryType) || FnbDietaryType.VEG
 
           const newSubscription = await FnbResidentPackage.create({
-            residentId,
+            residentId: famId ? null : residentId,
             familyMemberId: famId,
             propertyPackageId: propPkgId,
-            startDate: startDate || todayStr,
+            startDate: itemStartDate,
             endDate: endDate || null,
             dietaryPreference: dietaryPref,
-            allergiesNotes: allergiesNotes || null,
+            allergiesNotes: null,
             status: FnbSubscriptionStatus.ACTIVE,
             createdBy: req.user?.id || null,
           })
@@ -122,8 +186,19 @@ export async function assignResidentPackage(req: AuthenticatedRequest, res: Resp
       }
     }
 
+    // Fetch all active subscriptions under this primary resident and family members
+    const familyMemberIds = (
+      await ResidentFamilyMember.findAll({ where: { residentId: resident.id }, attributes: ['id'] })
+    ).map((f) => f.id)
+
     const allActive = await FnbResidentPackage.findAll({
-      where: { residentId, status: FnbSubscriptionStatus.ACTIVE },
+      where: {
+        [Op.or]: [
+          { residentId: resident.id },
+          ...(familyMemberIds.length > 0 ? [{ familyMemberId: familyMemberIds }] : []),
+        ],
+        status: [FnbSubscriptionStatus.ACTIVE, 'active', 'ACTIVE'],
+      },
       include: [
         {
           model: FnbPropertyPackage,
@@ -133,6 +208,34 @@ export async function assignResidentPackage(req: AuthenticatedRequest, res: Resp
         {
           model: ResidentFamilyMember,
           as: 'familyMember',
+          include: [
+            {
+              model: Resident,
+              as: 'resident',
+              attributes: ['id', 'firstName', 'lastName', 'phone', 'email', 'residentType', 'isResiding'],
+              include: [
+                {
+                  model: PropertyUnit,
+                  as: 'unit',
+                  attributes: ['id', 'unit_number'],
+                  include: [
+                    {
+                      model: PropertyFloor,
+                      as: 'floor',
+                      attributes: ['id', 'floor_number', 'floor_name'],
+                      include: [
+                        {
+                          model: PropertyBlock,
+                          as: 'block',
+                          attributes: ['id', 'block_name'],
+                        },
+                      ],
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
         },
       ],
     })

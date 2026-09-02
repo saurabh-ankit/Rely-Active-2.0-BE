@@ -33,5 +33,6 @@ apiRouter.use('/location/:locationId/assets', assetRouter)
 apiRouter.use('/tickets', ticketRouter)
 apiRouter.use('/location/:locationId/tickets', ticketRouter)
 apiRouter.use('/fnb', fnbRouter)
+apiRouter.use('/web/fnb', fnbRouter)
 
 export default apiRouter

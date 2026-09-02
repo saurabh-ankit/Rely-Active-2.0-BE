@@ -11,7 +11,8 @@ export interface FnbMenuItemAttributes extends BaseAttributes {
   dayOfWeek?: 'monday' | 'tuesday' | 'wednesday' | 'thursday' | 'friday' | 'saturday' | 'sunday' | null
   date?: Date | string | null
   isOverride?: boolean
-  mealSlot: FnbMealSlot
+  mealSlot?: FnbMealSlot | string | null
+  mealSlotId?: string | null
   dishId: string
   isOptional: boolean
   extraPrice: number
@@ -24,6 +25,8 @@ export type FnbMenuItemCreationAttributes = Optional<
   | 'dayOfWeek'
   | 'date'
   | 'isOverride'
+  | 'mealSlot'
+  | 'mealSlotId'
   | 'isOptional'
   | 'extraPrice'
   | 'notes'
@@ -42,7 +45,8 @@ export class FnbMenuItem
   declare dayOfWeek?: 'monday' | 'tuesday' | 'wednesday' | 'thursday' | 'friday' | 'saturday' | 'sunday' | null
   declare date?: Date | string | null
   declare isOverride?: boolean
-  declare mealSlot: FnbMealSlot
+  declare mealSlot: FnbMealSlot | string
+  declare mealSlotId?: string | null
   declare dishId: string
   declare isOptional: boolean
   declare extraPrice: number
@@ -50,6 +54,7 @@ export class FnbMenuItem
 
   declare dish?: FnbDish
   declare menu?: FnbMenu
+  declare globalMealSlot?: unknown
 }
 
 FnbMenuItem.init(
@@ -77,8 +82,12 @@ FnbMenuItem.init(
       defaultValue: false,
     },
     mealSlot: {
-      type: DataTypes.ENUM('breakfast', 'lunch', 'snacks', 'dinner'),
-      allowNull: false,
+      type: DataTypes.STRING,
+      allowNull: true,
+    },
+    mealSlotId: {
+      type: DataTypes.UUID,
+      allowNull: true,
     },
     dishId: {
       type: DataTypes.UUID,

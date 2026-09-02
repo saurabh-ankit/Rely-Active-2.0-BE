@@ -7,7 +7,7 @@ import type { Resident } from './resident.model.js'
 import type { ResidentFamilyMember } from './residentFamilyMember.model.js'
 
 export interface FnbResidentPackageAttributes extends BaseAttributes {
-  residentId: string
+  residentId?: string | null
   familyMemberId?: string | null
   propertyPackageId: string
   startDate: Date | string
@@ -20,6 +20,7 @@ export interface FnbResidentPackageAttributes extends BaseAttributes {
 export type FnbResidentPackageCreationAttributes = Optional<
   FnbResidentPackageAttributes,
   | 'id'
+  | 'residentId'
   | 'familyMemberId'
   | 'endDate'
   | 'dietaryPreference'
@@ -35,7 +36,7 @@ export class FnbResidentPackage
   extends BaseModel<FnbResidentPackageAttributes, FnbResidentPackageCreationAttributes>
   implements FnbResidentPackageAttributes
 {
-  declare residentId: string
+  declare residentId: string | null
   declare familyMemberId: string | null
   declare propertyPackageId: string
   declare startDate: Date | string
@@ -54,7 +55,7 @@ FnbResidentPackage.init(
     ...baseModelColumns,
     residentId: {
       type: DataTypes.UUID,
-      allowNull: false,
+      allowNull: true,
     },
     familyMemberId: {
       type: DataTypes.UUID,

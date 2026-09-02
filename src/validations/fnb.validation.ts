@@ -50,10 +50,11 @@ export const createMenuSchema = z
 
 export const placeOrderSchema = z
   .object({
-    menuItemId: z.string().uuid('Valid menu item ID is required'),
-    dishId: z.string().uuid('Valid dish ID is required'),
     date: z.string().min(1, 'Valid order date is required'),
-    mealSlot: z.enum(['breakfast', 'lunch', 'snacks', 'dinner']),
-    quantity: z.number().int().min(1).optional(),
+    orderType: z.string().optional(),
+    selectionType: z.string().optional(),
+    serviceType: z.string().optional(),
+    mealSlotId: z.string().optional(),
+    items: z.array(z.any()).optional(),
   })
   .passthrough()

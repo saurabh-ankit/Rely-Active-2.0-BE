@@ -196,7 +196,7 @@ export async function getUserById(req: Request, res: Response): Promise<void> {
   }
 }
 
-export async function createUser(req: Request, res: Response): Promise<void> {
+export async function createUser(req: AuthenticatedRequest, res: Response): Promise<void> {
   try {
     const {
       username,
@@ -504,7 +504,7 @@ export async function getUserAccessibleProperties(req: Request, res: Response): 
   }
 }
 
-export async function updateUserProperties(req: Request, res: Response): Promise<void> {
+export async function updateUserProperties(req: AuthenticatedRequest, res: Response): Promise<void> {
   try {
     const userId = req.params.id as string
     const { propertyIds, defaultLocationId, locIds } = req.body
