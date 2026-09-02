@@ -1,10 +1,11 @@
 import type { Request, Response } from 'express'
+import { Op } from 'sequelize'
 import { Department, JobCategory } from '../../models/index.js'
 
 /**
- * Seed or ensure the two primary departments and their job categories exist.
+ * Seed or ensure standard operational departments and their job categories exist.
  */
-async function ensurePrimaryDepartmentsAndJobCategories() {
+async function ensureStandardDepartmentsAndJobCategories() {
   const TARGET_DEPARTMENTS = [
     {
       code: 'RNM',
@@ -27,6 +28,63 @@ async function ensurePrimaryDepartmentsAndJobCategories() {
         { code: 'CON_SUPPORT', name: 'Customer Support', description: 'Customer support & resident helpdesk' },
         { code: 'CON_TRANS', name: 'Transportation', description: 'Transportation & shuttle services' },
         { code: 'CON_OTHERS', name: 'Others', description: 'Other concierge services' },
+      ],
+    },
+    {
+      code: 'FNB',
+      name: 'Food & Beverage',
+      description: 'Food, Dining & Culinary Services',
+      jobCategories: [
+        { code: 'FNB_CHEF', name: 'Chef & Kitchen Staff', description: 'Culinary preparation & cooking' },
+        { code: 'FNB_SERVICE', name: 'Dining Service Staff', description: 'Table service & dining hall' },
+        { code: 'FNB_MGR', name: 'F&B Manager / Supervisor', description: 'Food & Beverage management' },
+        { code: 'FNB_DELIVERY', name: 'Meal Delivery Executive', description: 'Resident meal delivery' },
+      ],
+    },
+    {
+      code: 'SEC',
+      name: 'Gate & Security',
+      description: 'Security & Access Control Services',
+      jobCategories: [
+        { code: 'SEC_VISITOR', name: 'Visitor Management', description: 'Visitor management & gate entry' },
+      ],
+    },
+    {
+      code: 'HK',
+      name: 'Housekeeping',
+      description: 'Facility Cleanliness & Sanitation',
+      jobCategories: [
+        { code: 'HK_CLEANER', name: 'Housekeeper / Cleaner', description: 'Facility cleaning & sanitization' },
+        { code: 'HK_SUP', name: 'Housekeeping Supervisor', description: 'Housekeeping operations' },
+        { code: 'HK_LAUNDRY', name: 'Linen & Laundry Attendant', description: 'Linen management' },
+      ],
+    },
+    {
+      code: 'EVT',
+      name: 'Event',
+      description: 'Community Events & Activity Management',
+      jobCategories: [
+        { code: 'EVT_COORD', name: 'Event Coordinator', description: 'Event planning & logistics' },
+        { code: 'EVT_TECH', name: 'AV & Event Technician', description: 'Audio/Visual & stage setup' },
+        { code: 'EVT_MGR', name: 'Event Manager', description: 'Community activities management' },
+      ],
+    },
+    {
+      code: 'ADM',
+      name: 'Administration',
+      description: 'Administrative & Facility Management',
+      jobCategories: [
+        { code: 'ADM_EXEC', name: 'Admin Executive', description: 'Office management & administrative support' },
+        { code: 'ADM_MGR', name: 'Facility / Admin Manager', description: 'General administration' },
+      ],
+    },
+    {
+      code: 'FIN',
+      name: 'Finance & Billing',
+      description: 'Financial & Accounts Management',
+      jobCategories: [
+        { code: 'FIN_ACCT', name: 'Accountant', description: 'Accounts & billing management' },
+        { code: 'FIN_MGR', name: 'Finance Manager', description: 'Financial oversight' },
       ],
     },
   ]
@@ -55,41 +113,126 @@ async function ensurePrimaryDepartmentsAndJobCategories() {
           description: jcData.description,
           isActive: true,
         })
-      } else if (jc.departmentId !== dept.id || jc.name !== jcData.name) {
+      } else if (jc.departmentId !== dept.id || jc.name !== jcData.name || !jc.isActive) {
         jc.departmentId = dept.id
         jc.name = jcData.name
+        jc.isActive = true
         await jc.save()
       }
+    }
+
+    // Strictly clean up obsolete job categories for Gate & Security in DB so ONLY Visitor Management is active
+    if (deptData.code === 'SEC') {
+      await JobCategory.update(
+        { isActive: false },
+        {
+          where: {
+            departmentId: dept.id,
+            code: { [Op.ne]: 'SEC_VISITOR' },
+            name: { [Op.ne]: 'Visitor Management' },
+          },
+        },
+      )
     }
   }
 }
 
-export async function getAllDepartments(_req: Request, res: Response): Promise<void> {
+export async function getAllDepartments(req: Request, res: Response): Promise<void> {
   try {
-    // Ensure primary departments and job categories exist
-    await ensurePrimaryDepartmentsAndJobCategories()
+    // Ensure standard operational departments exist and clean up Gate & Security job categories
+    await ensureStandardDepartmentsAndJobCategories()
+
+    const isTicketsFlow = req.query.for === 'tickets' || req.query.ticketsOnly === 'true'
+
+    const whereCondition: Record<string, unknown> = {
+      isActive: true,
+    }
+
+    if (isTicketsFlow) {
+      whereCondition.code = ['RNM', 'CON']
+    }
 
     const departments = await Department.findAll({
-      where: {
-        isActive: true,
-      },
-      include: [{ model: JobCategory, as: 'jobCategories', where: { isActive: true }, required: false }],
+      where: whereCondition,
+      include: [
+        {
+          model: JobCategory,
+          as: 'jobCategories',
+          where: { isActive: true },
+          required: false,
+        },
+      ],
       order: [['name', 'ASC']],
     })
 
-    const formattedDepartments = departments.map((d: Department & { jobCategories?: Record<string, unknown>[] }) => {
+    const RNM_CATS = ['Electrical', 'Carpentry', 'Plumbing', 'Miscellaneous']
+    const CON_CATS = ['Housekeeping', 'Laundry', 'Customer Support', 'Transportation', 'Others']
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const formattedDepartments = departments.map((d: any) => {
       const existingJobCats = d.jobCategories || []
 
+      if (isTicketsFlow && (d.code === 'RNM' || d.code === 'CON')) {
+        const isRNM = d.code === 'RNM'
+        const targetCats = isRNM ? RNM_CATS : CON_CATS
+
+        const filteredJobCats = targetCats.map((catName) => {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const matched = existingJobCats.find((j: any) => String(j.name || '').toLowerCase() === catName.toLowerCase())
+          return {
+            id: matched?.id || `jc-${catName.toLowerCase()}`,
+            code: matched?.code || `${String(d.code)}_${catName.substring(0, 4).toUpperCase()}`,
+            name: catName,
+            description: matched?.description || catName,
+          }
+        })
+
+        return {
+          id: d.id,
+          code: d.code,
+          name: d.name,
+          description: d.description,
+          jobCategories: filteredJobCats,
+        }
+      }
+
+      // Gate & Security (SEC): Strictly return ONLY Visitor Management
+      if (d.code === 'SEC') {
+        const visitorCat = existingJobCats.find(
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          (j: any) =>
+            String(j.code || '').toUpperCase() === 'SEC_VISITOR' ||
+            String(j.name || '').toLowerCase() === 'visitor management',
+        )
+
+        return {
+          id: d.id,
+          code: d.code,
+          name: d.name,
+          description: d.description,
+          jobCategories: [
+            {
+              id: visitorCat?.id || 'jc-sec-visitor',
+              code: visitorCat?.code || 'SEC_VISITOR',
+              name: 'Visitor Management',
+              description: visitorCat?.description || 'Visitor management & gate entry',
+            },
+          ],
+        }
+      }
+
+      // Default for employee creation / general dropdowns: return all active job categories from DB
       return {
         id: d.id,
         code: d.code,
         name: d.name,
         description: d.description,
-        jobCategories: existingJobCats.map((jc: Record<string, unknown>) => ({
-          id: jc.id,
-          code: jc.code,
-          name: jc.name,
-          description: jc.description,
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        jobCategories: existingJobCats.map((j: any) => ({
+          id: j.id,
+          code: j.code,
+          name: j.name,
+          description: j.description || j.name,
         })),
       }
     })
