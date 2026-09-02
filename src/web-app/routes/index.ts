@@ -10,6 +10,9 @@ import resourceRouter from './resource.routes.js'
 import residentRouter from './resident.routes.js'
 import assetRouter from './asset/index.js'
 import fnbRouter from './fnb.routes.js'
+import { venueRouter, eventRouter } from './event/index.js'
+import globalServicesRouter from './globalServices.routes.js'
+import locationGlobalServicesRouter from './locationGlobalServices.routes.js'
 
 export const apiRouter = Router()
 
@@ -30,3 +33,7 @@ apiRouter.use('/residents', residentRouter)
 apiRouter.use('/assets', assetRouter)
 apiRouter.use('/location/:locationId/assets', assetRouter)
 apiRouter.use('/fnb', fnbRouter)
+apiRouter.use('/global-services', globalServicesRouter)
+apiRouter.use('/location/:locationId/global-services', locationGlobalServicesRouter)
+apiRouter.use('/location/:locationId/venues', venueRouter)
+apiRouter.use('/location/:locationId/events', eventRouter)
