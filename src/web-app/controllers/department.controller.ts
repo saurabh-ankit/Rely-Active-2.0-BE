@@ -1,4 +1,5 @@
 import type { Request, Response } from 'express'
+import { Op } from 'sequelize'
 import { Department, JobCategory } from '../../models/index.js'
 
 /**
@@ -45,9 +46,7 @@ async function ensureStandardDepartmentsAndJobCategories() {
       name: 'Gate & Security',
       description: 'Security & Access Control Services',
       jobCategories: [
-        { code: 'SEC_GUARD', name: 'Security Guard', description: 'Main gate & perimeter security' },
-        { code: 'SEC_SUP', name: 'Security Supervisor', description: 'Shift supervision & emergency response' },
-        { code: 'SEC_CCTV', name: 'CCTV / Control Room', description: 'Surveillance & access monitoring' },
+        { code: 'SEC_VISITOR', name: 'Visitor Management', description: 'Visitor management & gate entry' },
       ],
     },
     {
@@ -114,18 +113,33 @@ async function ensureStandardDepartmentsAndJobCategories() {
           description: jcData.description,
           isActive: true,
         })
-      } else if (jc.departmentId !== dept.id || jc.name !== jcData.name) {
+      } else if (jc.departmentId !== dept.id || jc.name !== jcData.name || !jc.isActive) {
         jc.departmentId = dept.id
         jc.name = jcData.name
+        jc.isActive = true
         await jc.save()
       }
+    }
+
+    // Strictly clean up obsolete job categories for Gate & Security in DB so ONLY Visitor Management is active
+    if (deptData.code === 'SEC') {
+      await JobCategory.update(
+        { isActive: false },
+        {
+          where: {
+            departmentId: dept.id,
+            code: { [Op.ne]: 'SEC_VISITOR' },
+            name: { [Op.ne]: 'Visitor Management' },
+          },
+        },
+      )
     }
   }
 }
 
 export async function getAllDepartments(req: Request, res: Response): Promise<void> {
   try {
-    // Ensure all standard operational departments with job categories exist
+    // Ensure standard operational departments exist and clean up Gate & Security job categories
     await ensureStandardDepartmentsAndJobCategories()
 
     const isTicketsFlow = req.query.for === 'tickets' || req.query.ticketsOnly === 'true'
@@ -182,7 +196,32 @@ export async function getAllDepartments(req: Request, res: Response): Promise<vo
         }
       }
 
-      // Default for employee creation / general dropdowns: return all real job categories from DB
+      // Gate & Security (SEC): Strictly return ONLY Visitor Management
+      if (d.code === 'SEC') {
+        const visitorCat = existingJobCats.find(
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          (j: any) =>
+            String(j.code || '').toUpperCase() === 'SEC_VISITOR' ||
+            String(j.name || '').toLowerCase() === 'visitor management',
+        )
+
+        return {
+          id: d.id,
+          code: d.code,
+          name: d.name,
+          description: d.description,
+          jobCategories: [
+            {
+              id: visitorCat?.id || 'jc-sec-visitor',
+              code: visitorCat?.code || 'SEC_VISITOR',
+              name: 'Visitor Management',
+              description: visitorCat?.description || 'Visitor management & gate entry',
+            },
+          ],
+        }
+      }
+
+      // Default for employee creation / general dropdowns: return all active job categories from DB
       return {
         id: d.id,
         code: d.code,
