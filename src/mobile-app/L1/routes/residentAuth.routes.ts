@@ -1,6 +1,6 @@
 import { Router } from 'express'
 import { getResidentProfile, residentLogin, updateResidentProfile } from '../controllers/residentAuth.controller.js'
-import { upload } from '../../middlewares/upload.js'
+import { upload } from '../../../middlewares/upload.js'
 
 const router = Router()
 

@@ -346,48 +346,25 @@ export async function up({ context: queryInterface }: { context: QueryInterface 
 
     // Repair & Maintenance (RNM)
     { departmentCode: 'RNM', code: 'RNM_ELEC', name: 'Electrical', description: 'Electrical maintenance & repairs' },
+    { departmentCode: 'RNM', code: 'RNM_CARP', name: 'Carpentry', description: 'Carpentry & woodwork maintenance' },
     { departmentCode: 'RNM', code: 'RNM_PLUM', name: 'Plumbing', description: 'Plumbing maintenance & repairs' },
-    { departmentCode: 'RNM', code: 'RNM_HVAC', name: 'HVAC', description: 'HVAC Technician & cooling' },
-    {
-      departmentCode: 'RNM',
-      code: 'RNM_CIVIL',
-      name: 'Civil Maintenance',
-      description: 'Civil & structural maintenance',
-    },
-    {
-      departmentCode: 'RNM',
-      code: 'RNM_BIOMED',
-      name: 'Biomedical Equipment',
-      description: 'Biomedical equipment maintenance',
-    },
-    {
-      departmentCode: 'RNM',
-      code: 'RNM_GEN',
-      name: 'General Maintenance',
-      description: 'General facility maintenance',
-    },
-
-    // Food & Beverage (FNB)
-    { departmentCode: 'FNB', code: 'FNB_KITCHEN', name: 'Kitchen Operations', description: 'Kitchen Operations' },
-    { departmentCode: 'FNB', code: 'FNB_PROD', name: 'Food Production', description: 'Food Production' },
-    { departmentCode: 'FNB', code: 'FNB_SERVICE', name: 'Food Service', description: 'Food Service' },
-    { departmentCode: 'FNB', code: 'FNB_CATERING', name: 'Catering', description: 'Catering' },
-    { departmentCode: 'FNB', code: 'FNB_STEWARD', name: 'Stewarding', description: 'Stewarding' },
-    { departmentCode: 'FNB', code: 'FNB_NUTRITION', name: 'Nutrition & Dietary', description: 'Nutrition & Dietary' },
-
-    // Gate & Security (SEC)
-    { departmentCode: 'SEC', code: 'SEC_OPS', name: 'Security Operations', description: 'Security Operations' },
-    { departmentCode: 'SEC', code: 'SEC_ACCESS', name: 'Access Control', description: 'Access Control' },
-    { departmentCode: 'SEC', code: 'SEC_SURV', name: 'Surveillance', description: 'Surveillance' },
-    { departmentCode: 'SEC', code: 'SEC_VISITOR', name: 'Visitor Management', description: 'Visitor Management' },
-    { departmentCode: 'SEC', code: 'SEC_EMERGENCY', name: 'Emergency & Safety', description: 'Emergency & Safety' },
+    { departmentCode: 'RNM', code: 'RNM_MISC', name: 'Miscellaneous', description: 'General & miscellaneous repairs' },
 
     // Concierge (CON)
-    { departmentCode: 'CON', code: 'CON_FDESK', name: 'Front Desk', description: 'Front Desk' },
-    { departmentCode: 'CON', code: 'CON_GUEST', name: 'Guest Services', description: 'Guest Services' },
-    { departmentCode: 'CON', code: 'CON_RESIDENT', name: 'Resident Services', description: 'Resident Services' },
-    { departmentCode: 'CON', code: 'CON_TRANS', name: 'Transportation', description: 'Transportation' },
-    { departmentCode: 'CON', code: 'CON_SUPPORT', name: 'Customer Support', description: 'Customer Support' },
+    { departmentCode: 'CON', code: 'CON_HK', name: 'Housekeeping', description: 'Housekeeping & cleaning services' },
+    { departmentCode: 'CON', code: 'CON_LAUNDRY', name: 'Laundry', description: 'Laundry & linen services' },
+    {
+      departmentCode: 'CON',
+      code: 'CON_SUPPORT',
+      name: 'Customer Support',
+      description: 'Customer support & resident helpdesk',
+    },
+    {
+      departmentCode: 'CON',
+      code: 'CON_TRANS',
+      name: 'Transportation',
+      description: 'Transportation & shuttle services',
+    },
 
     // Events (EVT)
     { departmentCode: 'EVT', code: 'EVT_PLANNING', name: 'Event Planning', description: 'Event Planning' },
