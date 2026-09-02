@@ -1,7 +1,16 @@
 import type { ErrorRequestHandler } from 'express'
 import { ZodError } from 'zod'
-import { HttpError } from '../../common/http-error.js'
 import { logger } from '../../config/logger.js'
+
+export class HttpError extends Error {
+  constructor(
+    public readonly status: number,
+    message: string,
+    public readonly details?: unknown,
+  ) {
+    super(message)
+  }
+}
 
 export const errorHandler: ErrorRequestHandler = (error: unknown, _request, response, _next) => {
   if (error instanceof ZodError)

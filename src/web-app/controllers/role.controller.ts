@@ -1,11 +1,15 @@
 import type { Request, Response } from 'express'
+import { Op } from 'sequelize'
 import type { AuthenticatedRequest } from '../../middlewares/authenticate.js'
 import { Role } from '../../models/index.js'
 
 export async function getAllRoles(_req: Request, res: Response): Promise<void> {
   try {
     const roles = await Role.findAll({
-      where: { isActive: true },
+      where: {
+        isActive: true,
+        code: { [Op.ne]: 'RESIDENT' },
+      },
       order: [['name', 'ASC']],
     })
 
