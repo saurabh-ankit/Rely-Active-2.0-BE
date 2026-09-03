@@ -4,8 +4,8 @@ import type { AuthenticatedRequest } from '../../middlewares/authenticate.js'
 import {
   Ticket,
   TicketActivityLog,
-  TicketCategory as TicketCategoryModel,
-  TicketSubCategory as TicketSubCategoryModel,
+  TicketCategory,
+  TicketSubCategory,
   Property,
   PropertyBlock,
   PropertyFloor,
@@ -18,7 +18,7 @@ import {
   AssetVendor,
   Asset,
 } from '../../models/index.js'
-import { TicketActivityType, TicketCategory, TicketPriority, TicketStatus } from '../../enums/ticket.enum.js'
+import { TicketActivityType, TicketPriority, TicketStatus } from '../../enums/ticket.enum.js'
 import { uploadFileToS3 } from '../../middlewares/s3/index.js'
 
 /**
@@ -26,30 +26,30 @@ import { uploadFileToS3 } from '../../middlewares/s3/index.js'
  */
 export async function getCategoriesAndSubCategories(_req: Request, res: Response): Promise<void> {
   try {
-    let categories = await TicketCategoryModel.findAll({
+    let categories = await TicketCategory.findAll({
       where: { isActive: true },
-      include: [{ model: TicketSubCategoryModel, as: 'subCategories', where: { isActive: true }, required: false }],
+      include: [{ model: TicketSubCategory, as: 'subCategories', where: { isActive: true }, required: false }],
       order: [
         ['name', 'ASC'],
-        [{ model: TicketSubCategoryModel, as: 'subCategories' }, 'name', 'ASC'],
+        [{ model: TicketSubCategory, as: 'subCategories' }, 'name', 'ASC'],
       ],
     })
 
     // Seed default categories if none exist in DB
     if (categories.length === 0) {
-      await TicketCategoryModel.create({ name: 'Rely Advantage Service', code: 'RELY_ADVANTAGE' })
-      const cat2 = await TicketCategoryModel.create({ name: 'Common Area Maintenance', code: 'COMMON_MAINTENANCE' })
+      await TicketCategory.create({ name: 'Rely Advantage Service', code: 'RELY_ADVANTAGE' })
+      const cat2 = await TicketCategory.create({ name: 'Common Area Maintenance', code: 'COMMON_MAINTENANCE' })
 
-      await TicketSubCategoryModel.bulkCreate([
+      await TicketSubCategory.bulkCreate([
         { categoryId: cat2.id, name: 'Electrical Maintenance', code: 'ELECTRICAL' },
         { categoryId: cat2.id, name: 'Plumbing Maintenance', code: 'PLUMBING' },
         { categoryId: cat2.id, name: 'Carpentry Maintenance', code: 'CARPENTRY' },
         { categoryId: cat2.id, name: 'Miscellaneous Maintenance', code: 'MISC' },
       ])
 
-      categories = await TicketCategoryModel.findAll({
+      categories = await TicketCategory.findAll({
         where: { isActive: true },
-        include: [{ model: TicketSubCategoryModel, as: 'subCategories', where: { isActive: true }, required: false }],
+        include: [{ model: TicketSubCategory, as: 'subCategories', where: { isActive: true }, required: false }],
       })
     }
 
@@ -263,8 +263,8 @@ export async function getTickets(req: Request, res: Response): Promise<void> {
         { model: Resident, as: 'resident', required: false },
         { model: Department, as: 'department', required: false },
         { model: JobCategory, as: 'jobCategory', required: false },
-        { model: TicketCategoryModel, as: 'categoryObj', required: false },
-        { model: TicketSubCategoryModel, as: 'subCategoryObj', required: false },
+        { model: TicketCategory, as: 'categoryObj', required: false },
+        { model: TicketSubCategory, as: 'subCategoryObj', required: false },
         { model: User, as: 'assignedToUser', attributes: ['id', 'email'], required: false },
         { model: User, as: 'raisedByUser', attributes: ['id', 'email'], required: false },
         { model: AssetVendor, as: 'vendor', required: false },
@@ -288,7 +288,8 @@ export async function getTickets(req: Request, res: Response): Promise<void> {
     })
   } catch (error) {
     console.error('Error fetching tickets:', error)
-    res.status(500).json({ success: false, message: 'Failed to fetch tickets' })
+    const errMessage = error instanceof Error ? error.message : 'Failed to fetch tickets'
+    res.status(500).json({ success: false, message: errMessage })
   }
 }
 
@@ -349,8 +350,8 @@ export async function getTicketById(req: Request, res: Response): Promise<void> 
         { model: Resident, as: 'resident' },
         { model: Department, as: 'department' },
         { model: JobCategory, as: 'jobCategory' },
-        { model: TicketCategoryModel, as: 'categoryObj' },
-        { model: TicketSubCategoryModel, as: 'subCategoryObj' },
+        { model: TicketCategory, as: 'categoryObj' },
+        { model: TicketSubCategory, as: 'subCategoryObj' },
         { model: User, as: 'assignedToUser', attributes: ['id', 'email'] },
         { model: User, as: 'raisedByUser', attributes: ['id', 'email'] },
         { model: AssetVendor, as: 'vendor' },
@@ -388,7 +389,7 @@ export async function createTicket(req: AuthenticatedRequest, res: Response): Pr
     const {
       title,
       description,
-      category = TicketCategory.REPAIR_MAINTENANCE,
+      category = 'REPAIR_MAINTENANCE',
       priority = TicketPriority.MEDIUM,
       unitId,
       residentId,
@@ -426,11 +427,11 @@ export async function createTicket(req: AuthenticatedRequest, res: Response): Pr
     if (typeof category === 'string') {
       const cUpper = category.toUpperCase()
       if (cUpper.includes('R&M') || cUpper.includes('REPAIR')) {
-        finalCategory = TicketCategory.REPAIR_MAINTENANCE
+        finalCategory = 'REPAIR_MAINTENANCE'
       } else if (cUpper.includes('CLEANING') || cUpper.includes('HK') || cUpper.includes('HOUSEKEEPING')) {
-        finalCategory = TicketCategory.HOUSEKEEPING
+        finalCategory = 'HOUSEKEEPING'
       } else if (cUpper.includes('CONCIERGE')) {
-        finalCategory = TicketCategory.CONCIERGE
+        finalCategory = 'CONCIERGE'
       }
     }
 

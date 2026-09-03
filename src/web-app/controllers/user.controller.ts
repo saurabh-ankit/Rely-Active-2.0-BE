@@ -23,6 +23,109 @@ function sanitizeUuid(id: string | null | undefined): string | null {
   return trimmed
 }
 
+interface RoleDeptJobCatValidationResult {
+  valid: boolean
+  error?: string
+  cleanDeptId: string | null
+  cleanJobCatId: string | null
+}
+
+async function validateAndSanitizeRoleDeptJobCat(
+  roleCode: string | null | undefined,
+  deptIdInput: string | null | undefined,
+  jobCatIdInput: string | null | undefined,
+): Promise<RoleDeptJobCatValidationResult> {
+  const roleUpper = (roleCode || '').toUpperCase()
+  let cleanDeptId = sanitizeUuid(deptIdInput)
+  let cleanJobCatId = sanitizeUuid(jobCatIdInput)
+
+  if (['SUPER_ADMIN', 'ADMIN'].includes(roleUpper)) {
+    return {
+      valid: true,
+      cleanDeptId: null,
+      cleanJobCatId: null,
+    }
+  }
+
+  if (['DOCTOR', 'NURSE', 'CARETAKER'].includes(roleUpper)) {
+    const medDept = await Department.findOne({ where: { code: 'MED' } })
+    if (!medDept) {
+      return {
+        valid: false,
+        error: 'Medical department (MED) does not exist in the system.',
+        cleanDeptId: null,
+        cleanJobCatId: null,
+      }
+    }
+
+    if (cleanDeptId && cleanDeptId !== medDept.id) {
+      return {
+        valid: false,
+        error: 'For Doctor, Nurse, and Caretaker, operational department must be Medical.',
+        cleanDeptId: null,
+        cleanJobCatId: null,
+      }
+    }
+    cleanDeptId = medDept.id
+
+    const medJobCats = await JobCategory.findAll({ where: { departmentId: medDept.id } })
+    const inhouseCat = medJobCats.find(
+      (jc) => (jc.code || '').toUpperCase() === 'MED_INHOUSE' || jc.name.toLowerCase().includes('inhouse'),
+    )
+    const visitingCat = medJobCats.find(
+      (jc) => (jc.code || '').toUpperCase() === 'MED_VISITING' || jc.name.toLowerCase().includes('visiting'),
+    )
+
+    if (roleUpper === 'DOCTOR') {
+      if (cleanJobCatId) {
+        const isValidDocCat = [inhouseCat?.id, visitingCat?.id].filter(Boolean).includes(cleanJobCatId)
+        if (!isValidDocCat) {
+          return {
+            valid: false,
+            error: 'For Doctor, job category must be either Inhouse or Visiting.',
+            cleanDeptId: null,
+            cleanJobCatId: null,
+          }
+        }
+      } else if (inhouseCat) {
+        cleanJobCatId = inhouseCat.id
+      }
+    } else {
+      // NURSE or CARETAKER
+      if (inhouseCat) {
+        if (cleanJobCatId && cleanJobCatId !== inhouseCat.id) {
+          return {
+            valid: false,
+            error: 'For Nurse and Caretaker, job category must be Inhouse.',
+            cleanDeptId: null,
+            cleanJobCatId: null,
+          }
+        }
+        cleanJobCatId = inhouseCat.id
+      }
+    }
+  } else {
+    // Non-medical roles (MANAGER, EMPLOYEE, VENDOR, etc.): Cannot be assigned to Medical department
+    if (cleanDeptId) {
+      const medDept = await Department.findOne({ where: { code: 'MED' } })
+      if (medDept && cleanDeptId === medDept.id) {
+        return {
+          valid: false,
+          error: 'The Medical department is reserved exclusively for Doctor, Nurse, and Caretaker roles.',
+          cleanDeptId: null,
+          cleanJobCatId: null,
+        }
+      }
+    }
+  }
+
+  return {
+    valid: true,
+    cleanDeptId,
+    cleanJobCatId,
+  }
+}
+
 function formatUserResponse(user: unknown): Record<string, unknown> | null {
   if (!user) return null
   const uObj = user as Record<string, unknown>
@@ -307,6 +410,16 @@ export async function createUser(req: AuthenticatedRequest, res: Response): Prom
       updatedBy: operatingUserId,
     })
 
+    // Validate and sanitize Role, Operational Department, and Job Category
+    const roleDeptValidation = await validateAndSanitizeRoleDeptJobCat(roleCode, departmentId, jCategoryId)
+    if (!roleDeptValidation.valid) {
+      res.status(400).json({ success: false, message: roleDeptValidation.error })
+      return
+    }
+
+    const cleanDeptId = roleDeptValidation.cleanDeptId
+    const cleanJobCatId = roleDeptValidation.cleanJobCatId
+
     let targetRoleId: string | null = null
     if (roleCode) {
       const targetRole = await Role.findOne({ where: { code: roleCode } })
@@ -315,8 +428,6 @@ export async function createUser(req: AuthenticatedRequest, res: Response): Prom
 
     // Insert user_locations and employee_managers mapping
     const cleanCompId = sanitizeUuid(companyId)
-    const cleanDeptId = sanitizeUuid(departmentId)
-    const cleanJobCatId = sanitizeUuid(jCategoryId)
     const cleanMgrId = sanitizeUuid(mgrId)
 
     const locationIds =
@@ -601,14 +712,23 @@ export async function assignUserRole(req: Request, res: Response): Promise<void>
 
     const jCategoryId = jobCategoryId || job_category_id || undefined
 
+    const roleDeptValidation = await validateAndSanitizeRoleDeptJobCat(targetRole.code, departmentId, jCategoryId)
+    if (!roleDeptValidation.valid) {
+      res.status(400).json({ success: false, message: roleDeptValidation.error })
+      return
+    }
+
+    const cleanDeptId = roleDeptValidation.cleanDeptId
+    const cleanJobCatId = roleDeptValidation.cleanJobCatId
+
     const userLocs = await UserLocation.findAll({ where: { userId } })
     if (userLocs.length > 0) {
       await UserLocation.update(
         {
           roleId: targetRole.id,
           companyId: companyId || undefined,
-          departmentId: departmentId || undefined,
-          jobCategoryId: jCategoryId,
+          departmentId: cleanDeptId,
+          jobCategoryId: cleanJobCatId,
           updatedBy: operatingUserId,
         },
         { where: { userId } },
@@ -627,8 +747,8 @@ export async function assignUserRole(req: Request, res: Response): Promise<void>
         locId: pId,
         roleId: targetRole.id,
         companyId: companyId || undefined,
-        departmentId: departmentId || undefined,
-        jobCategoryId: jCategoryId,
+        departmentId: cleanDeptId,
+        jobCategoryId: cleanJobCatId,
         createdBy: operatingUserId,
         updatedBy: operatingUserId,
       })
@@ -771,20 +891,38 @@ export async function updateUser(req: Request, res: Response): Promise<void> {
     }
 
     let targetRoleId: string | null = roleId ? sanitizeUuid(roleId) : null
-    if (!targetRoleId && roleCode) {
-      const targetRole = await Role.findOne({ where: { code: roleCode } })
+    let targetRoleCode: string | null = roleCode || null
+    if (targetRoleId && !targetRoleCode) {
+      const roleObj = await Role.findByPk(targetRoleId)
+      if (roleObj) targetRoleCode = roleObj.code
+    } else if (!targetRoleId && targetRoleCode) {
+      const targetRole = await Role.findOne({ where: { code: targetRoleCode } })
       if (targetRole) targetRoleId = targetRole.id
     }
 
     // Update UserLocations and EmployeeManagers if propertyIds passed
-    const existingLocs = await UserLocation.findAll({ where: { userId: user.id } })
-    const primaryUserLoc = existingLocs[0]
-    const cleanCompId = sanitizeUuid(companyId || user.companyId || primaryUserLoc?.companyId)
-    const cleanDeptId = departmentId !== undefined ? sanitizeUuid(departmentId) : primaryUserLoc?.departmentId || null
-    const cleanJobCatId =
+    const existingLocs = await UserLocation.findAll({
+      where: { userId: user.id },
+      include: [{ model: Role, as: 'role' }],
+    })
+    const primaryUserLoc = existingLocs[0] as (UserLocation & { role?: Role }) | undefined
+    const effectiveRoleCode = targetRoleCode || primaryUserLoc?.role?.code
+
+    const rawDeptInput = departmentId !== undefined ? departmentId : primaryUserLoc?.departmentId
+    const rawJobCatInput =
       jobCategoryId !== undefined || job_category_id !== undefined
-        ? sanitizeUuid(jobCategoryId || job_category_id)
-        : primaryUserLoc?.jobCategoryId || null
+        ? jobCategoryId || job_category_id
+        : primaryUserLoc?.jobCategoryId
+
+    const roleDeptValidation = await validateAndSanitizeRoleDeptJobCat(effectiveRoleCode, rawDeptInput, rawJobCatInput)
+    if (!roleDeptValidation.valid) {
+      res.status(400).json({ success: false, message: roleDeptValidation.error })
+      return
+    }
+
+    const cleanCompId = sanitizeUuid(companyId || user.companyId || primaryUserLoc?.companyId)
+    const cleanDeptId = roleDeptValidation.cleanDeptId
+    const cleanJobCatId = roleDeptValidation.cleanJobCatId
     const cleanMgrId =
       managerId !== undefined || manager_id !== undefined ? sanitizeUuid(managerId || manager_id) : null
 

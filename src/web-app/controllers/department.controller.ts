@@ -34,12 +34,7 @@ async function ensureStandardDepartmentsAndJobCategories() {
       code: 'FNB',
       name: 'Food & Beverage',
       description: 'Food, Dining & Culinary Services',
-      jobCategories: [
-        { code: 'FNB_CHEF', name: 'Chef & Kitchen Staff', description: 'Culinary preparation & cooking' },
-        { code: 'FNB_SERVICE', name: 'Dining Service Staff', description: 'Table service & dining hall' },
-        { code: 'FNB_MGR', name: 'F&B Manager / Supervisor', description: 'Food & Beverage management' },
-        { code: 'FNB_DELIVERY', name: 'Meal Delivery Executive', description: 'Resident meal delivery' },
-      ],
+      jobCategories: [{ code: 'FNB_OPS', name: 'F&B Operations', description: 'Food & Beverage Operations' }],
     },
     {
       code: 'SEC',
@@ -53,41 +48,74 @@ async function ensureStandardDepartmentsAndJobCategories() {
       code: 'HK',
       name: 'Housekeeping',
       description: 'Facility Cleanliness & Sanitation',
-      jobCategories: [
-        { code: 'HK_CLEANER', name: 'Housekeeper / Cleaner', description: 'Facility cleaning & sanitization' },
-        { code: 'HK_SUP', name: 'Housekeeping Supervisor', description: 'Housekeeping operations' },
-        { code: 'HK_LAUNDRY', name: 'Linen & Laundry Attendant', description: 'Linen management' },
-      ],
+      jobCategories: [{ code: 'HK_OPS', name: 'Housekeeping Operations', description: 'Housekeeping Operations' }],
     },
     {
       code: 'EVT',
       name: 'Event',
       description: 'Community Events & Activity Management',
-      jobCategories: [
-        { code: 'EVT_COORD', name: 'Event Coordinator', description: 'Event planning & logistics' },
-        { code: 'EVT_TECH', name: 'AV & Event Technician', description: 'Audio/Visual & stage setup' },
-        { code: 'EVT_MGR', name: 'Event Manager', description: 'Community activities management' },
-      ],
+      jobCategories: [{ code: 'EVT_OPS', name: 'Event Operations', description: 'Event Operations' }],
     },
     {
-      code: 'ADM',
-      name: 'Administration',
-      description: 'Administrative & Facility Management',
+      code: 'MED',
+      name: 'Medical',
+      description: 'Medical & Healthcare Services',
       jobCategories: [
-        { code: 'ADM_EXEC', name: 'Admin Executive', description: 'Office management & administrative support' },
-        { code: 'ADM_MGR', name: 'Facility / Admin Manager', description: 'General administration' },
-      ],
-    },
-    {
-      code: 'FIN',
-      name: 'Finance & Billing',
-      description: 'Financial & Accounts Management',
-      jobCategories: [
-        { code: 'FIN_ACCT', name: 'Accountant', description: 'Accounts & billing management' },
-        { code: 'FIN_MGR', name: 'Finance Manager', description: 'Financial oversight' },
+        { code: 'MED_INHOUSE', name: 'Inhouse', description: 'In-house Medical Staff' },
+        { code: 'MED_VISITING', name: 'Visiting', description: 'Visiting Medical Staff' },
       ],
     },
   ]
+
+  // Find obsolete departments (NUR, DOC, ADM, ATT, FIN)
+  const obsoleteDepts = await Department.findAll({ where: { code: ['NUR', 'DOC', 'ADM', 'ATT', 'FIN'] } })
+  const obsoleteDeptIds = obsoleteDepts.map((d) => d.id)
+
+  const OBSOLETE_JOB_CAT_NAMES = [
+    'Civil Maintenance',
+    'General Maintenance',
+    'HVAC',
+    'Biomedical Equipment',
+    'Front Desk',
+    'Resident Services',
+    'Guest Services',
+    'Event Planning',
+    'Community Activities',
+    'Recreation',
+    'Entertainment',
+    'Catering',
+    'Nutrition & Dietary',
+    'Food Production',
+    'Food Service',
+    'Kitchen Operations',
+    'Stewarding',
+    'Chef & Kitchen Staff',
+    'Dining Service Staff',
+    'F&B Manager / Supervisor',
+    'Meal Delivery Executive',
+    'Cleaning Services',
+    'Room Attendant',
+    'Laundry Services',
+    'Waste Management',
+    'Housekeeper / Cleaner',
+    'Housekeeping Supervisor',
+    'Linen & Laundry Attendant',
+  ]
+
+  // Hard delete obsolete job categories (including any under MED, NUR, DOC, ADM, ATT, FIN)
+  await JobCategory.destroy({
+    where: {
+      [Op.or]: [
+        { name: { [Op.in]: OBSOLETE_JOB_CAT_NAMES } },
+        ...(obsoleteDeptIds.length > 0 ? [{ departmentId: { [Op.in]: obsoleteDeptIds } }] : []),
+      ],
+    },
+  })
+
+  // Hard delete obsolete departments (NUR, DOC, ADM, ATT, FIN)
+  await Department.destroy({
+    where: { code: ['NUR', 'DOC', 'ADM', 'ATT', 'FIN'] },
+  })
 
   for (const deptData of TARGET_DEPARTMENTS) {
     let dept = await Department.findOne({ where: { code: deptData.code } })
@@ -98,8 +126,9 @@ async function ensureStandardDepartmentsAndJobCategories() {
         description: deptData.description,
         isActive: true,
       })
-    } else if (dept.name !== deptData.name) {
+    } else if (dept.name !== deptData.name || !dept.isActive) {
       dept.name = deptData.name
+      dept.isActive = true
       await dept.save()
     }
 
@@ -121,18 +150,48 @@ async function ensureStandardDepartmentsAndJobCategories() {
       }
     }
 
-    // Strictly clean up obsolete job categories for Gate & Security in DB so ONLY Visitor Management is active
+    // Strictly clean up obsolete job categories for Gate & Security in DB so ONLY Visitor Management is kept
     if (deptData.code === 'SEC') {
-      await JobCategory.update(
-        { isActive: false },
-        {
-          where: {
-            departmentId: dept.id,
-            code: { [Op.ne]: 'SEC_VISITOR' },
-            name: { [Op.ne]: 'Visitor Management' },
-          },
+      await JobCategory.destroy({
+        where: {
+          departmentId: dept.id,
+          code: { [Op.ne]: 'SEC_VISITOR' },
+          name: { [Op.ne]: 'Visitor Management' },
         },
-      )
+      })
+    }
+
+    // Strictly clean up obsolete job categories for Event in DB so ONLY Event Operations is kept
+    if (deptData.code === 'EVT') {
+      await JobCategory.destroy({
+        where: {
+          departmentId: dept.id,
+          code: { [Op.ne]: 'EVT_OPS' },
+          name: { [Op.ne]: 'Event Operations' },
+        },
+      })
+    }
+
+    // Strictly clean up obsolete job categories for Food & Beverage in DB so ONLY F&B Operations is kept
+    if (deptData.code === 'FNB') {
+      await JobCategory.destroy({
+        where: {
+          departmentId: dept.id,
+          code: { [Op.ne]: 'FNB_OPS' },
+          name: { [Op.ne]: 'F&B Operations' },
+        },
+      })
+    }
+
+    // Strictly clean up obsolete job categories for Housekeeping in DB so ONLY Housekeeping Operations is kept
+    if (deptData.code === 'HK') {
+      await JobCategory.destroy({
+        where: {
+          departmentId: dept.id,
+          code: { [Op.ne]: 'HK_OPS' },
+          name: { [Op.ne]: 'Housekeeping Operations' },
+        },
+      })
     }
   }
 }
