@@ -1,7 +1,7 @@
 import express from 'express'
 import multer from 'multer'
-import { authenticate } from '../../../middlewares/authenticate.js'
-import { validateRequest } from '../../../middlewares/validateRequest.js'
+import { authenticate } from '../../middlewares/authenticate.js'
+import { validateRequest } from '../../middlewares/validateRequest.js'
 import {
   completeServiceLogValidation,
   createAssetValidation,
@@ -56,7 +56,7 @@ import {
   updateTrainingValidation,
   updateVendorValidation,
   updateWarrantyValidation,
-} from '../../../validations/asset.validation.js'
+} from '../../validations/asset.validation.js'
 import {
   completeServiceLog,
   createAsset,
@@ -121,7 +121,7 @@ import {
   updateTraining,
   updateVendor,
   updateWarranty,
-} from '../../controllers/asset/index.js'
+} from '../controllers/asset.controller.js'
 
 const router = express.Router({ mergeParams: true })
 

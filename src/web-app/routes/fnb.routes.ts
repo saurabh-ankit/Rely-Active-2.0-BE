@@ -2,66 +2,53 @@ import { Router } from 'express'
 import { authenticate } from '../../middlewares/authenticate.js'
 import { upload } from '../../middlewares/upload.js'
 import {
-  createGlobalPackage,
-  deleteGlobalPackage,
-  getAllGlobalPackages,
-  updateGlobalPackage,
-} from '../controllers/fnb/globalPackage.controller.js'
-import {
-  assignPropertyPackage,
-  deletePropertyPackage,
-  getPropertyPackages,
-} from '../controllers/fnb/propertyPackage.controller.js'
-import {
-  createDish,
-  getAllDishes,
-  getPropertyDishes,
-  setPropertyDishOverride,
-  updateDish,
-} from '../controllers/fnb/dish.controller.js'
-import {
   addOrUpdateMenuItem,
-  createMenuSchedule,
-  deleteMenu,
-  deleteMenuItem,
-  getMenuDetails,
-  getMenus,
-  updateMenuSchedule,
-} from '../controllers/fnb/menu.controller.js'
-import {
+  addPropertySpecialDish,
+  assignDeliveryEmployee,
+  assignGlobalSpecialSlotLocations,
+  assignMealSlotsToProperty,
+  assignPropertyPackage,
   assignResidentPackage,
   cancelResidentPackage,
   changeResidentPackage,
-  getResidentPackage,
-  togglePauseResidentPackage,
-} from '../controllers/fnb/residentPackage.controller.js'
-import {
-  assignMealSlotsToProperty,
-  createGlobalMealSlot,
-  deleteGlobalMealSlot,
-  getGlobalMealSlots,
-  updateGlobalMealSlot,
-} from '../controllers/fnb/globalMealSlot.controller.js'
-import { getPropertyMealSlots, updatePropertyMealSlotOverride } from '../controllers/fnb/propertyMealSlot.controller.js'
-import {
-  addPropertySpecialDish,
-  assignGlobalSpecialSlotLocations,
-  createGlobalSpecialSlot,
-  deleteGlobalSpecialSlot,
-  getGlobalSpecialSlots,
-  getPropertySpecialSlots,
-  removePropertySpecialDish,
-  syncPropertySpecialSlotDishes,
-  updateGlobalSpecialSlot,
-  updatePropertySpecialSlot,
-} from '../controllers/fnb/specialSlot.controller.js'
-import {
-  getResidentOrdersForProperty,
-  updateOrderStatus,
-  assignDeliveryEmployee,
   completeRoomDelivery,
+  createDish,
+  createGlobalMealSlot,
+  createGlobalPackage,
+  createGlobalSpecialSlot,
+  createMenuSchedule,
+  deleteGlobalMealSlot,
+  deleteGlobalPackage,
+  deleteGlobalSpecialSlot,
+  deleteMenu,
+  deleteMenuItem,
+  deletePropertyPackage,
+  getAllDishes,
+  getAllGlobalPackages,
   getFnbStaffEmployees,
-} from '../controllers/fnb/residentOrder.controller.js'
+  getGlobalMealSlots,
+  getGlobalSpecialSlots,
+  getMenuDetails,
+  getMenus,
+  getPropertyDishes,
+  getPropertyMealSlots,
+  getPropertyPackages,
+  getPropertySpecialSlots,
+  getResidentOrdersForProperty,
+  getResidentPackage,
+  removePropertySpecialDish,
+  setPropertyDishOverride,
+  syncPropertySpecialSlotDishes,
+  togglePauseResidentPackage,
+  updateDish,
+  updateGlobalMealSlot,
+  updateGlobalPackage,
+  updateGlobalSpecialSlot,
+  updateMenuSchedule,
+  updateOrderStatus,
+  updatePropertyMealSlotOverride,
+  updatePropertySpecialSlot,
+} from '../controllers/fnb.controller.js'
 
 const router = Router()
 

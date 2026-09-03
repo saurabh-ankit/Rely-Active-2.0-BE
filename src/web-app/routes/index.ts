@@ -8,9 +8,10 @@ import permissionRouter from './permission.routes.js'
 import departmentRouter from './department.routes.js'
 import resourceRouter from './resource.routes.js'
 import residentRouter from './resident.routes.js'
-import assetRouter from './asset/index.js'
+import assetRouter from './asset.routes.js'
 import fnbRouter from './fnb.routes.js'
 import ticketRouter from './ticket.routes.js'
+import { eventRouter, venueRouter, globalServiceRouter } from './event.routes.js'
 
 export const apiRouter = Router()
 
@@ -34,5 +35,11 @@ apiRouter.use('/tickets', ticketRouter)
 apiRouter.use('/location/:locationId/tickets', ticketRouter)
 apiRouter.use('/fnb', fnbRouter)
 apiRouter.use('/web/fnb', fnbRouter)
+apiRouter.use('/events', eventRouter)
+apiRouter.use('/location/:locationId/events', eventRouter)
+apiRouter.use('/venues', venueRouter)
+apiRouter.use('/location/:locationId/venues', venueRouter)
+apiRouter.use('/global-services', globalServiceRouter)
+apiRouter.use('/location/:locationId/global-services', globalServiceRouter)
 
 export default apiRouter

@@ -50,6 +50,11 @@ import { FnbPropertySpecialSlot } from './fnbPropertySpecialSlot.model.js'
 import { FnbPropertySpecialSlotDish } from './fnbPropertySpecialSlotDish.model.js'
 import { FnbResidentOrderDetail } from './fnbResidentOrderDetail.model.js'
 import { FnbFoodDelivery } from './fnbFoodDelivery.model.js'
+import { EventVenue } from './eventVenue.model.js'
+import { Event } from './event.model.js'
+import { EventRegistration } from './eventRegistration.model.js'
+import { EventGlobalService } from './eventGlobalService.model.js'
+import { EventGlobalServiceProperty } from './eventGlobalServiceProperty.model.js'
 
 // ── F&B Meal Slot associations ──────────────────────────────────────────────
 FnbGlobalMealSlot.hasMany(FnbPropertyMealSlot, { foreignKey: 'globalMealSlotId', as: 'propertyMealSlots' })
@@ -318,6 +323,30 @@ Ticket.hasMany(TicketActivityLog, { foreignKey: 'ticketId', as: 'activityLogs' }
 TicketActivityLog.belongsTo(Ticket, { foreignKey: 'ticketId', as: 'ticket' })
 TicketActivityLog.belongsTo(User, { foreignKey: 'performedByUserId', as: 'performedByUser' })
 
+// ── Global Services associations ───────────────────────────────────────────
+EventGlobalService.hasMany(EventGlobalServiceProperty, { foreignKey: 'globalServiceId', as: 'propertyServices' })
+EventGlobalServiceProperty.belongsTo(EventGlobalService, { foreignKey: 'globalServiceId', as: 'globalService' })
+EventGlobalServiceProperty.belongsTo(Property, { foreignKey: 'locId', as: 'property' })
+
+// ── Events Management associations ─────────────────────────────────────────
+Property.hasMany(EventVenue, { foreignKey: 'locationId', as: 'venues' })
+EventVenue.belongsTo(Property, { foreignKey: 'locationId', as: 'location' })
+
+EventVenue.hasMany(Event, { foreignKey: 'venueId', as: 'events' })
+Event.belongsTo(EventVenue, { foreignKey: 'venueId', as: 'venue' })
+
+Property.hasMany(Event, { foreignKey: 'locationId', as: 'events' })
+Event.belongsTo(Property, { foreignKey: 'locationId', as: 'location' })
+
+Event.hasMany(EventRegistration, { foreignKey: 'eventId', as: 'registrations' })
+EventRegistration.belongsTo(Event, { foreignKey: 'eventId', as: 'event' })
+
+Resident.hasMany(EventRegistration, { foreignKey: 'residentId', as: 'eventRegistrations' })
+EventRegistration.belongsTo(Resident, { foreignKey: 'residentId', as: 'resident' })
+
+Property.hasMany(EventRegistration, { foreignKey: 'locationId', as: 'eventRegistrations' })
+EventRegistration.belongsTo(Property, { foreignKey: 'locationId', as: 'location' })
+
 export {
   BaseModel,
   baseModelColumns,
@@ -374,4 +403,9 @@ export {
   FnbGlobalSpecialSlot,
   FnbPropertySpecialSlot,
   FnbPropertySpecialSlotDish,
+  EventVenue,
+  Event,
+  EventRegistration,
+  EventGlobalService,
+  EventGlobalServiceProperty,
 }
