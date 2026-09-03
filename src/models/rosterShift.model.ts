@@ -4,10 +4,13 @@ import { BaseAttributes, BaseModel, baseModelColumns } from './base.model.js'
 
 export type ShiftSlotMode = 'AUTO_GENERATE' | 'MANUAL'
 export type ShiftStatus = 'ACTIVE' | 'INACTIVE'
+export type ShiftCategory = 'GENERAL' | 'DEPARTMENT' | 'OPD'
 
 export interface RosterShiftAttributes extends BaseAttributes {
   companyId: string
   locationId: string
+  departmentId?: string | null
+  shiftCategory?: ShiftCategory
   shiftName: string
   code: string
   description?: string | null
@@ -26,8 +29,12 @@ export type RosterShiftCreationAttributes = Optional<
   RosterShiftAttributes,
   | 'id'
   | 'description'
+  | 'departmentId'
+  | 'shiftCategory'
   | 'breakStartTime'
   | 'breakEndTime'
+  | 'departmentId'
+  | 'shiftCategory'
   | 'slotGenerationMode'
   | 'slotDurationMinutes'
   | 'numberOfSlots'
@@ -45,6 +52,8 @@ export class RosterShift
 {
   declare companyId: string
   declare locationId: string
+  declare departmentId: string | null
+  declare shiftCategory: ShiftCategory
   declare shiftName: string
   declare code: string
   declare description: string | null
@@ -69,6 +78,15 @@ RosterShift.init(
     locationId: {
       type: DataTypes.UUID,
       allowNull: false,
+    },
+    departmentId: {
+      type: DataTypes.UUID,
+      allowNull: true,
+    },
+    shiftCategory: {
+      type: DataTypes.ENUM('GENERAL', 'DEPARTMENT', 'OPD'),
+      allowNull: false,
+      defaultValue: 'GENERAL',
     },
     shiftName: {
       type: DataTypes.STRING(150),

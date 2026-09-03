@@ -10,6 +10,7 @@ export type ResourceStatus = 'ACTIVE' | 'INACTIVE'
 export interface SchedulingResourceAttributes extends BaseAttributes {
   companyId: string
   resourceType: ResourceType
+  departmentId?: string | null
   userId?: string | null
   doctorProfileId?: string | null
   status?: ResourceStatus
@@ -21,6 +22,7 @@ export interface SchedulingResourceAttributes extends BaseAttributes {
 export type SchedulingResourceCreationAttributes = Optional<
   SchedulingResourceAttributes,
   | 'id'
+  | 'departmentId'
   | 'userId'
   | 'doctorProfileId'
   | 'status'
@@ -38,6 +40,7 @@ export class SchedulingResource
 {
   declare companyId: string
   declare resourceType: ResourceType
+  declare departmentId: string | null
   declare userId: string | null
   declare user?: User | null
   declare doctorProfileId: string | null
@@ -58,6 +61,10 @@ SchedulingResource.init(
     resourceType: {
       type: DataTypes.ENUM('EMPLOYEE', 'DOCTOR'),
       allowNull: false,
+    },
+    departmentId: {
+      type: DataTypes.UUID,
+      allowNull: true,
     },
     userId: {
       type: DataTypes.UUID,

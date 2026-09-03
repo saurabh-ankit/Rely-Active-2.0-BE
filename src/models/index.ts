@@ -39,7 +39,15 @@ import { FnbPropertyDish } from './fnbPropertyDish.model.js'
 import { FnbMenu } from './fnbMenu.model.js'
 import { FnbMenuItem } from './fnbMenuItem.model.js'
 import { FnbResidentOrder } from './fnbResidentOrder.model.js'
-
+import { Venue } from './venue.model.js'
+import { Event } from './event.model.js'
+import { EventRegistration } from './eventRegistration.model.js'
+import { GlobalService } from './globalService.model.js'
+import { GlobalServiceProperty } from './globalServiceProperty.model.js'
+import { TicketCategory } from './ticketCategory.model.js'
+import { TicketSubCategory } from './ticketSubCategory.model.js'
+import { Ticket } from './ticket.model.js'
+import { TicketActivityLog } from './ticketActivityLog.model.js'
 // ── Roster & Scheduling Imports ──────────────────────────────────────────────
 import { RosterDoctorProfile } from './rosterDoctorProfile.model.js'
 import { SchedulingResource } from './schedulingResource.model.js'
@@ -53,8 +61,9 @@ import { RosterAssignmentDate } from './rosterAssignmentDate.model.js'
 import { RosterReplacement } from './rosterReplacement.model.js'
 import { RosterSetting } from './rosterSetting.model.js'
 import { RosterAuditLog } from './rosterAuditLog.model.js'
+import { RosterOpdSlot } from './rosterOpdSlot.model.js'
+import { RosterOpdBooking } from './rosterOpdBooking.model.js'
 import { MedicalSpecialization } from './medicalSpecialization.model.js'
-
 
 // ── Company associations ────────────────────────────────────────────────────
 Company.hasMany(CompanyCustomField, { foreignKey: 'companyId', as: 'customFields' })
@@ -234,14 +243,86 @@ FnbResidentOrder.belongsTo(FnbDish, { foreignKey: 'dishId', as: 'dish' })
 FnbResidentOrder.belongsTo(FnbMenuItem, { foreignKey: 'menuItemId', as: 'menuItem' })
 FnbResidentOrder.belongsTo(FnbResidentPackage, { foreignKey: 'residentPackageId', as: 'residentPackage' })
 
+// ── Global Services associations ───────────────────────────────────────────
+GlobalService.hasMany(GlobalServiceProperty, { foreignKey: 'globalServiceId', as: 'propertyServices' })
+GlobalServiceProperty.belongsTo(GlobalService, { foreignKey: 'globalServiceId', as: 'globalService' })
+GlobalServiceProperty.belongsTo(Property, { foreignKey: 'locId', as: 'property' })
+
+// ── Events Management associations ─────────────────────────────────────────
+Property.hasMany(Venue, { foreignKey: 'locationId', as: 'venues' })
+Venue.belongsTo(Property, { foreignKey: 'locationId', as: 'location' })
+
+Venue.hasMany(Event, { foreignKey: 'venueId', as: 'events' })
+Event.belongsTo(Venue, { foreignKey: 'venueId', as: 'venue' })
+
+Property.hasMany(Event, { foreignKey: 'locationId', as: 'events' })
+Event.belongsTo(Property, { foreignKey: 'locationId', as: 'location' })
+
+Event.hasMany(EventRegistration, { foreignKey: 'eventId', as: 'registrations' })
+EventRegistration.belongsTo(Event, { foreignKey: 'eventId', as: 'event' })
+
+Resident.hasMany(EventRegistration, { foreignKey: 'residentId', as: 'eventRegistrations' })
+EventRegistration.belongsTo(Resident, { foreignKey: 'residentId', as: 'resident' })
+
+Property.hasMany(EventRegistration, { foreignKey: 'locationId', as: 'eventRegistrations' })
+EventRegistration.belongsTo(Property, { foreignKey: 'locationId', as: 'location' })
+// ── Ticket Management associations ─────────────────────────────────────────
+TicketCategory.hasMany(TicketSubCategory, { foreignKey: 'categoryId', as: 'subCategories' })
+TicketSubCategory.belongsTo(TicketCategory, { foreignKey: 'categoryId', as: 'category' })
+
+Property.hasMany(Ticket, { foreignKey: 'locId', as: 'tickets' })
+Ticket.belongsTo(Property, { foreignKey: 'locId', as: 'property' })
+
+PropertyUnit.hasMany(Ticket, { foreignKey: 'unitId', as: 'tickets' })
+Ticket.belongsTo(PropertyUnit, { foreignKey: 'unitId', as: 'unit' })
+
+Resident.hasMany(Ticket, { foreignKey: 'residentId', as: 'tickets' })
+Ticket.belongsTo(Resident, { foreignKey: 'residentId', as: 'resident' })
+
+ResidentFamilyMember.hasMany(Ticket, { foreignKey: 'familyMemberId', as: 'tickets' })
+Ticket.belongsTo(ResidentFamilyMember, { foreignKey: 'familyMemberId', as: 'familyMember' })
+
+User.hasMany(Ticket, { foreignKey: 'raisedByUserId', as: 'raisedTickets' })
+Ticket.belongsTo(User, { foreignKey: 'raisedByUserId', as: 'raisedByUser' })
+
+User.hasMany(Ticket, { foreignKey: 'assignedToUserId', as: 'assignedTickets' })
+Ticket.belongsTo(User, { foreignKey: 'assignedToUserId', as: 'assignedToUser' })
+
+User.hasMany(Ticket, { foreignKey: 'approvedByUserId', as: 'approvedTickets' })
+Ticket.belongsTo(User, { foreignKey: 'approvedByUserId', as: 'approvedByUser' })
+
+Department.hasMany(Ticket, { foreignKey: 'departmentId', as: 'tickets' })
+Ticket.belongsTo(Department, { foreignKey: 'departmentId', as: 'department' })
+
+JobCategory.hasMany(Ticket, { foreignKey: 'jobCategoryId', as: 'tickets' })
+Ticket.belongsTo(JobCategory, { foreignKey: 'jobCategoryId', as: 'jobCategory' })
+
+TicketCategory.hasMany(Ticket, { foreignKey: 'categoryId', as: 'tickets' })
+Ticket.belongsTo(TicketCategory, { foreignKey: 'categoryId', as: 'categoryObj' })
+
+TicketSubCategory.hasMany(Ticket, { foreignKey: 'subCategoryId', as: 'tickets' })
+Ticket.belongsTo(TicketSubCategory, { foreignKey: 'subCategoryId', as: 'subCategoryObj' })
+
+AssetVendor.hasMany(Ticket, { foreignKey: 'vendorId', as: 'tickets' })
+Ticket.belongsTo(AssetVendor, { foreignKey: 'vendorId', as: 'vendor' })
+
+Asset.hasMany(Ticket, { foreignKey: 'assetId', as: 'tickets' })
+Ticket.belongsTo(Asset, { foreignKey: 'assetId', as: 'asset' })
+
+Ticket.hasMany(TicketActivityLog, { foreignKey: 'ticketId', as: 'activityLogs' })
+TicketActivityLog.belongsTo(Ticket, { foreignKey: 'ticketId', as: 'ticket' })
+TicketActivityLog.belongsTo(User, { foreignKey: 'performedByUserId', as: 'performedByUser' })
+
 // ── Roster & Scheduling associations ─────────────────────────────────────────
 RosterDoctorProfile.belongsTo(User, { foreignKey: 'userId', as: 'user' })
 User.hasOne(RosterDoctorProfile, { foreignKey: 'userId', as: 'doctorProfile' })
 
 SchedulingResource.belongsTo(Company, { foreignKey: 'companyId', as: 'company' })
 SchedulingResource.belongsTo(User, { foreignKey: 'userId', as: 'user' })
+SchedulingResource.belongsTo(Department, { foreignKey: 'departmentId', as: 'department' })
 SchedulingResource.belongsTo(RosterDoctorProfile, { foreignKey: 'doctorProfileId', as: 'doctorProfile' })
 RosterDoctorProfile.hasMany(SchedulingResource, { foreignKey: 'doctorProfileId', as: 'resources' })
+Department.hasMany(SchedulingResource, { foreignKey: 'departmentId', as: 'schedulingResources' })
 
 RosterDoctorLocation.belongsTo(RosterDoctorProfile, { foreignKey: 'doctorProfileId', as: 'doctorProfile' })
 RosterDoctorLocation.belongsTo(Property, { foreignKey: 'locationId', as: 'location' })
@@ -255,6 +336,8 @@ RosterDoctorProfile.hasMany(RosterDoctorEngagement, { foreignKey: 'doctorProfile
 
 RosterShift.belongsTo(Company, { foreignKey: 'companyId', as: 'company' })
 RosterShift.belongsTo(Property, { foreignKey: 'locationId', as: 'location' })
+RosterShift.belongsTo(Department, { foreignKey: 'departmentId', as: 'department' })
+Department.hasMany(RosterShift, { foreignKey: 'departmentId', as: 'shiftTemplates' })
 
 RosterFrequency.belongsTo(Company, { foreignKey: 'companyId', as: 'company' })
 RosterFrequency.belongsTo(Property, { foreignKey: 'locationId', as: 'location' })
@@ -276,10 +359,18 @@ RosterAssignmentDate.belongsTo(SchedulingResource, { foreignKey: 'schedulingReso
 RosterAssignmentDate.belongsTo(SchedulingResource, { foreignKey: 'coveredByResourceId', as: 'coveredByResource' })
 RosterAssignmentDate.belongsTo(RosterShift, { foreignKey: 'shiftId', as: 'shift' })
 RosterAssignmentDate.hasMany(RosterReplacement, { foreignKey: 'rosterAssignmentDateId', as: 'replacements' })
+RosterAssignmentDate.hasMany(RosterOpdSlot, { foreignKey: 'rosterAssignmentDateId', as: 'opdSlots' })
 
 RosterReplacement.belongsTo(RosterAssignmentDate, { foreignKey: 'rosterAssignmentDateId', as: 'dateInstance' })
 RosterReplacement.belongsTo(SchedulingResource, { foreignKey: 'originalResourceId', as: 'originalResource' })
 RosterReplacement.belongsTo(SchedulingResource, { foreignKey: 'replacementResourceId', as: 'replacementResource' })
+
+RosterOpdSlot.belongsTo(RosterAssignmentDate, { foreignKey: 'rosterAssignmentDateId', as: 'dateInstance' })
+RosterOpdSlot.hasMany(RosterOpdBooking, { foreignKey: 'opdSlotId', as: 'bookings' })
+
+RosterOpdBooking.belongsTo(RosterOpdSlot, { foreignKey: 'opdSlotId', as: 'slot' })
+RosterOpdBooking.belongsTo(Resident, { foreignKey: 'residentId', as: 'resident' })
+RosterOpdBooking.belongsTo(User, { foreignKey: 'bookedByUserId', as: 'bookedByUser' })
 
 RosterSetting.belongsTo(Company, { foreignKey: 'companyId', as: 'company' })
 RosterSetting.belongsTo(Property, { foreignKey: 'locationId', as: 'location' })
@@ -332,6 +423,15 @@ export {
   FnbMenu,
   FnbMenuItem,
   FnbResidentOrder,
+  Venue,
+  Event,
+  EventRegistration,
+  GlobalService,
+  GlobalServiceProperty,
+  TicketCategory,
+  TicketSubCategory,
+  Ticket,
+  TicketActivityLog,
   RosterDoctorProfile,
   SchedulingResource,
   RosterDoctorLocation,
@@ -344,7 +444,7 @@ export {
   RosterReplacement,
   RosterSetting,
   RosterAuditLog,
+  RosterOpdSlot,
+  RosterOpdBooking,
   MedicalSpecialization,
 }
-
-

@@ -25,6 +25,7 @@ export async function onboardDoctor(req: AuthenticatedRequest, res: Response, ne
       consultationFee,
       maxPatientsPerSlot,
       defaultSlotDurationMinutes,
+      engagement,
     } = req.body
 
     const userIdToUse = (userId as string) || req.user?.id
@@ -32,7 +33,6 @@ export async function onboardDoctor(req: AuthenticatedRequest, res: Response, ne
       return res.status(400).json({ success: false, message: 'User ID is required for doctor onboarding.' })
     }
 
-    // 1. Create Roster Doctor Profile
     const doctorProfile = await RosterDoctorProfile.create({
       userId: userIdToUse,
       doctorType: doctorType || 'IN_HOUSE',
@@ -46,7 +46,6 @@ export async function onboardDoctor(req: AuthenticatedRequest, res: Response, ne
       updatedBy: req.user?.id || 'system',
     })
 
-    // 2. Create Schedulable Resource Abstraction
     const schedulingResource = await SchedulingResource.create({
       companyId,
       resourceType: 'DOCTOR',
@@ -58,7 +57,6 @@ export async function onboardDoctor(req: AuthenticatedRequest, res: Response, ne
       updatedBy: req.user?.id || 'system',
     })
 
-    // 3. Grant Initial Location Scope
     const locationAccess = await RosterDoctorLocation.create({
       doctorProfileId: doctorProfile.id,
       locationId,
@@ -68,6 +66,23 @@ export async function onboardDoctor(req: AuthenticatedRequest, res: Response, ne
       updatedBy: req.user?.id || 'system',
     })
 
+    let doctorEngagement = null
+    if (doctorType === 'VISITING' && engagement) {
+      doctorEngagement = await RosterDoctorEngagement.create({
+        doctorProfileId: doctorProfile.id,
+        companyId: (engagement.companyId as string) || companyId,
+        locationId: (engagement.locationId as string) || locationId,
+        validFrom: engagement.validFrom as string,
+        validUntil: engagement.validUntil as string,
+        serviceCategory: engagement.serviceCategory as string,
+        clinicRoomId: engagement.clinicRoomId || null,
+        defaultSlotCapacity: engagement.defaultSlotCapacity || 15,
+        status: 'ACTIVE',
+        createdBy: req.user?.id || 'system',
+        updatedBy: req.user?.id || 'system',
+      })
+    }
+
     return res.status(201).json({
       success: true,
       message: 'Doctor successfully onboarded and resource created.',
@@ -75,6 +90,7 @@ export async function onboardDoctor(req: AuthenticatedRequest, res: Response, ne
         doctorProfile,
         schedulingResource,
         locationAccess,
+        engagement: doctorEngagement,
       },
     })
   } catch (error) {

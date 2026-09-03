@@ -23,6 +23,25 @@ function sanitizeUuid(id: string | null | undefined): string | null {
   return trimmed
 }
 
+async function resolveCompanyIdFromProperties(
+  companyId: string | null | undefined,
+  propertyIds: string[],
+): Promise<string | null> {
+  const direct = sanitizeUuid(companyId)
+  if (direct) return direct
+
+  for (const propertyId of propertyIds) {
+    const property = await Property.findOne({
+      where: { id: propertyId, isDeleted: false },
+      attributes: ['companyId'],
+    })
+    const resolved = sanitizeUuid(property?.companyId)
+    if (resolved) return resolved
+  }
+
+  return null
+}
+
 function formatUserResponse(user: unknown): Record<string, unknown> | null {
   if (!user) return null
   const uObj = user as Record<string, unknown>
@@ -313,12 +332,6 @@ export async function createUser(req: Request, res: Response): Promise<void> {
       if (targetRole) targetRoleId = targetRole.id
     }
 
-    // Insert user_locations and employee_managers mapping
-    const cleanCompId = sanitizeUuid(companyId)
-    const cleanDeptId = sanitizeUuid(departmentId)
-    const cleanJobCatId = sanitizeUuid(jCategoryId)
-    const cleanMgrId = sanitizeUuid(mgrId)
-
     const locationIds =
       propertyIds !== undefined ? propertyIds : req.body.locIds !== undefined ? req.body.locIds : req.body.locationIds
     let pIdsToCreate: string[] = []
@@ -329,6 +342,12 @@ export async function createUser(req: Request, res: Response): Promise<void> {
     } else if (defaultLocationId) {
       pIdsToCreate = [defaultLocationId]
     }
+
+    // Insert user_locations and employee_managers mapping
+    const cleanCompId = await resolveCompanyIdFromProperties(companyId, pIdsToCreate)
+    const cleanDeptId = sanitizeUuid(departmentId)
+    const cleanJobCatId = sanitizeUuid(jCategoryId)
+    const cleanMgrId = sanitizeUuid(mgrId)
 
     if (pIdsToCreate.length === 0) {
       res.status(400).json({ success: false, message: 'At least one property location is required' })
@@ -779,7 +798,7 @@ export async function updateUser(req: Request, res: Response): Promise<void> {
     // Update UserLocations and EmployeeManagers if propertyIds passed
     const existingLocs = await UserLocation.findAll({ where: { userId: user.id } })
     const primaryUserLoc = existingLocs[0]
-    const cleanCompId = sanitizeUuid(companyId || user.companyId || primaryUserLoc?.companyId)
+    let cleanCompId = sanitizeUuid(companyId || user.companyId || primaryUserLoc?.companyId)
     const cleanDeptId = departmentId !== undefined ? sanitizeUuid(departmentId) : primaryUserLoc?.departmentId || null
     const cleanJobCatId =
       jobCategoryId !== undefined || job_category_id !== undefined
@@ -887,6 +906,7 @@ export async function updateUser(req: Request, res: Response): Promise<void> {
 
     if (pIdsArray !== undefined) {
       const pIds = Array.from(new Set(pIdsArray))
+      cleanCompId = await resolveCompanyIdFromProperties(cleanCompId, pIds)
       console.log('[BE updateUser] Full property array overwrite mode. Deduplicated pIds to save:', pIds)
       if (pIds.length === 0) {
         res.status(400).json({ success: false, message: 'At least one property location is required' })
@@ -960,6 +980,10 @@ export async function updateUser(req: Request, res: Response): Promise<void> {
         throw tErr
       }
     } else if (hasAnyFieldToUpdate) {
+      if (!cleanCompId) {
+        const locIds = existingLocs.map((loc) => loc.locId).filter(Boolean) as string[]
+        cleanCompId = await resolveCompanyIdFromProperties(companyId, locIds)
+      }
       console.log('[BE updateUser] Partial property / manager update mode.')
       const updatePayload: Record<string, unknown> = { updatedBy: operatingUserId }
       if (targetRoleId) updatePayload.roleId = targetRoleId

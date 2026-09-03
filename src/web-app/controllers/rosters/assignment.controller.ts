@@ -1,74 +1,24 @@
 import type { Response, NextFunction } from 'express'
 import type { AuthenticatedRequest } from '../../../middlewares/authenticate.js'
-import { RosterAssignment, RosterAssignmentTarget, SchedulingResource, RosterFrequency, User } from '../../../models/index.js'
+import { RosterAssignment, RosterAssignmentTarget, RosterFrequency, Department } from '../../../models/index.js'
 import type { RosterTargetType } from '../../../models/rosterAssignmentTarget.model.js'
 import { RosterValidationEngine } from '../../../modules/rosters/domain/roster-validation.engine.js'
 import { RosterGenerationService } from '../../../modules/rosters/domain/roster-generation.service.js'
+import { SchedulingResourceService } from '../../../modules/rosters/domain/scheduling-resource.service.js'
 import { resolveCompanyId } from '../../../utils/resolveCompanyId.js'
 
 const UUID_REGEX = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/
 
-async function resolveSchedulingResourceId(companyId: string, rawResourceId?: string): Promise<string> {
-  if (rawResourceId && UUID_REGEX.test(rawResourceId)) {
-    const sr = await SchedulingResource.findOne({ where: { id: rawResourceId, isDeleted: false } })
-    if (sr) return sr.id
-
-    const user = await User.findByPk(rawResourceId)
-    if (user) {
-      let srUser = await SchedulingResource.findOne({ where: { userId: user.id, isDeleted: false } })
-      if (!srUser) {
-        srUser = await SchedulingResource.create({
-          companyId,
-          resourceType: 'EMPLOYEE',
-          userId: user.id,
-          status: 'ACTIVE',
-          effectiveFrom: '2026-01-01',
-        })
-      }
-      return srUser.id
-    }
-  }
-
-  const existing = await SchedulingResource.findOne({ where: { companyId, isDeleted: false } })
-  if (existing) {
-    if (!existing.userId) {
-      const firstUser = await User.findOne()
-      if (firstUser) {
-        await existing.update({ userId: firstUser.id })
-      }
-    }
-    return existing.id
-  }
-
-  const firstUser = await User.findOne()
-  const created = await SchedulingResource.create({
-    companyId,
-    resourceType: 'EMPLOYEE',
-    userId: firstUser ? firstUser.id : null,
-    status: 'ACTIVE',
-    effectiveFrom: '2026-01-01',
-  })
-  return created.id
-}
-
 async function resolveFrequencyId(companyId: string, locationId: string, rawFrequencyId?: string): Promise<string> {
   if (rawFrequencyId && UUID_REGEX.test(rawFrequencyId)) {
-    return rawFrequencyId
+    const freq = await RosterFrequency.findOne({ where: { id: rawFrequencyId, companyId, isDeleted: false } })
+    if (freq) return freq.id
   }
-  const existing = await RosterFrequency.findOne({ where: { companyId, isDeleted: false } })
-  if (existing) {
-    return existing.id
-  }
-  const created = await RosterFrequency.create({
-    companyId,
-    locationId,
-    frequencyName: rawFrequencyId || 'WEEKLY',
-    frequencyType: 'WEEKLY',
-    interval: 1,
-    timeUnit: 'WEEKS',
-    status: 'ACTIVE',
-  })
-  return created.id
+
+  const existing = await RosterFrequency.findOne({ where: { companyId, locationId, isDeleted: false } })
+  if (existing) return existing.id
+
+  throw new Error('Valid frequencyId is required. Create a frequency template first.')
 }
 
 function mapTargetType(rawType: string): RosterTargetType {
@@ -88,17 +38,48 @@ function cleanTargetId(rawId: string): string {
   return rawId.replace(/^(prop|block|floor|unit|clinic|dept)-/, '')
 }
 
-/**
- * Validate Roster Assignment (Pre-flight dry run)
- * POST /api/v1/roster/companies/:companyId/locations/:locationId/assignments/validate
- */
+async function validateDepartmentTargets(
+  targets: Array<{ targetType: string; targetId: string }>,
+): Promise<string | null> {
+  for (const t of targets) {
+    if (mapTargetType(t.targetType) === 'DEPARTMENT') {
+      const dept = await Department.findByPk(cleanTargetId(t.targetId))
+      if (!dept) return `Department target ${t.targetId} does not exist.`
+    }
+  }
+  return null
+}
+
 export async function validateAssignment(req: AuthenticatedRequest, res: Response, next: NextFunction) {
   try {
     const companyId = await resolveCompanyId(req.params.companyId as string, req.user?.companyId)
     const locationId = req.params.locationId as string
-    const { schedulingResourceId, effectiveFrom, effectiveUntil, proposedDates, overrideReason } = req.body
+    const {
+      schedulingResourceId,
+      effectiveFrom,
+      effectiveUntil,
+      proposedDates,
+      overrideReason,
+      dutyType,
+      targets,
+      enableOpdSlots,
+      slotDurationMinutes,
+      slotTimeRange,
+    } = req.body
 
-    const resolvedResourceId = await resolveSchedulingResourceId(companyId, schedulingResourceId as string)
+    const resolvedResourceId = await SchedulingResourceService.resolveSchedulingResourceId(
+      companyId,
+      schedulingResourceId as string,
+      locationId,
+    )
+
+    const mappedTargets =
+      targets && Array.isArray(targets)
+        ? targets.map((t: { targetType: string; targetId: string }) => ({
+            targetType: mapTargetType(t.targetType),
+            targetId: cleanTargetId(t.targetId),
+          }))
+        : []
 
     const validation = await RosterValidationEngine.validate({
       companyId,
@@ -108,21 +89,19 @@ export async function validateAssignment(req: AuthenticatedRequest, res: Respons
       effectiveUntil: effectiveUntil as string,
       proposedDates: proposedDates || [],
       overrideReason: overrideReason as string | undefined,
+      dutyType: dutyType as 'SHIFT' | 'OPD_SESSION' | undefined,
+      targets: mappedTargets,
+      enableOpdSlots: enableOpdSlots as boolean | undefined,
+      slotDurationMinutes: slotDurationMinutes as number | undefined,
+      slotTimeRange: slotTimeRange as string | undefined,
     })
 
-    return res.status(200).json({
-      success: true,
-      data: validation,
-    })
+    return res.status(200).json({ success: true, data: validation })
   } catch (error) {
     next(error)
   }
 }
 
-/**
- * Create Roster Assignment Pattern Header & Targets
- * POST /api/v1/roster/companies/:companyId/locations/:locationId/assignments
- */
 export async function createAssignment(req: AuthenticatedRequest, res: Response, next: NextFunction) {
   try {
     const companyId = await resolveCompanyId(req.params.companyId as string, req.user?.companyId)
@@ -140,12 +119,32 @@ export async function createAssignment(req: AuthenticatedRequest, res: Response,
       selectedWorkingDays,
       instructions,
       targets,
+      enableOpdSlots,
+      slotDurationMinutes,
+      slotBufferMinutes,
+      overrideReason,
     } = req.body
 
-    const resolvedResourceId = await resolveSchedulingResourceId(companyId, schedulingResourceId as string)
+    const mappedTargets =
+      targets && Array.isArray(targets)
+        ? targets.map((t: { targetType: string; targetId: string }) => ({
+            targetType: mapTargetType(t.targetType),
+            targetId: cleanTargetId(t.targetId),
+          }))
+        : []
+
+    const deptError = await validateDepartmentTargets(mappedTargets)
+    if (deptError) {
+      return res.status(422).json({ success: false, message: deptError })
+    }
+
+    const resolvedResourceId = await SchedulingResourceService.resolveSchedulingResourceId(
+      companyId,
+      schedulingResourceId as string,
+      locationId,
+    )
     const resolvedFreqId = await resolveFrequencyId(companyId, locationId, frequencyId as string)
 
-    // 1. Create Roster Assignment Pattern Header
     const assignment = await RosterAssignment.create({
       companyId,
       locationId,
@@ -160,34 +159,38 @@ export async function createAssignment(req: AuthenticatedRequest, res: Response,
       effectiveUntil: effectiveUntil as string,
       selectedWorkingDays: selectedWorkingDays || null,
       instructions: instructions || null,
+      slotDurationMinutes: slotDurationMinutes ?? null,
+      slotBufferMinutes: slotBufferMinutes ?? 0,
+      enableOpdSlots: enableOpdSlots ?? dutyType === 'OPD_SESSION',
       status: 'DRAFT',
       createdBy: req.user?.id || 'system',
       updatedBy: req.user?.id || 'system',
     })
 
-    // 2. Bind Targets
-    if (targets && Array.isArray(targets) && targets.length > 0) {
-      for (const t of targets) {
-        await RosterAssignmentTarget.create({
-          rosterAssignmentId: assignment.id,
-          targetType: mapTargetType(t.targetType),
-          targetId: cleanTargetId(t.targetId),
-          createdBy: req.user?.id || 'system',
-          updatedBy: req.user?.id || 'system',
-        })
-      }
+    for (const t of mappedTargets) {
+      await RosterAssignmentTarget.create({
+        rosterAssignmentId: assignment.id,
+        targetType: t.targetType,
+        targetId: t.targetId,
+        createdBy: req.user?.id || 'system',
+        updatedBy: req.user?.id || 'system',
+      })
     }
 
-    // 3. Auto-publish assignment pattern to generate concrete date instances
-    try {
-      await RosterGenerationService.generateDatesForAssignment({
-        rosterAssignmentId: assignment.id,
-        companyId,
-        locationId,
-        performedBy: req.user?.id || 'system',
+    const publishResult = await RosterGenerationService.generateDatesForAssignment({
+      rosterAssignmentId: assignment.id,
+      companyId,
+      locationId,
+      overrideReason: overrideReason as string | undefined,
+      performedBy: req.user?.id || 'system',
+    })
+
+    if (!publishResult.success) {
+      return res.status(422).json({
+        success: false,
+        message: 'Roster assignment created but publication blocked by validation.',
+        data: publishResult.validationResult,
       })
-    } catch (pubErr) {
-      console.warn('Auto-publish during assignment creation warning:', pubErr)
     }
 
     const createdWithTargets = await RosterAssignment.findByPk(assignment.id, {
@@ -196,8 +199,8 @@ export async function createAssignment(req: AuthenticatedRequest, res: Response,
 
     return res.status(201).json({
       success: true,
-      message: 'Roster assignment pattern created and published successfully.',
-      data: createdWithTargets,
+      message: `Roster assignment created and published. Generated ${publishResult.generatedCount} dates and ${publishResult.opdSlotsGenerated} OPD slots.`,
+      data: { assignment: createdWithTargets, publishResult },
     })
   } catch (error) {
     console.error('CREATE ASSIGNMENT ERROR:', error)
@@ -205,10 +208,6 @@ export async function createAssignment(req: AuthenticatedRequest, res: Response,
   }
 }
 
-/**
- * Publish Assignment & Generate Concrete Date Instances
- * POST /api/v1/roster/companies/:companyId/locations/:locationId/assignments/:assignmentId/publish
- */
 export async function publishAssignment(req: AuthenticatedRequest, res: Response, next: NextFunction) {
   try {
     const companyId = await resolveCompanyId(req.params.companyId as string, req.user?.companyId)
@@ -234,7 +233,7 @@ export async function publishAssignment(req: AuthenticatedRequest, res: Response
 
     return res.status(200).json({
       success: true,
-      message: `Roster assignment published successfully! Generated ${result.generatedCount} operational date instances.`,
+      message: `Roster assignment published! Generated ${result.generatedCount} date instances and ${result.opdSlotsGenerated} OPD slots.`,
       data: result,
     })
   } catch (error) {
@@ -242,10 +241,6 @@ export async function publishAssignment(req: AuthenticatedRequest, res: Response
   }
 }
 
-/**
- * Get Roster Assignments List
- * GET /api/v1/roster/companies/:companyId/locations/:locationId/assignments
- */
 export async function getAssignments(req: AuthenticatedRequest, res: Response, next: NextFunction) {
   try {
     const companyId = await resolveCompanyId(req.params.companyId as string, req.user?.companyId)
@@ -267,10 +262,6 @@ export async function getAssignments(req: AuthenticatedRequest, res: Response, n
   }
 }
 
-/**
- * Copy Roster Pattern to Future Date Window (P1 Copy-Forward Feature)
- * POST /api/v1/roster/companies/:companyId/locations/:locationId/assignments/:assignmentId/copy-forward
- */
 export async function copyAssignment(req: AuthenticatedRequest, res: Response, next: NextFunction) {
   try {
     const companyId = await resolveCompanyId(req.params.companyId as string, req.user?.companyId)
@@ -287,7 +278,6 @@ export async function copyAssignment(req: AuthenticatedRequest, res: Response, n
       return res.status(404).json({ success: false, message: 'Source roster assignment pattern not found.' })
     }
 
-    // Duplicate pattern header
     const copiedAssignment = await RosterAssignment.create({
       companyId,
       locationId,
@@ -302,12 +292,14 @@ export async function copyAssignment(req: AuthenticatedRequest, res: Response, n
       effectiveUntil: targetEffectiveUntil as string,
       selectedWorkingDays: existing.selectedWorkingDays,
       instructions: existing.instructions,
+      slotDurationMinutes: existing.slotDurationMinutes,
+      slotBufferMinutes: existing.slotBufferMinutes,
+      enableOpdSlots: existing.enableOpdSlots,
       status: 'DRAFT',
       createdBy: req.user?.id || 'system',
       updatedBy: req.user?.id || 'system',
     })
 
-    // Duplicate targets
     if (existing.targets && existing.targets.length > 0) {
       for (const t of existing.targets) {
         await RosterAssignmentTarget.create({

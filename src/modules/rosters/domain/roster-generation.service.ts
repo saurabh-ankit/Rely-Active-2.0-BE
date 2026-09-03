@@ -11,6 +11,7 @@ import {
   RosterDoctorProfile,
 } from '../../../models/index.js'
 import { RosterValidationEngine } from './roster-validation.engine.js'
+import { OpdSlotGenerationService } from './opd-slot-generation.service.js'
 
 export interface GenerateRosterInstancesPayload {
   rosterAssignmentId: string
@@ -18,8 +19,9 @@ export interface GenerateRosterInstancesPayload {
   locationId: string
   overrideReason?: string | undefined
   performedBy: string
+  targets?: Array<{ targetType: string; targetId: string }>
+  dutyType?: 'SHIFT' | 'OPD_SESSION'
 }
-
 
 export class RosterGenerationService {
   /**
@@ -28,12 +30,12 @@ export class RosterGenerationService {
   public static async generateDatesForAssignment(payload: GenerateRosterInstancesPayload): Promise<{
     success: boolean
     generatedCount: number
+    opdSlotsGenerated: number
     validationResult: Awaited<ReturnType<typeof RosterValidationEngine.validate>>
   }> {
     const transaction: Transaction = await sequelize.transaction()
 
     try {
-      // 1. Fetch Assignment with Frequency, Shift & Targets
       const assignment = await RosterAssignment.findOne({
         where: {
           id: payload.rosterAssignmentId,
@@ -55,7 +57,7 @@ export class RosterGenerationService {
           },
         ],
         transaction,
-        lock: transaction.LOCK.UPDATE, // MySQL Pessimistic Lock
+        lock: transaction.LOCK.UPDATE,
       })
 
       if (!assignment) {
@@ -63,14 +65,12 @@ export class RosterGenerationService {
         throw new Error('Roster Assignment header not found.')
       }
 
-      // 2. Build human-readable resource and target snapshots
       let resourceSnapshot = 'Unknown Resource'
       if (assignment.resource) {
         if (assignment.resource.resourceType === 'EMPLOYEE' && assignment.resource.user) {
           const userName = assignment.resource.user.username || assignment.resource.user.email || 'Employee'
           resourceSnapshot = `${userName} (ID: ${assignment.resource.userId})`
         } else if (assignment.resource.resourceType === 'DOCTOR' && assignment.resource.doctorProfile) {
-
           resourceSnapshot = `Dr. ${assignment.resource.doctorProfile.specialization} (License: ${assignment.resource.doctorProfile.medicalLicenseNumber})`
         }
       }
@@ -81,9 +81,12 @@ export class RosterGenerationService {
           : 'Location Target'
 
       const shiftNameSnapshot = assignment.shift ? assignment.shift.shiftName : 'OPD Slot'
-      const slotTimeRange = assignment.slotTimeRange || (assignment.shift ? `${assignment.shift.startTime} - ${assignment.shift.endTime}` : '09:00 - 17:00')
+      const slotTimeRange =
+        assignment.slotTimeRange ||
+        (assignment.shift ? `${assignment.shift.startTime} - ${assignment.shift.endTime}` : '09:00 - 17:00')
 
-      // 3. Compute Dates based on Frequency & Date Window
+      const slotCapacitySnapshot = await OpdSlotGenerationService.resolveSlotCapacity(assignment, payload.locationId)
+
       const startDate = new Date(assignment.effectiveFrom)
       const endDate = new Date(assignment.effectiveUntil)
       const proposedDates: Array<{
@@ -101,7 +104,7 @@ export class RosterGenerationService {
         const dayName: string = daysOfWeekMap[curr.getDay()] || 'sunday'
 
         let isMatch = true
-        const allowedDays = assignment.selectedWorkingDays || (assignment.frequency?.allowedDaysOfWeek)
+        const allowedDays = assignment.selectedWorkingDays || assignment.frequency?.allowedDaysOfWeek
         if (allowedDays && Array.isArray(allowedDays) && allowedDays.length > 0) {
           const lowerDays = allowedDays.map((d: string) => String(d).toLowerCase())
           const shortDay = dayName.substring(0, 3)
@@ -115,18 +118,16 @@ export class RosterGenerationService {
             startTimeStr = assignment.shift.startTime
             endTimeStr = assignment.shift.endTime
           } else if (assignment.slotTimeRange) {
-            const parts = assignment.slotTimeRange.split('-').map((s) => s.trim())
+            const parts = assignment.slotTimeRange.split('-').map((s: string) => s.trim())
             if (parts.length === 2 && parts[0] && parts[1]) {
               startTimeStr = parts[0]
               endTimeStr = parts[1]
             }
           }
 
-
           const scheduledStart = new Date(`${dateStr}T${startTimeStr}:00.000Z`)
           let scheduledEnd = new Date(`${dateStr}T${endTimeStr}:00.000Z`)
 
-          // Handle Overnight Shift
           if (scheduledEnd <= scheduledStart) {
             scheduledEnd = new Date(scheduledEnd.getTime() + 24 * 3600 * 1000)
           }
@@ -139,11 +140,12 @@ export class RosterGenerationService {
           })
         }
 
-        // Increment day
         curr.setDate(curr.getDate() + 1)
       }
 
-      // 4. Execute Validation Engine Pre-Flight Check
+      const assignmentTargets =
+        assignment.targets?.map((t) => ({ targetType: t.targetType, targetId: t.targetId })) || []
+
       const validationResult = await RosterValidationEngine.validate({
         companyId: payload.companyId,
         locationId: payload.locationId,
@@ -152,6 +154,11 @@ export class RosterGenerationService {
         effectiveUntil: assignment.effectiveUntil,
         proposedDates,
         overrideReason: payload.overrideReason,
+        dutyType: assignment.dutyType,
+        targets: assignmentTargets,
+        enableOpdSlots: assignment.enableOpdSlots,
+        slotDurationMinutes: assignment.slotDurationMinutes ?? undefined,
+        slotTimeRange,
       })
 
       if (!validationResult.valid) {
@@ -159,6 +166,7 @@ export class RosterGenerationService {
         return {
           success: false,
           generatedCount: 0,
+          opdSlotsGenerated: 0,
           validationResult,
         }
       }
@@ -168,19 +176,22 @@ export class RosterGenerationService {
         return {
           success: false,
           generatedCount: 0,
+          opdSlotsGenerated: 0,
           validationResult,
         }
       }
 
-      // 5. Persist RosterAssignmentDate Records with activeToken = 'ACTIVE'
       let generatedCount = 0
+      let opdSlotsGenerated = 0
+
       for (const pDate of proposedDates) {
-        await RosterAssignmentDate.create(
+        const dateInstance = await RosterAssignmentDate.create(
           {
             companyId: payload.companyId,
             locationId: payload.locationId,
             rosterAssignmentId: assignment.id,
             assignmentDate: pDate.assignmentDate,
+            dutyType: assignment.dutyType,
             schedulingResourceId: assignment.schedulingResourceId,
             shiftId: assignment.shiftId,
             scheduledStart: pDate.scheduledStart,
@@ -189,6 +200,7 @@ export class RosterGenerationService {
             shiftNameSnapshot,
             targetSnapshot: targetSnapshots,
             resourceSnapshot,
+            slotCapacitySnapshot,
             status: 'UPCOMING',
             activeToken: 'ACTIVE',
             overrideReason: payload.overrideReason || null,
@@ -198,9 +210,19 @@ export class RosterGenerationService {
           { transaction },
         )
         generatedCount++
+
+        if (assignment.dutyType === 'OPD_SESSION' || assignment.enableOpdSlots) {
+          const slotsCreated = await OpdSlotGenerationService.generateSlotsForDate({
+            assignment,
+            dateInstance,
+            locationId: payload.locationId,
+            performedBy: payload.performedBy,
+            transaction,
+          })
+          opdSlotsGenerated += slotsCreated
+        }
       }
 
-      // 6. Update Assignment Header Status to PUBLISHED
       await assignment.update(
         {
           status: 'PUBLISHED',
@@ -214,6 +236,7 @@ export class RosterGenerationService {
       return {
         success: true,
         generatedCount,
+        opdSlotsGenerated,
         validationResult,
       }
     } catch (err) {

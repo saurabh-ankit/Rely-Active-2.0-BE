@@ -10,13 +10,7 @@ export type RosterDutyType = 'SHIFT' | 'OPD_SESSION'
 export type RosterHolidayPolicy = 'IGNORE' | 'SKIP' | 'RESCHEDULE' | 'REQUIRE_COVERAGE'
 
 export type RosterAssignmentStatus =
-  | 'DRAFT'
-  | 'VALIDATED'
-  | 'PUBLISHED'
-  | 'LOCKED'
-  | 'ACTIVE'
-  | 'COMPLETED'
-  | 'CANCELLED'
+  'DRAFT' | 'VALIDATED' | 'PUBLISHED' | 'LOCKED' | 'ACTIVE' | 'COMPLETED' | 'CANCELLED'
 
 export interface RosterAssignmentAttributes extends BaseAttributes {
   companyId: string
@@ -32,6 +26,9 @@ export interface RosterAssignmentAttributes extends BaseAttributes {
   effectiveUntil: string
   selectedWorkingDays?: string[] | null
   instructions?: string | null
+  slotDurationMinutes?: number | null
+  slotBufferMinutes?: number
+  enableOpdSlots?: boolean
   status?: RosterAssignmentStatus
   cancellationReason?: string | null
   cancelledBy?: string | null
@@ -48,6 +45,9 @@ export type RosterAssignmentCreationAttributes = Optional<
   | 'slotTimeRange'
   | 'selectedWorkingDays'
   | 'instructions'
+  | 'slotDurationMinutes'
+  | 'slotBufferMinutes'
+  | 'enableOpdSlots'
   | 'status'
   | 'cancellationReason'
   | 'cancelledBy'
@@ -76,6 +76,9 @@ export class RosterAssignment
   declare effectiveUntil: string
   declare selectedWorkingDays: string[] | null
   declare instructions: string | null
+  declare slotDurationMinutes: number | null
+  declare slotBufferMinutes: number
+  declare enableOpdSlots: boolean
   declare status: RosterAssignmentStatus
   declare cancellationReason: string | null
   declare cancelledBy: string | null
@@ -147,6 +150,20 @@ RosterAssignment.init(
     instructions: {
       type: DataTypes.TEXT,
       allowNull: true,
+    },
+    slotDurationMinutes: {
+      type: DataTypes.INTEGER,
+      allowNull: true,
+    },
+    slotBufferMinutes: {
+      type: DataTypes.INTEGER,
+      allowNull: false,
+      defaultValue: 0,
+    },
+    enableOpdSlots: {
+      type: DataTypes.BOOLEAN,
+      allowNull: false,
+      defaultValue: false,
     },
     status: {
       type: DataTypes.ENUM('DRAFT', 'VALIDATED', 'PUBLISHED', 'LOCKED', 'ACTIVE', 'COMPLETED', 'CANCELLED'),

@@ -6,6 +6,8 @@ import {
   RosterDoctorEngagement,
   RosterAssignmentDate,
   RosterSetting,
+  Department,
+  UserLocation,
 } from '../../../models/index.js'
 
 export type ValidationErrorSeverity = 'BLOCK' | 'WARNING' | 'INFO'
@@ -37,18 +39,18 @@ export interface ValidateAssignmentPayload {
     slotTimeRange: string
   }>
   overrideReason?: string | undefined
+  dutyType?: 'SHIFT' | 'OPD_SESSION' | undefined
+  targets?: Array<{ targetType: string; targetId: string }> | undefined
+  enableOpdSlots?: boolean | undefined
+  slotDurationMinutes?: number | undefined
+  slotTimeRange?: string | undefined
 }
 
-
 export class RosterValidationEngine {
-  /**
-   * Validates a proposed roster assignment against all 3-level hard blocking rules and soft warnings.
-   */
   public static async validate(payload: ValidateAssignmentPayload): Promise<ValidationEngineResult> {
     const errors: ValidationErrorItem[] = []
     const warnings: ValidationErrorItem[] = []
 
-    // ── LEVEL 1: RESOURCE & AUTHORIZATION CHECKS ──────────────────────────────
     const resource = await SchedulingResource.findOne({
       where: {
         id: payload.schedulingResourceId,
@@ -75,11 +77,62 @@ export class RosterValidationEngine {
       })
     }
 
-    // Doctor Specific Authorization & Engagement Scope Checks
+    // Department target validation for employee shifts
+    if (payload.dutyType === 'SHIFT' && resource.resourceType === 'EMPLOYEE' && payload.targets?.length) {
+      const deptTarget = payload.targets.find((t) => t.targetType === 'DEPARTMENT')
+      if (deptTarget) {
+        const department = await Department.findByPk(deptTarget.targetId)
+        if (!department) {
+          errors.push({
+            code: 'DEPARTMENT_TARGET_INVALID',
+            severity: 'BLOCK',
+            message: 'Department target does not exist.',
+          })
+        } else if (resource.departmentId && resource.departmentId !== deptTarget.targetId) {
+          const userLoc = resource.userId
+            ? await UserLocation.findOne({
+                where: {
+                  userId: resource.userId,
+                  locId: payload.locationId,
+                  departmentId: deptTarget.targetId,
+                  isActive: true,
+                  isDeleted: false,
+                },
+              })
+            : null
+          if (!userLoc) {
+            errors.push({
+              code: 'EMPLOYEE_DEPARTMENT_MISMATCH',
+              severity: 'BLOCK',
+              message: 'Employee is not assigned to the selected department at this location.',
+            })
+          }
+        }
+      }
+    }
+
+    // OPD slot config validation
+    if (payload.dutyType === 'OPD_SESSION' || payload.enableOpdSlots) {
+      if (!payload.slotTimeRange && payload.proposedDates.length === 0) {
+        errors.push({
+          code: 'OPD_TIME_REQUIRED',
+          severity: 'BLOCK',
+          message: 'OPD session requires a valid time range.',
+        })
+      }
+      const duration = payload.slotDurationMinutes ?? 30
+      if (duration <= 0) {
+        errors.push({
+          code: 'OPD_SLOT_DURATION_INVALID',
+          severity: 'BLOCK',
+          message: 'OPD slot duration must be greater than zero.',
+        })
+      }
+    }
+
     if (resource.resourceType === 'DOCTOR' && resource.doctorProfile) {
       const doctor = resource.doctorProfile
 
-      // Location Authorization Scope Check
       const locationAccess = await RosterDoctorLocation.findOne({
         where: {
           doctorProfileId: doctor.id,
@@ -99,7 +152,6 @@ export class RosterValidationEngine {
         })
       }
 
-      // Visiting Doctor Engagement Validity Check
       if (doctor.doctorType === 'VISITING') {
         const activeEngagement = await RosterDoctorEngagement.findOne({
           where: {
@@ -116,13 +168,13 @@ export class RosterValidationEngine {
           errors.push({
             code: 'VISITING_ENGAGEMENT_INVALID',
             severity: 'BLOCK',
-            message: 'Visiting Doctor has no active contractual engagement covering this location and effective window.',
+            message:
+              'Visiting Doctor has no active contractual engagement covering this location and effective window.',
           })
         }
       }
     }
 
-    // ── LEVEL 2: LOCATION SETTINGS & POLICIES ─────────────────────────────────
     const settings = (await RosterSetting.findOne({
       where: { companyId: payload.companyId, locationId: payload.locationId, isDeleted: false },
     })) || {
@@ -131,16 +183,14 @@ export class RosterValidationEngine {
       minMultiPropertyTravelMinutes: 60,
     }
 
-    // Track weekly working hours for Employees
     const weeklyHoursMap: Record<string, number> = {}
+    const skipEmployeePolicy = payload.dutyType === 'OPD_SESSION'
 
-    // ── LEVEL 3: PER-INSTANCE OPERATIONAL & DATE CHECKS ────────────────────────
     for (const item of payload.proposedDates) {
       const proposedStart = new Date(item.scheduledStart)
       const proposedEnd = new Date(item.scheduledEnd)
       const durationHours = (proposedEnd.getTime() - proposedStart.getTime()) / (3600 * 1000)
 
-      // Per-Date Doctor License Expiry Check
       if (resource.resourceType === 'DOCTOR' && resource.doctorProfile?.licenseExpiryDate) {
         if (resource.doctorProfile.licenseExpiryDate < item.assignmentDate) {
           errors.push({
@@ -152,7 +202,6 @@ export class RosterValidationEngine {
         }
       }
 
-      // Query existing active assignments for exact or cross-midnight overlap
       const existingInstances = await RosterAssignmentDate.findAll({
         where: {
           schedulingResourceId: payload.schedulingResourceId,
@@ -177,84 +226,82 @@ export class RosterValidationEngine {
         })
       }
 
-      // Rest Period Calculation (Check 11-hour rest window)
-      const bufferMs = settings.minRestPeriodHours * 3600 * 1000
-      const minRestStart = new Date(proposedStart.getTime() - bufferMs)
-      const minRestEnd = new Date(proposedEnd.getTime() + bufferMs)
+      if (!skipEmployeePolicy) {
+        const bufferMs = settings.minRestPeriodHours * 3600 * 1000
+        const minRestStart = new Date(proposedStart.getTime() - bufferMs)
+        const minRestEnd = new Date(proposedEnd.getTime() + bufferMs)
 
-      const adjacentInstances = await RosterAssignmentDate.findAll({
-        where: {
-          schedulingResourceId: payload.schedulingResourceId,
-          activeToken: 'ACTIVE',
-          status: { [Op.ne]: 'CANCELLED' },
-          isDeleted: false,
-          [Op.or]: [
-            {
-              scheduledEnd: {
-                [Op.gt]: minRestStart,
-                [Op.lte]: proposedStart,
+        const adjacentInstances = await RosterAssignmentDate.findAll({
+          where: {
+            schedulingResourceId: payload.schedulingResourceId,
+            activeToken: 'ACTIVE',
+            status: { [Op.ne]: 'CANCELLED' },
+            isDeleted: false,
+            [Op.or]: [
+              {
+                scheduledEnd: {
+                  [Op.gt]: minRestStart,
+                  [Op.lte]: proposedStart,
+                },
               },
-            },
-            {
-              scheduledStart: {
-                [Op.gte]: proposedEnd,
-                [Op.lt]: minRestEnd,
+              {
+                scheduledStart: {
+                  [Op.gte]: proposedEnd,
+                  [Op.lt]: minRestEnd,
+                },
               },
-            },
-          ],
-        },
-      })
-
-      if (adjacentInstances.length > 0) {
-        warnings.push({
-          code: 'REST_PERIOD_VIOLATION',
-          severity: 'WARNING',
-          date: item.assignmentDate,
-          message: `Rest period between consecutive shifts is under the required ${settings.minRestPeriodHours} hours threshold on ${item.assignmentDate}.`,
+            ],
+          },
         })
-      }
 
-      // Multi-Property Travel Buffer Check
-      const foreignLocationInstances = await RosterAssignmentDate.findAll({
-        where: {
-          schedulingResourceId: payload.schedulingResourceId,
-          locationId: { [Op.ne]: payload.locationId },
-          activeToken: 'ACTIVE',
-          status: { [Op.ne]: 'CANCELLED' },
-          isDeleted: false,
-          assignmentDate: item.assignmentDate,
-        },
-      })
+        if (adjacentInstances.length > 0) {
+          warnings.push({
+            code: 'REST_PERIOD_VIOLATION',
+            severity: 'WARNING',
+            date: item.assignmentDate,
+            message: `Rest period between consecutive shifts is under the required ${settings.minRestPeriodHours} hours threshold on ${item.assignmentDate}.`,
+          })
+        }
 
-      if (foreignLocationInstances.length > 0) {
-        for (const foreignInst of foreignLocationInstances) {
-          const travelBufferMs = settings.minMultiPropertyTravelMinutes * 60 * 1000
-          const foreignEnd = new Date(foreignInst.scheduledEnd).getTime()
-          const foreignStart = new Date(foreignInst.scheduledStart).getTime()
+        const foreignLocationInstances = await RosterAssignmentDate.findAll({
+          where: {
+            schedulingResourceId: payload.schedulingResourceId,
+            locationId: { [Op.ne]: payload.locationId },
+            activeToken: 'ACTIVE',
+            status: { [Op.ne]: 'CANCELLED' },
+            isDeleted: false,
+            assignmentDate: item.assignmentDate,
+          },
+        })
 
-          if (
-            Math.abs(proposedStart.getTime() - foreignEnd) < travelBufferMs ||
-            Math.abs(foreignStart - proposedEnd.getTime()) < travelBufferMs
-          ) {
-            warnings.push({
-              code: 'MULTI_PROPERTY_TRAVEL_WARNING',
-              severity: 'WARNING',
-              date: item.assignmentDate,
-              message: `Multi-property duty transition on ${item.assignmentDate} has less than ${settings.minMultiPropertyTravelMinutes} minutes travel buffer.`,
-            })
+        if (foreignLocationInstances.length > 0) {
+          for (const foreignInst of foreignLocationInstances) {
+            const travelBufferMs = settings.minMultiPropertyTravelMinutes * 60 * 1000
+            const foreignEnd = new Date(foreignInst.scheduledEnd).getTime()
+            const foreignStart = new Date(foreignInst.scheduledStart).getTime()
+
+            if (
+              Math.abs(proposedStart.getTime() - foreignEnd) < travelBufferMs ||
+              Math.abs(foreignStart - proposedEnd.getTime()) < travelBufferMs
+            ) {
+              warnings.push({
+                code: 'MULTI_PROPERTY_TRAVEL_WARNING',
+                severity: 'WARNING',
+                date: item.assignmentDate,
+                message: `Multi-property duty transition on ${item.assignmentDate} has less than ${settings.minMultiPropertyTravelMinutes} minutes travel buffer.`,
+              })
+            }
           }
         }
       }
 
-      // Weekly Hours Threshold Check (Only for Employees)
-      if (resource.resourceType === 'EMPLOYEE') {
+      if (resource.resourceType === 'EMPLOYEE' && !skipEmployeePolicy) {
         const yearWeek = getISOWeekKey(proposedStart)
         weeklyHoursMap[yearWeek] = (weeklyHoursMap[yearWeek] || 0) + durationHours
       }
     }
 
-    // Evaluate Weekly Hours Limit for Employees
-    if (resource.resourceType === 'EMPLOYEE') {
+    if (resource.resourceType === 'EMPLOYEE' && !skipEmployeePolicy) {
       for (const [weekKey, totalHours] of Object.entries(weeklyHoursMap)) {
         if (totalHours > settings.maxWeeklyHours) {
           warnings.push({
@@ -278,9 +325,6 @@ export class RosterValidationEngine {
   }
 }
 
-/**
- * Helper utility to extract ISO Week key (YYYY-Www)
- */
 function getISOWeekKey(d: Date): string {
   const date = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()))
   const dayNum = date.getUTCDay() || 7
@@ -289,4 +333,3 @@ function getISOWeekKey(d: Date): string {
   const weekNo = Math.ceil(((date.getTime() - yearStart.getTime()) / 86400000 + 1) / 7)
   return `${date.getUTCFullYear()}-W${weekNo.toString().padStart(2, '0')}`
 }
-
