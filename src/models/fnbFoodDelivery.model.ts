@@ -65,7 +65,7 @@ FnbFoodDelivery.init(
       defaultValue: 'assigned',
     },
     photoUrl: {
-      type: DataTypes.STRING(500),
+      type: DataTypes.TEXT,
       allowNull: true,
     },
     deliveryDate: {

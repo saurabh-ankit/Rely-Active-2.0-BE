@@ -44,8 +44,26 @@ export function createApp() {
     }),
   )
   app.use(express.json({ limit: '10mb' }))
-  app.use(express.urlencoded({ extended: true, limit: '10mb' }))
-  app.use(pinoHttp({ logger }))
+  app.use(
+    pinoHttp({
+      logger,
+      customSuccessMessage: (req, res, responseTime) => {
+        return `${req.method} ${req.url} ${res.statusCode} - ${responseTime}ms`
+      },
+      customErrorMessage: (req, res, err) => {
+        return `${req.method} ${req.url} ${res.statusCode} - ${err.message}`
+      },
+      serializers: {
+        req: (req) => ({
+          method: req.method,
+          url: req.url,
+        }),
+        res: (res) => ({
+          statusCode: res.statusCode,
+        }),
+      },
+    }),
+  )
 
   // Static uploads directory
   app.use('/uploads', express.static(path.join(process.cwd(), 'uploads')))

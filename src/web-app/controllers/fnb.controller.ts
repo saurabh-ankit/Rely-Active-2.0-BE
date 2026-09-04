@@ -21,6 +21,8 @@ import {
   FnbPropertySpecialSlot,
   User,
   UserDetail,
+  Department,
+  UserLocation,
   FnbGlobalSpecialSlot,
   FnbPropertySpecialSlotDish,
 } from '../../models/index.js'
@@ -1571,15 +1573,24 @@ export async function deletePropertyPackage(req: Request, res: Response): Promis
 // ─── From residentOrder.controller.ts ───────────────────────────────────────────
 export async function getResidentOrdersForProperty(req: Request, res: Response): Promise<void> {
   try {
-    const locId = String(req.query.locId || req.params.locId || '')
-    if (!locId) {
-      res.status(400).json({ success: false, message: 'locId is required' })
-      return
+    const authReq = req as AuthenticatedRequest
+    const locId =
+      (req.query.locId as string) ||
+      (req.params.locId as string) ||
+      authReq.locationId ||
+      authReq.user?.defaultLocationId ||
+      undefined
+    const { date, orderStatus, orderType, search, assignedEmployeeId } = req.query
+
+    const whereClause: Record<string, unknown> = {}
+    if (locId) {
+      whereClause.locId = locId
     }
 
-    const { date, orderStatus, orderType, search } = req.query
-
-    const whereClause: Record<string, unknown> = { locId }
+    if (!locId && !assignedEmployeeId) {
+      res.status(400).json({ success: false, message: 'locId or assignedEmployeeId is required' })
+      return
+    }
 
     if (date) {
       whereClause.date = String(date)
@@ -1591,6 +1602,10 @@ export async function getResidentOrdersForProperty(req: Request, res: Response):
 
     if (orderType) {
       whereClause.orderType = String(orderType)
+    }
+
+    if (assignedEmployeeId) {
+      whereClause.assignedEmployeeId = String(assignedEmployeeId)
     }
 
     const orders = await FnbResidentOrder.findAll({
@@ -1661,12 +1676,29 @@ export async function getResidentOrdersForProperty(req: Request, res: Response):
           attributes: ['id', 'name', 'price'],
         },
         {
+          model: FnbGlobalMealSlot,
+          as: 'globalMealSlot',
+          attributes: ['id', 'name', 'code'],
+        },
+        {
           model: FnbResidentOrderDetail,
           as: 'details',
           include: [
             { model: FnbDish, as: 'dish', attributes: ['id', 'name', 'category', 'basePrice', 'imageUrl'] },
             { model: FnbGlobalMealSlot, as: 'globalMealSlot', attributes: ['id', 'name', 'code'] },
             { model: FnbPropertySpecialSlot, as: 'specialMealSlot', attributes: ['id', 'name'] },
+          ],
+        },
+        {
+          model: User,
+          as: 'assignedEmployee',
+          attributes: ['id', 'username', 'email', 'phone'],
+          include: [
+            {
+              model: UserDetail,
+              as: 'profile',
+              attributes: ['id', 'firstName', 'lastName', 'phone', 'employeeCode', 'photoUrl'],
+            },
           ],
         },
         {
@@ -1850,8 +1882,12 @@ export async function assignDeliveryEmployee(req: Request, res: Response): Promi
 export async function completeRoomDelivery(req: Request, res: Response): Promise<void> {
   try {
     const orderId = String(req.params.id)
-    const { photoUrl } = req.body
+    let { photoUrl } = req.body
     const userId = (req as Request & { user?: { id?: string } }).user?.id || null
+
+    if (photoUrl && photoUrl.startsWith('data:')) {
+      photoUrl = await uploadBase64ToS3(photoUrl, 'fnb/deliveries')
+    }
 
     const order = await FnbResidentOrder.findByPk(orderId)
     if (!order) {
@@ -1899,16 +1935,61 @@ export async function completeRoomDelivery(req: Request, res: Response): Promise
 
 export async function getFnbStaffEmployees(req: Request, res: Response): Promise<void> {
   try {
+    const authReq = req as AuthenticatedRequest
+    const locId =
+      (req.query.locId as string) ||
+      (req.query.locationId as string) ||
+      authReq.locationId ||
+      authReq.user?.defaultLocationId ||
+      undefined
+
+    // Find Food & Beverage department
+    const fnbDepartment = await Department.findOne({
+      where: {
+        [Op.or]: [{ code: 'FNB' }, { name: { [Op.like]: '%Food%Beverage%' } }],
+        isActive: true,
+      },
+    })
+
+    if (!fnbDepartment) {
+      res.status(200).json({ success: true, data: [] })
+      return
+    }
+
+    // Find user locations assigned to FNB department
+    const userLocWhere: Record<string, unknown> = {
+      departmentId: fnbDepartment.id,
+      isDeleted: false,
+    }
+    if (locId) {
+      userLocWhere.locId = locId
+    }
+
+    const userLocations = await UserLocation.findAll({
+      where: userLocWhere,
+      attributes: ['userId'],
+    })
+
+    const fnbUserIds = Array.from(new Set(userLocations.map((ul) => ul.userId)))
+
+    if (fnbUserIds.length === 0) {
+      res.status(200).json({ success: true, data: [] })
+      return
+    }
+
     const users = await User.findAll({
       where: {
-        status: 'ACTIVE',
+        id: { [Op.in]: fnbUserIds },
+        isDeleted: false,
+        isActive: true,
       },
-      attributes: ['id', 'username', 'email', 'phone'],
+      attributes: ['id', 'username', 'email', 'phone', 'status', 'isActive'],
       include: [
         {
           model: UserDetail,
-          as: 'detail',
+          as: 'profile',
           attributes: ['id', 'firstName', 'lastName', 'phone', 'employeeCode', 'photoUrl'],
+          required: false,
         },
       ],
     })
