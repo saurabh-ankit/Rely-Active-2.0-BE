@@ -204,7 +204,7 @@ function resolveBlockFloorsAndUnits(blockInput: BlockInputItem): FloorInputItem[
 
 // ─── Create Property ─────────────────────────────────────────────────────────
 
-export const createProperty = async (req: Request, res: Response, next: NextFunction) => {
+export const createProperty = async (req: Request, res: Response, _next: NextFunction) => {
   try {
     const {
       companyId,
@@ -390,7 +390,8 @@ export const createProperty = async (req: Request, res: Response, next: NextFunc
       data: result,
     })
   } catch (error) {
-    next(error)
+    console.error('CREATE PROPERTY ERROR:', error)
+    return res.status(500).json({ success: false, error: (error as Error).message, stack: (error as Error).stack })
   }
 }
 

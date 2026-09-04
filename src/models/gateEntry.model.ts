@@ -1,14 +1,14 @@
 import { DataTypes, Optional } from 'sequelize'
 import sequelize from '../config/db/index.js'
 import { BaseAttributes, BaseModel, baseModelColumns } from './base.model.js'
-import { VisitorType } from './gateInvite.model.js'
+import { VisitorType } from './gatePreapproved.model.js'
 
-export type EntrySource = 'Invite' | 'Walkin'
+export type EntrySource = 'Preapproved' | 'Walkin'
 export type EntryStatus = 'PendingApproval' | 'Approved' | 'Rejected' | 'Inside' | 'Completed'
 
 export interface GateEntryAttributes extends BaseAttributes {
   locId: string
-  inviteId?: string | null
+  preapprovedId?: string | null
   entrySource: EntrySource
   visitorType: VisitorType
   visitorName: string
@@ -21,9 +21,7 @@ export interface GateEntryAttributes extends BaseAttributes {
   clockedOutBy?: string | null
   approvedBy?: string | null
   vehicleNumber?: string | null
-  additionalDetails?: Record<string, unknown> | null
-  numberOfPeople?: number | null
-  photo?: string | null
+  visitorPhotos?: string[] | null
   notes?: string | null
   company?: string | null
   personToMeet?: string | null
@@ -32,7 +30,7 @@ export interface GateEntryAttributes extends BaseAttributes {
 export type GateEntryCreationAttributes = Optional<
   GateEntryAttributes,
   | 'id'
-  | 'inviteId'
+  | 'preapprovedId'
   | 'visitorPhone'
   | 'unitId'
   | 'status'
@@ -42,9 +40,7 @@ export type GateEntryCreationAttributes = Optional<
   | 'clockedOutBy'
   | 'approvedBy'
   | 'vehicleNumber'
-  | 'additionalDetails'
-  | 'numberOfPeople'
-  | 'photo'
+  | 'visitorPhotos'
   | 'notes'
   | 'company'
   | 'personToMeet'
@@ -59,7 +55,7 @@ export class GateEntry
   implements GateEntryAttributes
 {
   declare locId: string
-  declare inviteId: string | null
+  declare preapprovedId: string | null
   declare entrySource: EntrySource
   declare visitorType: VisitorType
   declare visitorName: string
@@ -72,9 +68,7 @@ export class GateEntry
   declare clockedOutBy: string | null
   declare approvedBy: string | null
   declare vehicleNumber: string | null
-  declare additionalDetails: Record<string, unknown> | null
-  declare numberOfPeople: number | null
-  declare photo: string | null
+  declare visitorPhotos: string[] | null
   declare notes: string | null
   declare company: string | null
   declare personToMeet: string | null
@@ -87,16 +81,16 @@ GateEntry.init(
       type: DataTypes.UUID,
       allowNull: false,
     },
-    inviteId: {
+    preapprovedId: {
       type: DataTypes.UUID,
       allowNull: true,
     },
     entrySource: {
-      type: DataTypes.ENUM('Invite', 'Walkin'),
+      type: DataTypes.ENUM('Preapproved', 'Walkin'),
       allowNull: false,
     },
     visitorType: {
-      type: DataTypes.ENUM('Guest', 'Delivery', 'Cab', 'Service', 'Material', 'Office'),
+      type: DataTypes.ENUM('Guest', 'Delivery', 'Cab', 'Office', 'Other'),
       allowNull: false,
     },
     visitorName: {
@@ -139,16 +133,8 @@ GateEntry.init(
       type: DataTypes.STRING(100),
       allowNull: true,
     },
-    additionalDetails: {
+    visitorPhotos: {
       type: DataTypes.JSON,
-      allowNull: true,
-    },
-    numberOfPeople: {
-      type: DataTypes.INTEGER,
-      allowNull: true,
-    },
-    photo: {
-      type: DataTypes.TEXT,
       allowNull: true,
     },
     notes: {

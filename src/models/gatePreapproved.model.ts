@@ -2,43 +2,47 @@ import { DataTypes, Optional } from 'sequelize'
 import sequelize from '../config/db/index.js'
 import { BaseAttributes, BaseModel, baseModelColumns } from './base.model.js'
 
-export type VisitorType = 'Guest' | 'Delivery' | 'Cab' | 'Service' | 'Material' | 'Office'
-export type InviteStatus = 'Pending' | 'Scanned' | 'Expired' | 'Cancelled'
+export type VisitorType = 'Guest' | 'Delivery' | 'Cab' | 'Office' | 'Other'
+export type PreapprovedStatus = 'Pending' | 'Scanned' | 'Expired' | 'Cancelled' | 'Rejected'
 
-export interface GateInviteAttributes extends BaseAttributes {
+export interface GatePreapprovedAttributes extends BaseAttributes {
   locId: string
   unitId?: string | null
   residentId?: string | null
   visitorName: string
   visitorPhone?: string | null
   visitorType: VisitorType
-  expectedDate?: Date | null
-  expectedTime?: string | null
+  startDate?: Date | null
+  startTime?: string | null
   qrCode?: string | null
   qrCodeImage?: string | null
-  status: InviteStatus
-  numberOfPeople?: number | null
-  photo?: string | null
+  status: PreapprovedStatus
+  visitorPhotos?: string[] | null
   vehicleNumber?: string | null
+  scheduleType?: 'ONCE' | 'FREQUENT' | null
+  endDate?: Date | null
+  endTime?: string | null
   notes?: string | null
   company?: string | null
   personToMeet?: string | null
 }
 
-export type GateInviteCreationAttributes = Optional<
-  GateInviteAttributes,
+export type GatePreapprovedCreationAttributes = Optional<
+  GatePreapprovedAttributes,
   | 'id'
   | 'unitId'
   | 'residentId'
   | 'visitorPhone'
-  | 'expectedDate'
-  | 'expectedTime'
+  | 'startDate'
+  | 'startTime'
   | 'qrCode'
   | 'qrCodeImage'
   | 'status'
-  | 'numberOfPeople'
-  | 'photo'
+  | 'visitorPhotos'
   | 'vehicleNumber'
+  | 'scheduleType'
+  | 'endDate'
+  | 'endTime'
   | 'notes'
   | 'company'
   | 'personToMeet'
@@ -48,9 +52,9 @@ export type GateInviteCreationAttributes = Optional<
   | 'updatedAt'
 >
 
-export class GateInvite
-  extends BaseModel<GateInviteAttributes, GateInviteCreationAttributes>
-  implements GateInviteAttributes
+export class GatePreapproved
+  extends BaseModel<GatePreapprovedAttributes, GatePreapprovedCreationAttributes>
+  implements GatePreapprovedAttributes
 {
   declare locId: string
   declare unitId: string | null
@@ -58,20 +62,22 @@ export class GateInvite
   declare visitorName: string
   declare visitorPhone: string | null
   declare visitorType: VisitorType
-  declare expectedDate: Date | null
-  declare expectedTime: string | null
+  declare startDate: Date | null
+  declare startTime: string | null
   declare qrCode: string | null
   declare qrCodeImage: string | null
-  declare status: InviteStatus
-  declare numberOfPeople: number | null
-  declare photo: string | null
+  declare status: PreapprovedStatus
+  declare visitorPhotos: string[] | null
   declare vehicleNumber: string | null
+  declare scheduleType: 'ONCE' | 'FREQUENT' | null
+  declare endDate: Date | null
+  declare endTime: string | null
   declare notes: string | null
   declare company: string | null
   declare personToMeet: string | null
 }
 
-GateInvite.init(
+GatePreapproved.init(
   {
     ...baseModelColumns,
     locId: {
@@ -95,14 +101,14 @@ GateInvite.init(
       allowNull: true,
     },
     visitorType: {
-      type: DataTypes.ENUM('Guest', 'Delivery', 'Cab', 'Service', 'Material', 'Office'),
+      type: DataTypes.ENUM('Guest', 'Delivery', 'Cab', 'Office', 'Other'),
       allowNull: false,
     },
-    expectedDate: {
+    startDate: {
       type: DataTypes.DATEONLY,
       allowNull: true,
     },
-    expectedTime: {
+    startTime: {
       type: DataTypes.TIME,
       allowNull: true,
     },
@@ -115,15 +121,11 @@ GateInvite.init(
       allowNull: true,
     },
     status: {
-      type: DataTypes.ENUM('Pending', 'Scanned', 'Expired', 'Cancelled'),
+      type: DataTypes.ENUM('Pending', 'Scanned', 'Expired', 'Cancelled', 'Rejected'),
       defaultValue: 'Pending',
     },
-    numberOfPeople: {
-      type: DataTypes.INTEGER,
-      allowNull: true,
-    },
-    photo: {
-      type: DataTypes.TEXT,
+    visitorPhotos: {
+      type: DataTypes.JSON,
       allowNull: true,
     },
     vehicleNumber: {
@@ -132,6 +134,18 @@ GateInvite.init(
     },
     notes: {
       type: DataTypes.TEXT,
+      allowNull: true,
+    },
+    scheduleType: {
+      type: DataTypes.ENUM('ONCE', 'FREQUENT'),
+      allowNull: true,
+    },
+    endDate: {
+      type: DataTypes.DATE,
+      allowNull: true,
+    },
+    endTime: {
+      type: DataTypes.TIME,
       allowNull: true,
     },
     company: {
@@ -145,9 +159,9 @@ GateInvite.init(
   },
   {
     sequelize,
-    tableName: 'gate_invites',
+    tableName: 'gate_preapproved',
     timestamps: true,
   },
 )
 
-export default GateInvite
+export default GatePreapproved

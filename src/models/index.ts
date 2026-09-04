@@ -1,3 +1,4 @@
+import { GuestMaster } from './guestMaster.model.js'
 import { BaseModel, baseModelColumns, type BaseAttributes, type BaseCreationAttributes } from './base.model.js'
 import { Company } from './company.model.js'
 import { CompanyCustomField } from './companyCustomField.model.js'
@@ -43,7 +44,7 @@ import { TicketCategory } from './ticketCategory.model.js'
 import { TicketSubCategory } from './ticketSubCategory.model.js'
 import { Ticket } from './ticket.model.js'
 import { TicketActivityLog } from './ticketActivityLog.model.js'
-import { GateInvite } from './gateInvite.model.js'
+import { GatePreapproved } from './gatePreapproved.model.js'
 import { GateEntry } from './gateEntry.model.js'
 
 // ── Company associations ────────────────────────────────────────────────────
@@ -272,14 +273,14 @@ TicketActivityLog.belongsTo(Ticket, { foreignKey: 'ticketId', as: 'ticket' })
 TicketActivityLog.belongsTo(User, { foreignKey: 'performedByUserId', as: 'performedByUser' })
 
 // ── Gate Management associations ───────────────────────────────────────────
-Property.hasMany(GateInvite, { foreignKey: 'locId', as: 'gateInvites' })
-GateInvite.belongsTo(Property, { foreignKey: 'locId', as: 'property' })
+Property.hasMany(GatePreapproved, { foreignKey: 'locId', as: 'gatePreapproveds' })
+GatePreapproved.belongsTo(Property, { foreignKey: 'locId', as: 'property' })
 
-PropertyUnit.hasMany(GateInvite, { foreignKey: 'unitId', as: 'gateInvites' })
-GateInvite.belongsTo(PropertyUnit, { foreignKey: 'unitId', as: 'unit' })
+PropertyUnit.hasMany(GatePreapproved, { foreignKey: 'unitId', as: 'gatePreapproveds' })
+GatePreapproved.belongsTo(PropertyUnit, { foreignKey: 'unitId', as: 'unit' })
 
-Resident.hasMany(GateInvite, { foreignKey: 'residentId', as: 'gateInvites' })
-GateInvite.belongsTo(Resident, { foreignKey: 'residentId', as: 'resident' })
+Resident.hasMany(GatePreapproved, { foreignKey: 'residentId', as: 'gatePreapproveds' })
+GatePreapproved.belongsTo(Resident, { foreignKey: 'residentId', as: 'resident' })
 
 Property.hasMany(GateEntry, { foreignKey: 'locId', as: 'gateEntries' })
 GateEntry.belongsTo(Property, { foreignKey: 'locId', as: 'property' })
@@ -287,14 +288,15 @@ GateEntry.belongsTo(Property, { foreignKey: 'locId', as: 'property' })
 PropertyUnit.hasMany(GateEntry, { foreignKey: 'unitId', as: 'gateEntries' })
 GateEntry.belongsTo(PropertyUnit, { foreignKey: 'unitId', as: 'unit' })
 
-GateInvite.hasOne(GateEntry, { foreignKey: 'inviteId', as: 'entry' })
-GateEntry.belongsTo(GateInvite, { foreignKey: 'inviteId', as: 'invite' })
+GatePreapproved.hasOne(GateEntry, { foreignKey: 'preapprovedId', as: 'entry' })
+GateEntry.belongsTo(GatePreapproved, { foreignKey: 'preapprovedId', as: 'preapproved' })
 
 GateEntry.belongsTo(User, { foreignKey: 'clockedInBy', as: 'clockedInByUser' })
 GateEntry.belongsTo(User, { foreignKey: 'clockedOutBy', as: 'clockedOutByUser' })
 GateEntry.belongsTo(User, { foreignKey: 'approvedBy', as: 'approvedByUser' })
 
 export {
+  GuestMaster,
   BaseModel,
   baseModelColumns,
   type BaseAttributes,
@@ -343,6 +345,6 @@ export {
   TicketSubCategory,
   Ticket,
   TicketActivityLog,
-  GateInvite,
+  GatePreapproved,
   GateEntry,
 }

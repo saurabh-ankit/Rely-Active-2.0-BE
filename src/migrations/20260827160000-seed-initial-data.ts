@@ -448,25 +448,29 @@ export async function up({ context: queryInterface }: { context: QueryInterface 
   const superAdminRoleId = existingRole ? String(existingRole) : null
 
   if (superAdminRoleId) {
-    const defaultLocId = '00000000-0000-0000-0000-000000000000'
-    const userLocExisting = await queryInterface.rawSelect(
-      'user_locations',
-      { where: { userId: superAdminId, roleId: superAdminRoleId } },
-      ['id'],
-    )
-    if (!userLocExisting) {
-      await queryInterface.bulkInsert('user_locations', [
-        {
-          id: randomUUID(),
-          userId: superAdminId,
-          locId: defaultLocId,
-          roleId: superAdminRoleId,
-          isActive: true,
-          isDeleted: false,
-          createdAt: now,
-          updatedAt: now,
-        },
-      ])
+    const propertyIdResult = await queryInterface.rawSelect('properties', {}, ['id'])
+    const defaultLocId = propertyIdResult ? String(propertyIdResult) : null
+
+    if (defaultLocId) {
+      const userLocExisting = await queryInterface.rawSelect(
+        'user_locations',
+        { where: { userId: superAdminId, roleId: superAdminRoleId } },
+        ['id'],
+      )
+      if (!userLocExisting) {
+        await queryInterface.bulkInsert('user_locations', [
+          {
+            id: randomUUID(),
+            userId: superAdminId,
+            locId: defaultLocId,
+            roleId: superAdminRoleId,
+            isActive: true,
+            isDeleted: false,
+            createdAt: now,
+            updatedAt: now,
+          },
+        ])
+      }
     }
   }
 }

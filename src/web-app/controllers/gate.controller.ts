@@ -1,6 +1,6 @@
 import { Request, Response } from 'express'
 import { Op } from 'sequelize'
-import { GateEntry, GateInvite, PropertyUnit } from '../../models/index.js'
+import { GateEntry, GatePreapproved, PropertyUnit } from '../../models/index.js'
 
 export const getDashboardStats = async (req: Request, res: Response) => {
   try {
@@ -9,12 +9,12 @@ export const getDashboardStats = async (req: Request, res: Response) => {
     const today = new Date()
     today.setHours(0, 0, 0, 0)
 
-    // Expected = Invites pending today
-    const expected = await GateInvite.count({
+    // Expected = Preapproved pending today
+    const expected = await GatePreapproved.count({
       where: {
         locId,
         status: 'Pending',
-        createdAt: { [Op.gte]: today }, // Simplification, could be expectedDate
+        createdAt: { [Op.gte]: today }, // Simplification, could be startDate
       },
     })
 
@@ -60,28 +60,108 @@ export const getDashboardStats = async (req: Request, res: Response) => {
 export const getEntries = async (req: Request, res: Response) => {
   try {
     const { locId } = req.params
-    const entries = await GateEntry.findAll({
-      where: { locId },
+    const { page = '1', limit = '10', date, status, visitorType } = req.query
+
+    const pageNum = parseInt(page as string, 10)
+    const limitNum = parseInt(limit as string, 10)
+    const offset = (pageNum - 1) * limitNum
+
+    const whereClause: Record<string, unknown> = { locId }
+
+    if (status) {
+      whereClause.status = status
+    }
+
+    if (visitorType) {
+      whereClause.visitorType = visitorType
+    }
+
+    if (date) {
+      const startDate = new Date(date as string)
+      startDate.setHours(0, 0, 0, 0)
+
+      const endDate = new Date(startDate)
+      endDate.setDate(endDate.getDate() + 1)
+
+      whereClause.createdAt = {
+        [Op.gte]: startDate,
+        [Op.lt]: endDate,
+      }
+    }
+
+    const { rows, count } = await GateEntry.findAndCountAll({
+      where: whereClause,
       include: [{ model: PropertyUnit, as: 'unit', attributes: ['id', 'unit_number'] }],
       order: [['createdAt', 'DESC']],
+      limit: limitNum,
+      offset,
     })
-    return res.status(200).json({ success: true, data: entries })
+
+    return res.status(200).json({
+      success: true,
+      data: {
+        rows,
+        count,
+        page: pageNum,
+        totalPages: Math.ceil(count / limitNum),
+      },
+    })
   } catch (error) {
     return res.status(500).json({ success: false, message: 'Error fetching entries', error })
   }
 }
 
-export const getInvites = async (req: Request, res: Response) => {
+export const getPreapproved = async (req: Request, res: Response) => {
   try {
     const { locId } = req.params
-    const invites = await GateInvite.findAll({
-      where: { locId },
+    const { page = '1', limit = '10', date, status, visitorType } = req.query
+
+    const pageNum = parseInt(page as string, 10)
+    const limitNum = parseInt(limit as string, 10)
+    const offset = (pageNum - 1) * limitNum
+
+    const whereClause: Record<string, unknown> = { locId }
+
+    if (status) {
+      whereClause.status = status
+    }
+
+    if (visitorType) {
+      whereClause.visitorType = visitorType
+    }
+
+    if (date) {
+      const startDate = new Date(date as string)
+      startDate.setHours(0, 0, 0, 0)
+
+      const endDate = new Date(startDate)
+      endDate.setDate(endDate.getDate() + 1)
+
+      whereClause.createdAt = {
+        [Op.gte]: startDate,
+        [Op.lt]: endDate,
+      }
+    }
+
+    const { rows, count } = await GatePreapproved.findAndCountAll({
+      where: whereClause,
       include: [{ model: PropertyUnit, as: 'unit', attributes: ['id', 'unit_number'] }],
       order: [['createdAt', 'DESC']],
+      limit: limitNum,
+      offset,
     })
-    return res.status(200).json({ success: true, data: invites })
+
+    return res.status(200).json({
+      success: true,
+      data: {
+        rows,
+        count,
+        page: pageNum,
+        totalPages: Math.ceil(count / limitNum),
+      },
+    })
   } catch (error) {
-    return res.status(500).json({ success: false, message: 'Error fetching invites', error })
+    return res.status(500).json({ success: false, message: 'Error fetching preapproved', error })
   }
 }
 
