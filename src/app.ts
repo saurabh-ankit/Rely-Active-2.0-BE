@@ -10,7 +10,7 @@ import { notFound } from './middlewares/error/notFound.js'
 import { apiRouter } from './web-app/routes/index.js'
 import { mobileApiRouter } from './mobile-app/routes/index.js'
 
-const corsOrigins = (process.env.CORS_ORIGINS || 'http://localhost:5173,http://localhost:5174')
+const corsOrigins = (process.env.CORS_ORIGINS ||"*" || 'http://localhost:5173,http://localhost:5174')
   .split(',')
   .map((origin) => origin.trim())
 
