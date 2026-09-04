@@ -260,6 +260,7 @@ FnbResidentOrder.belongsTo(Resident, { foreignKey: 'residentId', as: 'resident' 
 FnbResidentOrder.belongsTo(ResidentFamilyMember, { foreignKey: 'familyMemberId', as: 'familyMember' })
 FnbResidentOrder.belongsTo(FnbResidentPackage, { foreignKey: 'residentPackageId', as: 'residentPackage' })
 FnbResidentOrder.belongsTo(FnbPropertySpecialSlot, { foreignKey: 'specialMealSlotId', as: 'specialMealSlot' })
+FnbResidentOrder.belongsTo(FnbGlobalMealSlot, { foreignKey: 'mealSlotId', as: 'globalMealSlot' })
 FnbResidentOrder.hasMany(FnbResidentOrderDetail, { foreignKey: 'orderId', as: 'details' })
 
 FnbResidentOrderDetail.belongsTo(FnbResidentOrder, { foreignKey: 'orderId', as: 'order' })
@@ -272,6 +273,7 @@ FnbResidentOrderDetail.belongsTo(FnbPropertySpecialSlotDish, {
 })
 
 FnbResidentOrder.hasOne(FnbFoodDelivery, { foreignKey: 'orderId', as: 'delivery' })
+FnbResidentOrder.belongsTo(User, { foreignKey: 'assignedEmployeeId', as: 'assignedEmployee' })
 FnbFoodDelivery.belongsTo(FnbResidentOrder, { foreignKey: 'orderId', as: 'order' })
 FnbFoodDelivery.belongsTo(User, { foreignKey: 'employeeId', as: 'employee' })
 FnbFoodDelivery.belongsTo(UserDetail, { foreignKey: 'employeeId', targetKey: 'userId', as: 'employeeDetail' })

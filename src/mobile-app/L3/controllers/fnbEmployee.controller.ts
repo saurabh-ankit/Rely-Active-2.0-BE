@@ -10,6 +10,7 @@ import {
   PropertyFloor,
   PropertyBlock,
 } from '../../../models/index.js'
+import { uploadBase64ToS3 } from '../../../middlewares/s3/index.js'
 
 /**
  * Get all assigned deliveries for food department employee
@@ -144,8 +145,12 @@ export async function updateDeliveryStatus(req: Request, res: Response): Promise
 export async function completeDeliveryWithProof(req: Request, res: Response): Promise<void> {
   try {
     const deliveryId = String(req.params.id)
-    const { photoUrl } = req.body
+    let { photoUrl } = req.body
     const userId = (req as Request & { user?: { id?: string } }).user?.id || null
+
+    if (photoUrl && photoUrl.startsWith('data:')) {
+      photoUrl = await uploadBase64ToS3(photoUrl, 'fnb/deliveries')
+    }
 
     const delivery = await FnbFoodDelivery.findByPk(deliveryId)
     if (!delivery) {
