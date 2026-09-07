@@ -59,6 +59,7 @@ import { EventRegistration } from './eventRegistration.model.js'
 import { EventRequest } from './eventRequest.model.js'
 import { EventGlobalService } from './eventGlobalService.model.js'
 import { EventGlobalServiceProperty } from './eventGlobalServiceProperty.model.js'
+import { FnbFoodAttendance } from './fnbFoodAttendance.model.js'
 
 // ── F&B Meal Slot associations ──────────────────────────────────────────────
 FnbGlobalMealSlot.hasMany(FnbPropertyMealSlot, { foreignKey: 'globalMealSlotId', as: 'propertyMealSlots' })
@@ -372,8 +373,17 @@ EventRegistration.belongsTo(Event, { foreignKey: 'eventId', as: 'event' })
 Resident.hasMany(EventRegistration, { foreignKey: 'residentId', as: 'eventRegistrations' })
 EventRegistration.belongsTo(Resident, { foreignKey: 'residentId', as: 'resident' })
 
-Property.hasMany(EventRegistration, { foreignKey: 'locationId', as: 'eventRegistrations' })
-EventRegistration.belongsTo(Property, { foreignKey: 'locationId', as: 'location' })
+// ── F&B Food Attendance Associations ───────────────────────────────────────
+FnbFoodAttendance.belongsTo(Property, { foreignKey: 'locId', as: 'property' })
+FnbFoodAttendance.belongsTo(PropertyUnit, { foreignKey: 'unitId', as: 'unit' })
+FnbFoodAttendance.belongsTo(Resident, { foreignKey: 'residentId', as: 'resident' })
+FnbFoodAttendance.belongsTo(ResidentFamilyMember, { foreignKey: 'familyMemberId', as: 'familyMember' })
+FnbFoodAttendance.belongsTo(FnbPropertyMealSlot, { foreignKey: 'mealSlotId', as: 'mealSlot' })
+FnbFoodAttendance.belongsTo(User, { foreignKey: 'createdBy', as: 'creator' })
+
+FnbPropertyMealSlot.hasMany(FnbFoodAttendance, { foreignKey: 'mealSlotId', as: 'foodAttendances' })
+Resident.hasMany(FnbFoodAttendance, { foreignKey: 'residentId', as: 'foodAttendances' })
+ResidentFamilyMember.hasMany(FnbFoodAttendance, { foreignKey: 'familyMemberId', as: 'foodAttendances' })
 
 EventVenue.hasMany(EventRequest, { foreignKey: 'venueId', as: 'eventRequests' })
 EventRequest.belongsTo(EventVenue, { foreignKey: 'venueId', as: 'venue' })
@@ -452,4 +462,5 @@ export {
   EventRequest,
   EventGlobalService,
   EventGlobalServiceProperty,
+  FnbFoodAttendance,
 }

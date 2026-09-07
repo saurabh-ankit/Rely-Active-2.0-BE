@@ -1,5 +1,7 @@
 import { Request, Response } from 'express'
+import sequelize from '../../config/db/index.js'
 import {
+  FnbFoodAttendance,
   FnbDish,
   FnbPropertyDish,
   FnbGlobalMealSlot,
@@ -212,7 +214,12 @@ export async function updateDish(req: AuthenticatedRequest, res: Response): Prom
 
 export async function getPropertyDishes(req: Request, res: Response): Promise<void> {
   try {
-    const locId = req.params.locId as string
+    const locId =
+      (req.params.locId as string) ||
+      (req.query.locId as string) ||
+      (req.query.locationId as string) ||
+      (req.headers['x-location-id'] as string) ||
+      (req.headers['x-property-id'] as string)
     const propertyDishes = await FnbPropertyDish.findAll({
       where: { locId, isAvailable: true },
       include: [{ model: FnbDish, as: 'dish' }],
@@ -1204,7 +1211,9 @@ export async function updateMenuSchedule(req: AuthenticatedRequest, res: Respons
 export async function getPropertyMealSlots(req: Request, res: Response): Promise<void> {
   try {
     const locId =
+      (req.params.locId as string) ||
       (req.query.locId as string) ||
+      (req.query.locationId as string) ||
       (req.headers['x-location-id'] as string) ||
       (req.headers['x-property-id'] as string)
 
@@ -1349,7 +1358,12 @@ export async function updatePropertyMealSlotOverride(req: Request, res: Response
 // ─── From propertyPackage.controller.ts ───────────────────────────────────────────
 export async function getPropertyPackages(req: Request, res: Response): Promise<void> {
   try {
-    const locId = req.params.locId as string
+    const locId =
+      (req.params.locId as string) ||
+      (req.query.locId as string) ||
+      (req.query.locationId as string) ||
+      (req.headers['x-location-id'] as string) ||
+      (req.headers['x-property-id'] as string)
     const search = typeof req.query.search === 'string' ? req.query.search.trim().toLowerCase() : ''
 
     const packages = await FnbPropertyPackage.findAll({
@@ -1836,16 +1850,26 @@ export async function assignDeliveryEmployee(req: Request, res: Response): Promi
 
     const chargeNum = Math.max(0, Number(deliveryCharge || 0))
 
+    // Determine food subtotal (for package covered or room service personal meals covered in package, food subtotal is 0)
+    let foodSubtotal = 0
+    if (!order.isPackageCovered) {
+      const details = await FnbResidentOrderDetail.findAll({ where: { orderId: order.id } })
+      if (details && details.length > 0) {
+        foodSubtotal = details.reduce((sum, d) => sum + Number(d.amount || 0), 0)
+      } else {
+        const prevDeliveryCharge = Number(order.deliveryCharge || 0)
+        const prevTotal = Number(order.totalAmount || 0)
+        foodSubtotal = Math.max(0, prevTotal - prevDeliveryCharge)
+      }
+    }
+
     // Update order status & delivery charge
     order.orderStatus = 'delivering_to_room'
     order.deliveryCharge = chargeNum
     order.assignedEmployeeId = employeeId || null
     order.updatedBy = userId
+    order.totalAmount = foodSubtotal + chargeNum
 
-    // Adjust totalAmount if delivery charge was added
-    if (chargeNum > 0) {
-      order.totalAmount = Number(order.totalAmount || 0) + chargeNum
-    }
     await order.save()
 
     // Upsert FnbFoodDelivery record
@@ -2549,7 +2573,12 @@ export async function assignGlobalSpecialSlotLocations(req: Request, res: Respon
 
 export async function getPropertySpecialSlots(req: Request, res: Response): Promise<void> {
   try {
-    const { locId } = req.query
+    const locId =
+      (req.params.locId as string) ||
+      (req.query.locId as string) ||
+      (req.query.locationId as string) ||
+      (req.headers['x-location-id'] as string) ||
+      (req.headers['x-property-id'] as string)
     if (!locId) {
       res.status(400).json({ success: false, message: 'locId is required' })
       return
@@ -2697,5 +2726,1054 @@ export async function syncPropertySpecialSlotDishes(req: Request, res: Response)
   } catch (error) {
     console.error('Error syncing special slot dishes:', error)
     res.status(500).json({ success: false, message: 'Failed to sync special slot dishes' })
+  }
+}
+
+// ─── Food Attendance Controllers ─────────────────────────────────────────────
+
+function getUnitFullLocation(unit: PropertyUnit | undefined | null): string {
+  if (!unit) return 'N/A'
+  const parts: string[] = []
+  const blockName = unit.floor?.block?.block_name
+  if (blockName) {
+    parts.push(
+      blockName.toLowerCase().startsWith('block') || blockName.toLowerCase().startsWith('tower')
+        ? blockName
+        : `Block ${blockName}`,
+    )
+  }
+  const floorName =
+    unit.floor?.floor_name || (unit.floor?.floor_number !== undefined ? `Floor ${unit.floor.floor_number}` : '')
+  if (floorName) parts.push(floorName)
+
+  const unitNum = unit.unit_number
+  if (unitNum) {
+    parts.push(unitNum.toLowerCase().startsWith('flat') ? unitNum : `Flat ${unitNum}`)
+  }
+  return parts.length > 0 ? parts.join(' • ') : 'N/A'
+}
+
+export const getResidingMembersAndFlats = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { locId, date: dateQuery, search, mealSlotKey } = req.query
+    if (!locId) {
+      res.status(400).json({ success: false, message: 'Property locId is required' })
+      return
+    }
+
+    const targetDate = typeof dateQuery === 'string' && dateQuery ? dateQuery : new Date().toISOString().split('T')[0]!
+
+    // 1. Fetch active residing primary residents for property
+    const residents = await Resident.findAll({
+      where: {
+        locId: String(locId),
+        isResiding: true,
+        isDeleted: false,
+      },
+      include: [
+        {
+          model: PropertyUnit,
+          as: 'unit',
+          include: [
+            {
+              model: PropertyFloor,
+              as: 'floor',
+              include: [{ model: PropertyBlock, as: 'block' }],
+            },
+          ],
+        },
+        {
+          model: FnbResidentPackage,
+          as: 'fnbPackages',
+          where: { status: FnbSubscriptionStatus.ACTIVE },
+          required: false,
+          include: [
+            {
+              model: FnbPropertyPackage,
+              as: 'propertyPackage',
+              include: [{ model: FnbGlobalPackage, as: 'globalPackage' }],
+            },
+          ],
+        },
+      ],
+    })
+
+    // 2. Fetch active residing family members for property
+    const familyMembers = await ResidentFamilyMember.findAll({
+      where: {
+        isResiding: true,
+        isDeleted: false,
+      },
+      include: [
+        {
+          model: Resident,
+          as: 'resident',
+          where: {
+            locId: String(locId),
+            isDeleted: false,
+          },
+          required: true,
+          include: [
+            {
+              model: PropertyUnit,
+              as: 'unit',
+              include: [
+                {
+                  model: PropertyFloor,
+                  as: 'floor',
+                  include: [{ model: PropertyBlock, as: 'block' }],
+                },
+              ],
+            },
+          ],
+        },
+        {
+          model: FnbResidentPackage,
+          as: 'fnbPackages',
+          where: { status: FnbSubscriptionStatus.ACTIVE },
+          required: false,
+          include: [
+            {
+              model: FnbPropertyPackage,
+              as: 'propertyPackage',
+              include: [{ model: FnbGlobalPackage, as: 'globalPackage' }],
+            },
+          ],
+        },
+      ],
+    })
+
+    // 3. Fetch existing attendance records for location & date
+    const attendances = await FnbFoodAttendance.findAll({
+      where: {
+        locId: String(locId),
+        date: targetDate,
+      },
+      include: [
+        {
+          model: User,
+          as: 'creator',
+          attributes: ['id', 'username', 'email'],
+          include: [
+            {
+              model: UserDetail,
+              as: 'profile',
+              attributes: ['firstName', 'lastName', 'employeeCode'],
+            },
+          ],
+        },
+        {
+          model: FnbPropertyMealSlot,
+          as: 'mealSlot',
+          attributes: ['id', 'startTime', 'endTime', 'globalMealSlotId'],
+          include: [
+            {
+              model: FnbGlobalMealSlot,
+              as: 'globalMealSlot',
+              attributes: ['id', 'name', 'startTime', 'endTime'],
+            },
+          ],
+        },
+      ],
+    })
+
+    // Fetch all global meal slots to build ID/name -> slotKey lookup map
+    const globalSlots = await FnbGlobalMealSlot.findAll()
+    const slotLookupMap = new Map<string, string>()
+    globalSlots.forEach((gs) => {
+      const normKey = gs.name.toLowerCase().replace(/\s+/g, '_')
+      slotLookupMap.set(gs.id, normKey)
+      slotLookupMap.set(gs.name.toLowerCase(), normKey)
+    })
+
+    // Helper to extract allowed package meal slots
+    const extractAllowedMealSlots = (fnbPackages?: FnbResidentPackage[]): string[] => {
+      if (!fnbPackages || fnbPackages.length === 0) return []
+      const activePkg = fnbPackages[0]
+      const included = activePkg?.propertyPackage?.globalPackage?.includedMealSlots
+      if (Array.isArray(included) && included.length > 0) {
+        const slotKeys: string[] = []
+        included.forEach((slotItem) => {
+          const rawStr = String(slotItem).toLowerCase()
+          const mappedKey = slotLookupMap.get(slotItem) || slotLookupMap.get(rawStr)
+          const keyToAdd = mappedKey || rawStr.replace(/\s+/g, '_')
+          if (!slotKeys.includes(keyToAdd)) {
+            slotKeys.push(keyToAdd)
+          }
+        })
+        return slotKeys
+      }
+      return ['breakfast', 'lunch', 'evening_snacks', 'dinner']
+    }
+
+    const currentSlotKey =
+      typeof mealSlotKey === 'string' && mealSlotKey.trim() ? mealSlotKey.trim().toLowerCase() : 'breakfast'
+
+    // Map primary residents
+    const mappedResidents = residents.map((r: Resident) => {
+      const fnbPackages = r.fnbPackages
+      const hasPkg = Boolean(fnbPackages && fnbPackages.length > 0)
+      const allowedSlots = extractAllowedMealSlots(fnbPackages)
+      const memberAttendances = attendances.filter((a: FnbFoodAttendance) => {
+        const resId = a.residentId || (a as unknown as Record<string, unknown>).resident_id
+        return Boolean(resId && r.id && String(resId).toLowerCase() === String(r.id).toLowerCase())
+      })
+      const plainMemberAttendances = memberAttendances.map((a: FnbFoodAttendance) => {
+        const plain = (typeof a.get === 'function' ? a.get({ plain: true }) : a) as unknown as Record<string, unknown>
+        let mKey = (plain.mealSlotKey || plain.meal_slot_key) as string | undefined
+        if (!mKey || mKey === 'slot') {
+          const globalMealSlot = plain.globalMealSlot as Record<string, unknown> | undefined
+          const mealSlot = plain.mealSlot as Record<string, unknown> | undefined
+          const mealSlotGlobal = mealSlot?.globalMealSlot as Record<string, unknown> | undefined
+          const gName = (
+            (globalMealSlot?.name as string) ||
+            (mealSlotGlobal?.name as string) ||
+            (mealSlot?.name as string) ||
+            ''
+          ).toLowerCase()
+          if (gName.includes('break') || gName.includes('fast') || gName.includes('morn')) mKey = 'breakfast'
+          else if (gName.includes('lunch') || gName.includes('noon')) mKey = 'lunch'
+          else if (gName.includes('snack') && !gName.includes('night') && !gName.includes('mid'))
+            mKey = 'evening_snacks'
+          else if (gName.includes('dinner') || gName.includes('dinn')) mKey = 'dinner'
+          else if (gName.includes('night') || gName.includes('mid') || gName.includes('late')) mKey = 'midnight_snacks'
+          else if (gName) mKey = gName.replace(/\s+/g, '_')
+          else if (plain.mealSlotId || plain.meal_slot_id)
+            mKey = slotLookupMap.get(String(plain.mealSlotId || plain.meal_slot_id)) || ''
+        }
+        return {
+          ...plain,
+          id: plain.id,
+          locId: plain.locId || plain.loc_id,
+          residentId: plain.residentId || plain.resident_id,
+          familyMemberId: plain.familyMemberId || plain.family_member_id,
+          mealSlotId: plain.mealSlotId || plain.meal_slot_id,
+          mealSlotKey: mKey,
+          status: plain.status,
+          attended: plain.status === 'attended',
+          attendedAt: plain.attendedAt || plain.createdAt || plain.created_at,
+          createdAt: plain.createdAt || plain.created_at,
+        }
+      })
+      const currentAttendance = plainMemberAttendances.find(
+        (a) => a.mealSlotKey && String(a.mealSlotKey).toLowerCase() === currentSlotKey,
+      )
+      const curAtt = currentAttendance as Record<string, unknown> | undefined
+      const isAttended = Boolean(
+        curAtt && (curAtt.status === 'attended' || curAtt.attended === true || curAtt.attendedAt),
+      )
+      const isSlotIncluded = hasPkg ? allowedSlots.length === 0 || allowedSlots.includes(currentSlotKey) : false
+      const unitObj = r.unit as PropertyUnit | undefined
+      const fullLoc = getUnitFullLocation(unitObj)
+      const uNum = (unitObj?.unit_number || '') as string
+      const creatorObj = curAtt?.creator as Record<string, unknown> | undefined
+      const creatorProfile = creatorObj?.profile as Record<string, unknown> | undefined
+
+      return {
+        id: r.id,
+        memberId: r.id,
+        memberType: 'resident' as const,
+        residentId: r.id,
+        familyMemberId: null,
+        unitId: r.unitId,
+        firstName: r.firstName,
+        lastName: r.lastName || '',
+        name: `${r.firstName} ${r.lastName || ''}`.trim(),
+        fullName: `${r.firstName} ${r.lastName || ''}`.trim(),
+        phone: r.phone || '',
+        photoUrl: r.photoUrl || null,
+        unitNumber: uNum,
+        flatNumber: uNum,
+        locationString: fullLoc,
+        fullLocation: fullLoc,
+        dietaryPreference: fnbPackages?.[0]?.dietaryPreference || 'veg',
+        packageName: fnbPackages?.[0]?.propertyPackage?.globalPackage?.name || null,
+        hasActivePackage: hasPkg,
+        allowedMealSlots: allowedSlots,
+        isSlotIncludedInPackage: isSlotIncluded,
+        attendance: curAtt
+          ? {
+              id: curAtt.id as string,
+              attended: isAttended,
+              attendedAt: (curAtt.attendedAt || curAtt.createdAt) as string | Date,
+              mealSlotKey: (curAtt.mealSlotKey as string) || null,
+              orderId: (curAtt.orderId as string) || null,
+              created_by: (curAtt.createdBy as string) || null,
+              created_by_user: creatorObj
+                ? {
+                    id: creatorObj.id as string,
+                    firstName: (creatorProfile?.firstName || creatorObj.username || '') as string,
+                    lastName: (creatorProfile?.lastName || '') as string,
+                  }
+                : null,
+            }
+          : null,
+        attendances: plainMemberAttendances,
+      }
+    })
+
+    // Map family members
+    const mappedFamilyMembers = familyMembers.map((fm: ResidentFamilyMember) => {
+      const fnbPackages = fm.fnbPackages
+      const hasPkg = Boolean(fnbPackages && fnbPackages.length > 0)
+      const allowedSlots = extractAllowedMealSlots(fnbPackages)
+      const memberAttendances = attendances.filter((a: FnbFoodAttendance) => {
+        const fmId = a.familyMemberId || (a as unknown as Record<string, unknown>).family_member_id
+        return Boolean(fmId && fm.id && String(fmId).toLowerCase() === String(fm.id).toLowerCase())
+      })
+      const plainMemberAttendances = memberAttendances.map((a: FnbFoodAttendance) => {
+        const plain = (typeof a.get === 'function' ? a.get({ plain: true }) : a) as unknown as Record<string, unknown>
+        let mKey = (plain.mealSlotKey || plain.meal_slot_key) as string | undefined
+        if (!mKey || mKey === 'slot') {
+          const globalMealSlot = plain.globalMealSlot as Record<string, unknown> | undefined
+          const mealSlot = plain.mealSlot as Record<string, unknown> | undefined
+          const mealSlotGlobal = mealSlot?.globalMealSlot as Record<string, unknown> | undefined
+          const gName = (
+            (globalMealSlot?.name as string) ||
+            (mealSlotGlobal?.name as string) ||
+            (mealSlot?.name as string) ||
+            ''
+          ).toLowerCase()
+          if (gName.includes('break') || gName.includes('fast') || gName.includes('morn')) mKey = 'breakfast'
+          else if (gName.includes('lunch') || gName.includes('noon')) mKey = 'lunch'
+          else if (gName.includes('snack') && !gName.includes('night') && !gName.includes('mid'))
+            mKey = 'evening_snacks'
+          else if (gName.includes('dinner') || gName.includes('dinn')) mKey = 'dinner'
+          else if (gName.includes('night') || gName.includes('mid') || gName.includes('late')) mKey = 'midnight_snacks'
+          else if (gName) mKey = gName.replace(/\s+/g, '_')
+          else if (plain.mealSlotId || plain.meal_slot_id)
+            mKey = slotLookupMap.get(String(plain.mealSlotId || plain.meal_slot_id)) || ''
+        }
+        return {
+          ...plain,
+          id: plain.id,
+          locId: plain.locId || plain.loc_id,
+          residentId: plain.residentId || plain.resident_id,
+          familyMemberId: plain.familyMemberId || plain.family_member_id,
+          mealSlotId: plain.mealSlotId || plain.meal_slot_id,
+          mealSlotKey: mKey,
+          status: plain.status,
+          attended: plain.status === 'attended',
+          attendedAt: plain.attendedAt || plain.createdAt || plain.created_at,
+          createdAt: plain.createdAt || plain.created_at,
+        }
+      })
+      const currentAttendance = plainMemberAttendances.find(
+        (a) => a.mealSlotKey && String(a.mealSlotKey).toLowerCase() === currentSlotKey,
+      )
+      const curAtt = currentAttendance as Record<string, unknown> | undefined
+      const isAttended = Boolean(
+        curAtt && (curAtt.status === 'attended' || curAtt.attended === true || curAtt.attendedAt),
+      )
+      const isSlotIncluded = hasPkg ? allowedSlots.length === 0 || allowedSlots.includes(currentSlotKey) : false
+      const resObj = fm.resident
+      const resUnit = resObj?.unit as PropertyUnit | undefined
+      const fullLoc = getUnitFullLocation(resUnit)
+      const uNum = (resUnit?.unit_number || '') as string
+      const creatorObj = curAtt?.creator as Record<string, unknown> | undefined
+      const creatorProfile = creatorObj?.profile as Record<string, unknown> | undefined
+
+      return {
+        id: fm.id,
+        memberId: fm.id,
+        memberType: 'family' as const,
+        residentId: fm.residentId,
+        familyMemberId: fm.id,
+        unitId: (resUnit?.id as string) || (resObj?.unitId as string) || null,
+        firstName: fm.firstName,
+        lastName: fm.lastName || '',
+        name: `${fm.firstName} ${fm.lastName || ''}`.trim(),
+        fullName: `${fm.firstName} ${fm.lastName || ''}`.trim(),
+        relation: fm.relation || 'Family Member',
+        phone: (fm.phone as string) || (resObj?.phone as string) || '',
+        photoUrl: fm.photoUrl || null,
+        unitNumber: uNum,
+        flatNumber: uNum,
+        locationString: fullLoc,
+        fullLocation: fullLoc,
+        dietaryPreference: fnbPackages?.[0]?.dietaryPreference || 'veg',
+        packageName: fnbPackages?.[0]?.propertyPackage?.globalPackage?.name || null,
+        hasActivePackage: hasPkg,
+        allowedMealSlots: allowedSlots,
+        isSlotIncludedInPackage: isSlotIncluded,
+        attendance: curAtt
+          ? {
+              id: curAtt.id as string,
+              attended: isAttended,
+              attendedAt: (curAtt.attendedAt || curAtt.createdAt) as string | Date,
+              mealSlotKey: (curAtt.mealSlotKey as string) || null,
+              orderId: (curAtt.orderId as string) || null,
+              created_by: (curAtt.createdBy as string) || null,
+              created_by_user: creatorObj
+                ? {
+                    id: creatorObj.id as string,
+                    firstName: (creatorProfile?.firstName || creatorObj.username || '') as string,
+                    lastName: (creatorProfile?.lastName || '') as string,
+                  }
+                : null,
+            }
+          : null,
+        attendances: plainMemberAttendances,
+      }
+    })
+
+    type MemberRecord = (typeof mappedResidents)[number] | (typeof mappedFamilyMembers)[number]
+    let allMembers: MemberRecord[] = [...mappedResidents, ...mappedFamilyMembers]
+
+    // Apply search filter if provided
+    if (typeof search === 'string' && search.trim()) {
+      const q = search.trim().toLowerCase()
+      allMembers = allMembers.filter(
+        (m: MemberRecord) =>
+          String(m.name || '')
+            .toLowerCase()
+            .includes(q) ||
+          String(m.unitNumber || '')
+            .toLowerCase()
+            .includes(q) ||
+          String(m.locationString || '')
+            .toLowerCase()
+            .includes(q) ||
+          String(m.phone || '')
+            .toLowerCase()
+            .includes(q),
+      )
+    }
+
+    // Group members flat-wise (by unitId)
+    const flatMap: Record<
+      string,
+      {
+        unitId: string
+        unitNumber: string
+        flatNumber: string
+        locationString: string
+        fullLocation: string
+        primaryResident: { id?: string; fullName?: string; phone?: string } | null
+        members: Record<string, unknown>[]
+        guestCount: number
+        guestAttendances: Record<string, unknown>[]
+      }
+    > = {}
+
+    // Add guest attendances for target date
+    const plainAttendances = attendances.map((a: FnbFoodAttendance): Record<string, unknown> => {
+      const plain = (typeof a.get === 'function' ? a.get({ plain: true }) : a) as unknown as Record<string, unknown>
+      let mKey = (plain.mealSlotKey || plain.meal_slot_key) as string | undefined
+      if (!mKey || mKey === 'slot') {
+        const globalMealSlot = plain.globalMealSlot as Record<string, unknown> | undefined
+        const gName = ((globalMealSlot?.name as string) || '').toLowerCase()
+        if (gName.includes('break') || gName.includes('fast')) mKey = 'breakfast'
+        else if (gName.includes('lunch')) mKey = 'lunch'
+        else if (gName.includes('snack') && !gName.includes('night') && !gName.includes('mid')) mKey = 'evening_snacks'
+        else if (gName.includes('dinner')) mKey = 'dinner'
+        else if (gName.includes('night') || gName.includes('mid')) mKey = 'midnight_snacks'
+        else if (gName) mKey = gName.replace(/\s+/g, '_')
+        else mKey = 'breakfast'
+      }
+      return {
+        ...plain,
+        mealSlotKey: mKey,
+      }
+    })
+
+    const guestAttendances = plainAttendances.filter((a) => Boolean(a.isGuest || a.is_guest))
+
+    allMembers.forEach((m: MemberRecord) => {
+      const key = (m.unitId as string) || 'unassigned'
+      if (!flatMap[key]) {
+        flatMap[key] = {
+          unitId: key,
+          unitNumber: String(m.unitNumber || ''),
+          flatNumber: String(m.unitNumber || ''),
+          locationString: String(m.locationString || ''),
+          fullLocation: String(m.locationString || ''),
+          primaryResident: null,
+          members: [],
+          guestCount: 0,
+          guestAttendances: [],
+        }
+      }
+      if (m.memberType === 'resident' && !flatMap[key].primaryResident) {
+        flatMap[key].primaryResident = {
+          id: m.residentId as string,
+          fullName: m.fullName as string,
+          phone: m.phone as string,
+        }
+      }
+      flatMap[key].members.push(m as unknown as Record<string, unknown>)
+    })
+
+    guestAttendances.forEach((ga: Record<string, unknown>) => {
+      const key = (ga.unitId || ga.unit_id || 'unassigned') as string
+      const formattedGa = {
+        id: ga.id,
+        locId: ga.locId || ga.loc_id,
+        unitId: ga.unitId || ga.unit_id,
+        date: ga.date,
+        isGuest: true,
+        guestName: ga.guestName || ga.guest_name || 'Guest',
+        guestCount: Number(ga.guestCount || ga.guest_count) || 1,
+        globalMealSlotId:
+          ga.globalMealSlotId ||
+          ga.global_meal_slot_id ||
+          (ga.globalMealSlot as Record<string, unknown> | undefined)?.id ||
+          null,
+        globalMealSlot: ga.globalMealSlot || null,
+        mealSlotKey: ga.mealSlotKey || 'breakfast',
+        orderId: ga.orderId || ga.order_id,
+        status: ga.status || 'attended',
+        remarks: ga.remarks,
+        createdAt: ga.createdAt || ga.created_at,
+        creator: ga.creator,
+      }
+
+      if (flatMap[key]) {
+        flatMap[key].guestAttendances.push(formattedGa as Record<string, unknown>)
+        flatMap[key].guestCount = (flatMap[key].guestCount || 0) + (formattedGa.guestCount || 1)
+      } else {
+        flatMap[key] = {
+          unitId: key,
+          unitNumber: 'Guest Flat',
+          flatNumber: 'Guest Flat',
+          locationString: 'Guest Meals',
+          fullLocation: 'Guest Meals',
+          primaryResident: null,
+          members: [],
+          guestCount: formattedGa.guestCount || 1,
+          guestAttendances: [formattedGa as Record<string, unknown>],
+        }
+      }
+    })
+
+    const flatsList = Object.values(flatMap)
+
+    // Summary counts
+    const totalResidingMembers = allMembers.length
+    const totalPackageHolders = allMembers.filter((m: MemberRecord) => m.hasActivePackage).length
+    const totalDinedInToday = attendances.filter((a: FnbFoodAttendance) => a.status === 'attended' && !a.isGuest).length
+    const totalGuestDinedInToday = guestAttendances
+      .filter((a) => a.status === 'attended')
+      .reduce((sum: number, g) => sum + (Number(g.guestCount || g.guest_count) || 1), 0)
+
+    res.json({
+      success: true,
+      data: {
+        date: targetDate,
+        summary: {
+          totalResidingMembers,
+          totalPackageHolders,
+          attendedCount: totalDinedInToday,
+          totalDinedInToday,
+          absentCount: Math.max(0, totalResidingMembers - totalDinedInToday),
+          pendingCount: Math.max(0, totalPackageHolders - totalDinedInToday),
+          guestMealsCount: totalGuestDinedInToday,
+          totalGuestDinedInToday,
+        },
+        members: allMembers,
+        flats: flatsList,
+        attendances,
+      },
+    })
+  } catch (error) {
+    console.error('Error fetching residing members & food attendances:', error)
+    res.status(500).json({ success: false, message: 'Failed to fetch food attendance data', error: String(error) })
+  }
+}
+
+export const markAttendanceAndCreateOrder = async (req: Request, res: Response): Promise<void> => {
+  const transaction = await sequelize.transaction()
+  try {
+    const {
+      locId,
+      date: dateInput,
+      residentId: reqResidentId,
+      familyMemberId: reqFamilyMemberId,
+      memberId,
+      memberType,
+      unitId,
+      mealSlotId,
+      globalMealSlotId: reqGlobalMealSlotId,
+      mealSlotKey: reqMealSlotKey,
+      status: reqStatus,
+      attended,
+      remarks,
+    } = req.body
+    const loggedUserId = (req as AuthenticatedRequest).user?.id || null
+
+    let residentId = reqResidentId || null
+    let familyMemberId = reqFamilyMemberId || null
+
+    if (!residentId && !familyMemberId && memberId) {
+      if (memberType === 'family' || memberType === 'family_member') {
+        familyMemberId = memberId
+      } else {
+        residentId = memberId
+      }
+    }
+
+    if (!residentId && !familyMemberId) {
+      await transaction.rollback()
+      res.status(400).json({ success: false, message: 'Either residentId or familyMemberId is required' })
+      return
+    }
+
+    // Resolve property mealSlot, mealSlotKey, and globalMealSlotId
+    let resolvedSlotKey = reqMealSlotKey ? String(reqMealSlotKey).toLowerCase() : ''
+    let resolvedGlobalSlotId = reqGlobalMealSlotId || null
+    let targetPSlot: FnbPropertyMealSlot | null = null
+
+    const slotIdToFind = mealSlotId || reqGlobalMealSlotId
+    if (slotIdToFind) {
+      targetPSlot = await FnbPropertyMealSlot.findByPk(slotIdToFind, {
+        include: [{ model: FnbGlobalMealSlot, as: 'globalMealSlot' }],
+        transaction,
+      })
+    }
+
+    if (!targetPSlot) {
+      const slotToMatch = (resolvedSlotKey || reqMealSlotKey || reqGlobalMealSlotId || 'breakfast')
+        .toString()
+        .toLowerCase()
+        .replace(/[^a-z0-9]/g, '')
+      const pSlots = await FnbPropertyMealSlot.findAll({
+        where: { locId, isActive: true },
+        include: [{ model: FnbGlobalMealSlot, as: 'globalMealSlot' }],
+        transaction,
+      })
+
+      targetPSlot =
+        pSlots.find((ps) => {
+          const gNameClean = (ps.globalMealSlot?.name || '').toLowerCase().replace(/[^a-z0-9]/g, '')
+          const psGlobalSlot = ps.globalMealSlot as Record<string, unknown> | undefined
+          const gCodeClean = (
+            (psGlobalSlot?.code as string | undefined) ||
+            (psGlobalSlot?.slotKey as string | undefined) ||
+            ''
+          )
+            .toLowerCase()
+            .replace(/[^a-z0-9]/g, '')
+          return (
+            ps.id === reqGlobalMealSlotId ||
+            ps.globalMealSlotId === reqGlobalMealSlotId ||
+            gCodeClean === slotToMatch ||
+            gNameClean === slotToMatch ||
+            gNameClean.includes(slotToMatch) ||
+            slotToMatch.includes(gNameClean)
+          )
+        }) ||
+        pSlots[0] ||
+        null
+    }
+
+    if (!targetPSlot) {
+      targetPSlot = await FnbPropertyMealSlot.findOne({
+        where: { locId },
+        include: [{ model: FnbGlobalMealSlot, as: 'globalMealSlot' }],
+        transaction,
+      })
+    }
+
+    if (targetPSlot) {
+      resolvedSlotKey = (targetPSlot.globalMealSlot?.name || '').toLowerCase().replace(/\s+/g, '_') || resolvedSlotKey
+      resolvedGlobalSlotId = targetPSlot.globalMealSlotId || resolvedGlobalSlotId
+    }
+    void resolvedGlobalSlotId
+
+    if (!resolvedSlotKey) {
+      resolvedSlotKey = 'breakfast'
+    }
+
+    const resolvedMealSlotId = targetPSlot?.id || null
+    if (!locId || !resolvedMealSlotId) {
+      await transaction.rollback()
+      res.status(400).json({ success: false, message: 'locId and valid mealSlotId are required' })
+      return
+    }
+
+    const targetDate = typeof dateInput === 'string' && dateInput ? dateInput : new Date().toISOString().split('T')[0]!
+    const slotKeyNormalized = resolvedSlotKey
+
+    let attStatus: 'attended' | 'absent' | 'opted_out' = 'attended'
+    if (reqStatus) {
+      attStatus = reqStatus === 'absent' || reqStatus === 'opted_out' ? reqStatus : 'attended'
+    } else if (typeof attended === 'boolean') {
+      attStatus = attended ? 'attended' : 'absent'
+    }
+
+    // Prevent marking attendance if meal slot end time has crossed
+    const todayStr = new Date().toISOString().split('T')[0]!
+    if (attStatus === 'attended') {
+      let isCrossed = false
+      if (targetDate < todayStr) {
+        isCrossed = true
+      } else if (targetDate === todayStr) {
+        let endTimeStr: string | null =
+          (targetPSlot?.endTime as string) || (targetPSlot?.globalMealSlot?.endTime as string) || null
+        let startTimeStr: string | null =
+          (targetPSlot?.startTime as string) || (targetPSlot?.globalMealSlot?.startTime as string) || null
+
+        if (!endTimeStr) {
+          if (
+            slotKeyNormalized.includes('mid') ||
+            slotKeyNormalized.includes('night') ||
+            slotKeyNormalized.includes('late')
+          ) {
+            endTimeStr = '23:59'
+            startTimeStr = '23:30'
+          } else if (slotKeyNormalized.includes('break') || slotKeyNormalized.includes('fast')) {
+            endTimeStr = '09:30'
+            startTimeStr = '07:30'
+          } else if (slotKeyNormalized.includes('lunch')) {
+            endTimeStr = '15:00'
+            startTimeStr = '12:30'
+          } else if (
+            slotKeyNormalized.includes('snack') ||
+            slotKeyNormalized.includes('even') ||
+            slotKeyNormalized.includes('tea')
+          ) {
+            endTimeStr = '18:00'
+            startTimeStr = '16:30'
+          } else if (slotKeyNormalized.includes('dinner')) {
+            endTimeStr = '22:00'
+            startTimeStr = '19:30'
+          } else {
+            endTimeStr = '23:59'
+            startTimeStr = '00:00'
+          }
+        }
+
+        const startMin = parseTimeToMinutes(startTimeStr || '00:00')
+        let endMin = parseTimeToMinutes(endTimeStr)
+        if (endMin <= startMin && startMin > 0) {
+          endMin += 1440
+        }
+
+        const now = new Date()
+        const curMin = now.getHours() * 60 + now.getMinutes()
+        if (curMin > endMin) {
+          isCrossed = true
+        }
+      }
+
+      if (isCrossed) {
+        await transaction.rollback()
+        res.status(400).json({
+          success: false,
+          message: 'Meal slot time has crossed. Attendance cannot be marked for this slot.',
+        })
+        return
+      }
+    }
+
+    // 1. Verify active package contains meal slot
+    const pkgWhere = residentId
+      ? { residentId, status: FnbSubscriptionStatus.ACTIVE }
+      : { familyMemberId, status: FnbSubscriptionStatus.ACTIVE }
+    const activePkg = await FnbResidentPackage.findOne({
+      where: pkgWhere,
+      include: [
+        {
+          model: FnbPropertyPackage,
+          as: 'propertyPackage',
+          include: [{ model: FnbGlobalPackage, as: 'globalPackage' }],
+        },
+      ],
+      transaction,
+    })
+
+    if (activePkg) {
+      const rawIncludedSlots: string[] = Array.isArray(activePkg.propertyPackage?.globalPackage?.includedMealSlots)
+        ? activePkg.propertyPackage!.globalPackage!.includedMealSlots.map((s) => String(s).toLowerCase())
+        : []
+
+      if (rawIncludedSlots.length > 0) {
+        const globalSlots = await FnbGlobalMealSlot.findAll({ transaction })
+        const allowedKeysOrIds = new Set<string>(rawIncludedSlots)
+
+        globalSlots.forEach((gs) => {
+          if (allowedKeysOrIds.has(gs.id.toLowerCase())) {
+            const nameClean = gs.name.toLowerCase().replace(/\s+/g, '')
+            allowedKeysOrIds.add(nameClean)
+            if (nameClean.includes('break') || nameClean.includes('fast')) allowedKeysOrIds.add('breakfast')
+            if (nameClean.includes('lunch')) allowedKeysOrIds.add('lunch')
+            if (nameClean.includes('mid') || nameClean.includes('night') || nameClean.includes('late')) {
+              allowedKeysOrIds.add('midnight_snacks')
+              allowedKeysOrIds.add('night_snacks')
+            }
+            if (nameClean.includes('snack') || nameClean.includes('even')) {
+              allowedKeysOrIds.add('snacks')
+              allowedKeysOrIds.add('evening_snacks')
+            }
+            if (nameClean.includes('dinner')) allowedKeysOrIds.add('dinner')
+          }
+        })
+
+        if (!allowedKeysOrIds.has(slotKeyNormalized)) {
+          // If explicitly restricted, return informative message
+          console.warn(`Meal slot '${reqMealSlotKey}' check failed for included slots:`, Array.from(allowedKeysOrIds))
+        }
+      }
+    }
+
+    const attWhere = residentId
+      ? { locId, date: targetDate, residentId, mealSlotId: resolvedMealSlotId }
+      : { locId, date: targetDate, familyMemberId, mealSlotId: resolvedMealSlotId }
+
+    let attendance = await FnbFoodAttendance.findOne({ where: attWhere, transaction })
+
+    if (attStatus === 'absent' || attStatus === 'opted_out') {
+      if (attendance) {
+        await attendance.destroy({ transaction, force: true })
+        attendance = null
+      }
+    } else {
+      if (attendance) {
+        await attendance.update(
+          {
+            status: 'attended',
+            remarks: remarks || null,
+            unitId: unitId || attendance.unitId,
+            updatedBy: loggedUserId,
+          },
+          { transaction },
+        )
+      } else {
+        attendance = await FnbFoodAttendance.create(
+          {
+            locId,
+            unitId: unitId || null,
+            date: targetDate,
+            residentId: residentId || null,
+            familyMemberId: familyMemberId || null,
+            isGuest: false,
+            guestCount: 1,
+            mealSlotId: resolvedMealSlotId,
+            status: 'attended',
+            remarks: remarks || null,
+            createdBy: loggedUserId,
+            updatedBy: loggedUserId,
+          },
+          { transaction },
+        )
+      }
+    }
+
+    await transaction.commit()
+
+    res.json({
+      success: true,
+      message: attStatus === 'attended' ? 'Attendance marked successfully.' : 'Attendance removed successfully.',
+      data: {
+        attendance,
+      },
+    })
+  } catch (error) {
+    await transaction.rollback()
+    console.error('Error marking food attendance:', error)
+    res.status(500).json({ success: false, message: 'Failed to mark attendance', error: String(error) })
+  }
+}
+
+export const markGuestAttendance = async (req: Request, res: Response): Promise<void> => {
+  const transaction = await sequelize.transaction()
+  try {
+    const {
+      locId,
+      unitId,
+      date: dateInput,
+      guestName,
+      guestCount,
+      globalMealSlotId,
+      mealSlotKey,
+      mealSlotId,
+      remarks,
+    } = req.body
+    const loggedUserId = (req as AuthenticatedRequest).user?.id || null
+
+    if (!locId || !unitId || (!mealSlotKey && !globalMealSlotId && !mealSlotId)) {
+      await transaction.rollback()
+      res
+        .status(400)
+        .json({
+          success: false,
+          message: 'locId, unitId, and mealSlotKey, globalMealSlotId, or mealSlotId are required for guest attendance',
+        })
+      return
+    }
+
+    const targetDate = typeof dateInput === 'string' && dateInput ? dateInput : new Date().toISOString().split('T')[0]!
+    const count = Number(guestCount || 1)
+
+    // Resolve globalMealSlotId and mealSlotKey
+    let resolvedGlobalSlotId: string | null = globalMealSlotId || null
+    let slotKeyNormalized = String(mealSlotKey || '').toLowerCase()
+
+    let gSlot = null
+    if (resolvedGlobalSlotId) {
+      gSlot = await FnbGlobalMealSlot.findByPk(resolvedGlobalSlotId, { transaction })
+      if (!gSlot) {
+        const pSlot = await FnbPropertyMealSlot.findByPk(resolvedGlobalSlotId, { transaction })
+        if (pSlot) {
+          resolvedGlobalSlotId = pSlot.globalMealSlotId || pSlot.id
+          gSlot = await FnbGlobalMealSlot.findByPk(resolvedGlobalSlotId, { transaction })
+        }
+      }
+    }
+
+    if (!gSlot && (mealSlotKey || globalMealSlotId)) {
+      const slotToMatch = String(mealSlotKey || globalMealSlotId)
+        .toLowerCase()
+        .replace(/[^a-z0-9]/g, '')
+      const globalSlots = await FnbGlobalMealSlot.findAll({ transaction })
+      gSlot = globalSlots.find((gs) => {
+        const nameClean = gs.name.toLowerCase().replace(/[^a-z0-9]/g, '')
+        const gsObj = gs as unknown as Record<string, unknown>
+        const codeClean = ((gsObj.code as string | undefined) || '').toLowerCase().replace(/[^a-z0-9]/g, '')
+        return (
+          gs.id === mealSlotKey ||
+          gs.id === globalMealSlotId ||
+          nameClean === slotToMatch ||
+          slotToMatch.includes(nameClean) ||
+          nameClean.includes(slotToMatch) ||
+          (codeClean && codeClean !== 'slot' && codeClean === slotToMatch)
+        )
+      })
+      if (gSlot) {
+        resolvedGlobalSlotId = gSlot.id
+      }
+    }
+
+    if (gSlot) {
+      resolvedGlobalSlotId = gSlot.id
+      const normName = gSlot.name.toLowerCase()
+      if (normName.includes('break') || normName.includes('fast')) slotKeyNormalized = 'breakfast'
+      else if (normName.includes('lunch')) slotKeyNormalized = 'lunch'
+      else if (normName.includes('snack') && !normName.includes('night') && !normName.includes('mid'))
+        slotKeyNormalized = 'evening_snacks'
+      else if (normName.includes('dinner')) slotKeyNormalized = 'dinner'
+      else if (normName.includes('night') || normName.includes('mid')) slotKeyNormalized = 'midnight_snacks'
+      else slotKeyNormalized = normName.replace(/\s+/g, '_')
+    } else if (!slotKeyNormalized || slotKeyNormalized === 'slot') {
+      slotKeyNormalized = 'breakfast'
+    }
+
+    // Resolve property mealSlotId for guest attendance
+    let resolvedGuestMealSlotId: string | null = mealSlotId || globalMealSlotId || null
+
+    if (!resolvedGuestMealSlotId) {
+      const slotToMatch = (mealSlotKey || globalMealSlotId || 'breakfast')
+        .toString()
+        .toLowerCase()
+        .replace(/[^a-z0-9]/g, '')
+      const pSlots = await FnbPropertyMealSlot.findAll({
+        where: { locId, isActive: true },
+        include: [{ model: FnbGlobalMealSlot, as: 'globalMealSlot' }],
+        transaction,
+      })
+
+      const matchedSlot = pSlots.find((ps) => {
+        const gNameClean = (ps.globalMealSlot?.name || '').toLowerCase().replace(/[^a-z0-9]/g, '')
+        const psGlobalSlot = ps.globalMealSlot as Record<string, unknown> | undefined
+        const gCodeClean = (
+          (psGlobalSlot?.code as string | undefined) ||
+          (psGlobalSlot?.slotKey as string | undefined) ||
+          ''
+        )
+          .toLowerCase()
+          .replace(/[^a-z0-9]/g, '')
+        return (
+          ps.id === mealSlotId ||
+          ps.id === globalMealSlotId ||
+          ps.globalMealSlotId === globalMealSlotId ||
+          gCodeClean === slotToMatch ||
+          gNameClean === slotToMatch
+        )
+      })
+
+      resolvedGuestMealSlotId = matchedSlot ? matchedSlot.id : pSlots[0]?.id || null
+    }
+
+    if (!resolvedGuestMealSlotId) {
+      const anySlot = await FnbPropertyMealSlot.findOne({ where: { locId }, transaction })
+      if (anySlot) {
+        resolvedGuestMealSlotId = anySlot.id
+      }
+    }
+
+    if (!resolvedGuestMealSlotId) {
+      await transaction.rollback()
+      res.status(400).json({ success: false, message: 'Valid property mealSlotId is required for guest attendance' })
+      return
+    }
+
+    // Create FnbFoodAttendance entry for guest
+    const guestAttendance = await FnbFoodAttendance.create(
+      {
+        locId,
+        unitId,
+        date: targetDate,
+        isGuest: true,
+        guestName: guestName || 'Guest Dine-In',
+        guestCount: count,
+        mealSlotId: resolvedGuestMealSlotId,
+        status: 'attended',
+        remarks: remarks || null,
+        createdBy: loggedUserId,
+        updatedBy: loggedUserId,
+      },
+      { transaction },
+    )
+
+    await transaction.commit()
+
+    res.json({
+      success: true,
+      message: `Guest attendance for ${count} guest(s) recorded successfully.`,
+      data: {
+        attendance: guestAttendance,
+      },
+    })
+  } catch (error) {
+    await transaction.rollback()
+    console.error('Error marking guest attendance:', error)
+    res.status(500).json({ success: false, message: 'Failed to record guest attendance', error: String(error) })
+  }
+}
+
+export const getAttendanceSummary = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { locId, date: dateQuery } = req.query
+    if (!locId) {
+      res.status(400).json({ success: false, message: 'locId is required' })
+      return
+    }
+
+    const targetDate = typeof dateQuery === 'string' && dateQuery ? dateQuery : new Date().toISOString().split('T')[0]!
+
+    const attendances = await FnbFoodAttendance.findAll({
+      where: {
+        locId: String(locId),
+        date: targetDate,
+      },
+    })
+
+    const memberAttendedCount = attendances.filter((a) => a.status === 'attended' && !a.isGuest).length
+    const guestDinedInCount = attendances
+      .filter((a) => a.status === 'attended' && a.isGuest)
+      .reduce((sum, g) => sum + (g.guestCount || 1), 0)
+
+    res.json({
+      success: true,
+      data: {
+        date: targetDate,
+        totalAttended: memberAttendedCount + guestDinedInCount,
+        memberAttendedCount,
+        guestDinedInCount,
+      },
+    })
+  } catch (error) {
+    console.error('Error getting attendance summary:', error)
+    res.status(500).json({ success: false, message: 'Failed to get summary', error: String(error) })
   }
 }

@@ -25,6 +25,7 @@ import {
   deletePropertyPackage,
   getAllDishes,
   getAllGlobalPackages,
+  getAttendanceSummary,
   getFnbStaffEmployees,
   getGlobalMealSlots,
   getGlobalSpecialSlots,
@@ -34,6 +35,7 @@ import {
   getPropertyMealSlots,
   getPropertyPackages,
   getPropertySpecialSlots,
+  getResidingMembersAndFlats,
   getResidentOrdersForProperty,
   getResidentPackage,
   removePropertySpecialDish,
@@ -55,6 +57,15 @@ const router = Router()
 // All routes require authentication
 router.use(authenticate)
 
+// ── Food Attendance ──────────────────────────────────────────────────────────
+router.get('/attendance/members', getResidingMembersAndFlats)
+router.get('/attendance/members-by-flat', getResidingMembersAndFlats)
+router.get('/members', getResidingMembersAndFlats)
+router.get('/members-by-flat', getResidingMembersAndFlats)
+
+router.get('/attendance/summary', getAttendanceSummary)
+router.get('/summary', getAttendanceSummary)
+
 // ── Global Special Slots ─────────────────────────────────────────────────────
 router.get('/global-special-slots', getGlobalSpecialSlots)
 router.post('/global-special-slots', createGlobalSpecialSlot)
@@ -63,13 +74,16 @@ router.delete('/global-special-slots/:id', deleteGlobalSpecialSlot)
 router.post('/global-special-slots/:id/assign-locations', assignGlobalSpecialSlotLocations)
 
 // ── Property Special Slots & Dishes ──────────────────────────────────────────
+router.get('/special-slots', getPropertySpecialSlots)
 router.get('/property-special-slots', getPropertySpecialSlots)
+router.put('/special-slots/:id', updatePropertySpecialSlot)
 router.put('/property-special-slots/:id', updatePropertySpecialSlot)
 router.post('/property-special-slots/sync-dishes', syncPropertySpecialSlotDishes)
 router.post('/property-special-slots/:propertySpecialSlotId/dishes', addPropertySpecialDish)
 router.delete('/property-special-dishes/:id', removePropertySpecialDish)
 
 // ── Global Meal Slots ────────────────────────────────────────────────────────
+router.get('/meal-slots/global', getGlobalMealSlots)
 router.get('/global-meal-slots', getGlobalMealSlots)
 router.post('/global-meal-slots', createGlobalMealSlot)
 router.put('/global-meal-slots/:id', updateGlobalMealSlot)
@@ -77,7 +91,10 @@ router.delete('/global-meal-slots/:id', deleteGlobalMealSlot)
 router.post('/global-meal-slots/assign', assignMealSlotsToProperty)
 
 // ── Property Meal Slots ──────────────────────────────────────────────────────
+router.get('/meal-slots', getPropertyMealSlots)
 router.get('/property-meal-slots', getPropertyMealSlots)
+router.put('/meal-slots/:id', updatePropertyMealSlotOverride)
+router.patch('/meal-slots/:id', updatePropertyMealSlotOverride)
 router.put('/property-meal-slots/:id', updatePropertyMealSlotOverride)
 
 // ── Global Packages ──────────────────────────────────────────────────────────
@@ -87,12 +104,14 @@ router.put('/global-packages/:id', updateGlobalPackage)
 router.delete('/global-packages/:id', deleteGlobalPackage)
 
 // ── Property Packages & Pricing ─────────────────────────────────────────────
+router.get('/packages', getPropertyPackages)
 router.get('/properties/:locId/packages', getPropertyPackages)
 router.post('/property-packages', assignPropertyPackage)
 router.delete('/property-packages/:id', deletePropertyPackage)
 
 // ── Dish Catalogue & Property Pricing ───────────────────────────────────────
-router.get('/dishes', getAllDishes)
+router.get('/dishes/master', getAllDishes)
+router.get('/dishes', getPropertyDishes)
 router.post('/dishes', upload.single('image'), createDish)
 router.put('/dishes/:id', upload.single('image'), updateDish)
 router.get('/properties/:locId/dishes', getPropertyDishes)
