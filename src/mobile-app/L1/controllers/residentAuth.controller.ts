@@ -1,6 +1,8 @@
 import type { Request, Response } from 'express'
 import bcrypt from 'bcryptjs'
+import { Op } from 'sequelize'
 import {
+  FnbGlobalMealSlot,
   FnbGlobalPackage,
   FnbPropertyPackage,
   FnbResidentPackage,
@@ -16,6 +18,7 @@ import { uploadFileToS3, uploadBase64ToS3 } from '../../../middlewares/s3/index.
 
 interface PkgType {
   id?: string
+  residentId?: string
   familyMemberId?: string
   status?: string
   startDate?: string
@@ -195,15 +198,23 @@ export async function residentLogin(req: Request, res: Response): Promise<void> 
   }
 }
 
-const formatSinglePackage = (activePkg?: PkgType | null) => {
+const formatSinglePackage = (activePkg?: PkgType | null, slotNameMap?: Map<string, string>) => {
   if (!activePkg) return null
   const gp = activePkg.propertyPackage?.globalPackage
+  const rawSlots = gp?.includedMealSlots || []
+  const formattedSlots = rawSlots.map((slotIdOrName: string) => {
+    if (slotNameMap && slotNameMap.has(slotIdOrName)) {
+      return slotNameMap.get(slotIdOrName)!
+    }
+    return slotIdOrName
+  })
+
   return {
     id: activePkg.id,
     name: gp?.name || 'Standard Meal Package',
     code: gp?.code || 'FNB-PKG',
     dietaryType: gp?.dietaryType || activePkg.dietaryPreference || 'Standard',
-    includedMealSlots: gp?.includedMealSlots || [],
+    includedMealSlots: formattedSlots,
     status: activePkg.status || 'active',
     startDate: activePkg.startDate,
     endDate: activePkg.endDate || null,
@@ -274,9 +285,25 @@ export async function getResidentProfile(req: Request, res: Response): Promise<v
       }
       const parent = familyMember.resident
 
+      const globalSlots = await FnbGlobalMealSlot.findAll()
+      const slotNameMap = new Map<string, string>()
+      globalSlots.forEach((gs) => {
+        if (gs.id) slotNameMap.set(gs.id, gs.name)
+      })
+
+      const fmList = (parent.familyMembers || []) as ResidentFamilyMember[]
+      const fmIds = fmList.map((fm) => fm.id)
+
       // Fetch all active F&B packages for this resident unit/family
       const allActivePackages = await FnbResidentPackage.findAll({
-        where: { residentId: parent.id, status: 'active' },
+        where: {
+          [Op.or]: [
+            { residentId: parent.id },
+            { familyMemberId: parent.id },
+            ...(fmIds.length > 0 ? [{ familyMemberId: fmIds }] : []),
+          ],
+          status: ['active', 'ACTIVE', 'paused', 'PAUSED'],
+        },
         include: [
           {
             model: FnbPropertyPackage,
@@ -293,7 +320,8 @@ export async function getResidentProfile(req: Request, res: Response): Promise<v
         const pkg = pkgItem as PkgType
         if (pkg.familyMemberId) {
           familyPackageMap.set(pkg.familyMemberId, pkg)
-        } else {
+        }
+        if (pkg.residentId === parent.id && !pkg.familyMemberId) {
           primaryResidentPackage = pkg
         }
       })
@@ -317,14 +345,14 @@ export async function getResidentProfile(req: Request, res: Response): Promise<v
           phone: familyMember.phone,
           unit: parent.unit,
           propertyDetails: formatPropertyDetails(parent),
-          foodPackage: formatSinglePackage(familyMemberPkg),
+          foodPackage: formatSinglePackage(familyMemberPkg, slotNameMap),
           primaryResident: {
             id: parent.id,
             firstName: parent.firstName,
             lastName: parent.lastName,
             email: parent.email,
             phone: parent.phone,
-            foodPackage: formatSinglePackage(primaryResidentPackage),
+            foodPackage: formatSinglePackage(primaryResidentPackage, slotNameMap),
           },
           familyMembers: (parent.familyMembers || [])
             .filter((fm: ResidentFamilyMember) => !fm.isDeleted)
@@ -340,7 +368,7 @@ export async function getResidentProfile(req: Request, res: Response): Promise<v
               email: fm.email,
               username: fm.username,
               bloodGroup: fm.bloodGroup,
-              foodPackage: formatSinglePackage(familyPackageMap.get(fm.id)),
+              foodPackage: formatSinglePackage(familyPackageMap.get(fm.id) || primaryResidentPackage, slotNameMap),
             })),
         },
       })
@@ -365,9 +393,25 @@ export async function getResidentProfile(req: Request, res: Response): Promise<v
       return
     }
 
+    const globalSlots = await FnbGlobalMealSlot.findAll()
+    const slotNameMap = new Map<string, string>()
+    globalSlots.forEach((gs) => {
+      if (gs.id) slotNameMap.set(gs.id, gs.name)
+    })
+
+    const fmList = (resident.familyMembers || []) as ResidentFamilyMember[]
+    const fmIds = fmList.map((fm) => fm.id)
+
     // Fetch all active F&B packages for this resident unit/family
     const allActivePackages = await FnbResidentPackage.findAll({
-      where: { residentId: resident.id, status: 'active' },
+      where: {
+        [Op.or]: [
+          { residentId: resident.id },
+          { familyMemberId: resident.id },
+          ...(fmIds.length > 0 ? [{ familyMemberId: fmIds }] : []),
+        ],
+        status: ['active', 'ACTIVE', 'paused', 'PAUSED'],
+      },
       include: [
         {
           model: FnbPropertyPackage,
@@ -384,7 +428,8 @@ export async function getResidentProfile(req: Request, res: Response): Promise<v
       const pkg = pkgItem as PkgType
       if (pkg.familyMemberId) {
         familyPackageMap.set(pkg.familyMemberId, pkg)
-      } else {
+      }
+      if (pkg.residentId === resident.id && !pkg.familyMemberId) {
         primaryResidentPackage = pkg
       }
     })
@@ -409,7 +454,7 @@ export async function getResidentProfile(req: Request, res: Response): Promise<v
         unit: resident.unit,
         photoUrl: resident.photoUrl || null,
         propertyDetails: formatPropertyDetails(resident),
-        foodPackage: formatSinglePackage(primaryResidentPackage),
+        foodPackage: formatSinglePackage(primaryResidentPackage, slotNameMap),
         familyMembers: (resident.familyMembers || [])
           .filter((fm: ResidentFamilyMember) => !fm.isDeleted)
           .map((fm: ResidentFamilyMember) => ({
@@ -425,7 +470,7 @@ export async function getResidentProfile(req: Request, res: Response): Promise<v
             username: fm.username,
             bloodGroup: fm.bloodGroup,
             photoUrl: fm.photoUrl || null,
-            foodPackage: formatSinglePackage(familyPackageMap.get(fm.id)),
+            foodPackage: formatSinglePackage(familyPackageMap.get(fm.id) || primaryResidentPackage, slotNameMap),
           })),
       },
     })

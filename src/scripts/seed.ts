@@ -21,10 +21,12 @@ export async function seedRbacData() {
     { name: 'Operational Staff', code: 'EMPLOYEE', description: 'Operational staff member', isSystem: true },
     { name: 'Doctor', code: 'DOCTOR', description: 'Medical practitioner', isSystem: true },
     { name: 'Nurse', code: 'NURSE', description: 'Nursing staff member', isSystem: true },
-    { name: 'Resident', code: 'RESIDENT', description: 'Resident / occupant', isSystem: true },
     { name: 'Caretaker', code: 'CARETAKER', description: 'Assigned resident caretaker', isSystem: true },
     { name: 'Vendor', code: 'VENDOR', description: 'External contractor', isSystem: true },
   ]
+
+  // Remove obsolete Resident role if present
+  await Role.destroy({ where: { code: 'RESIDENT' } })
 
   const createdRoles: Record<string, Role> = {}
   for (const r of rolesData) {
@@ -111,58 +113,51 @@ export async function seedRbacData() {
     { code: 'EVT', name: 'Events', description: 'Community events & activities' },
     { code: 'SEC', name: 'Gate & Security', description: 'Security guards & entry control' },
     { code: 'HK', name: 'Housekeeping', description: 'Cleaning & facilities upkeep' },
-    { code: 'NUR', name: 'Nursing', description: 'Healthcare & nursing staff' },
-    { code: 'DOC', name: 'Medical / Doctor', description: 'Doctors & health practitioners' },
-    { code: 'ATT', name: 'Attendance & Workforce', description: 'Workforce management' },
+    { code: 'MED', name: 'Medical', description: 'Medical & Healthcare Services' },
   ]
 
-  const createdDepartments: Record<string, Department> = {}
-  for (const dep of departmentsData) {
-    const [d] = await Department.findOrCreate({
-      where: { code: dep.code },
-      defaults: dep,
-    })
-    createdDepartments[dep.code] = d
-  }
-  console.log(`✅ Departments seeded: ${Object.keys(createdDepartments).length}`)
+  // Find obsolete departments (NUR, DOC, ADM, ATT, FIN)
+  const obsoleteDepts = await Department.findAll({ where: { code: ['NUR', 'DOC', 'ADM', 'ATT', 'FIN'] } })
+  const obsoleteDeptIds = obsoleteDepts.map((d) => d.id)
+
+  const OBSOLETE_CATEGORY_NAMES = [
+    'Civil Maintenance',
+    'General Maintenance',
+    'HVAC',
+    'Biomedical Equipment',
+    'Front Desk',
+    'Resident Services',
+    'Guest Services',
+    'Event Planning',
+    'Community Activities',
+    'Recreation',
+    'Entertainment',
+    'Catering',
+    'Nutrition & Dietary',
+    'Food Production',
+    'Food Service',
+    'Kitchen Operations',
+    'Stewarding',
+    'Chef & Kitchen Staff',
+    'Dining Service Staff',
+    'F&B Manager / Supervisor',
+    'Meal Delivery Executive',
+    'Cleaning Services',
+    'Room Attendant',
+    'Laundry Services',
+    'Waste Management',
+    'Housekeeper / Cleaner',
+    'Housekeeping Supervisor',
+    'Linen & Laundry Attendant',
+  ]
 
   // ── 4. Job Categories per Department ───────────────────────────────────────
   const jobCategoriesData = [
-    // Housekeeping (HK)
-    { departmentCode: 'HK', code: 'HK_OPS', name: 'Housekeeping Operations', description: 'Housekeeping Operations' },
-    { departmentCode: 'HK', code: 'HK_CLEAN', name: 'Cleaning Services', description: 'Cleaning Services' },
-    { departmentCode: 'HK', code: 'HK_LAUNDRY', name: 'Laundry Services', description: 'Laundry Services' },
-    { departmentCode: 'HK', code: 'HK_WASTE', name: 'Waste Management', description: 'Waste Management' },
-    { departmentCode: 'HK', code: 'HK_ATTENDANT', name: 'Room Attendant', description: 'Room Attendant' },
-
-    // Attendance & Workforce (ATT)
-    { departmentCode: 'ATT', code: 'ATT_MGMT', name: 'Attendance Management', description: 'Attendance Management' },
-    { departmentCode: 'ATT', code: 'ATT_WORKFORCE', name: 'Workforce Planning', description: 'Workforce Planning' },
-    { departmentCode: 'ATT', code: 'ATT_HROPS', name: 'HR Operations', description: 'HR Operations' },
-    { departmentCode: 'ATT', code: 'ATT_PAYROLL', name: 'Payroll & Timekeeping', description: 'Payroll & Timekeeping' },
-
-    // Nursing (NUR)
-    { departmentCode: 'NUR', code: 'NUR_OPS', name: 'Nursing Operations', description: 'Nursing Operations' },
-    { departmentCode: 'NUR', code: 'NUR_CLINICAL', name: 'Clinical Nursing', description: 'Clinical Nursing' },
-    { departmentCode: 'NUR', code: 'NUR_PATIENT_CARE', name: 'Patient Care', description: 'Patient Care' },
-    { departmentCode: 'NUR', code: 'NUR_ADMIN', name: 'Nursing Administration', description: 'Nursing Administration' },
-
     // Repair & Maintenance (RNM)
     { departmentCode: 'RNM', code: 'RNM_ELEC', name: 'Electrical', description: 'Electrical maintenance & repairs' },
     { departmentCode: 'RNM', code: 'RNM_CARP', name: 'Carpentry', description: 'Carpentry & woodwork maintenance' },
     { departmentCode: 'RNM', code: 'RNM_PLUM', name: 'Plumbing', description: 'Plumbing maintenance & repairs' },
     { departmentCode: 'RNM', code: 'RNM_MISC', name: 'Miscellaneous', description: 'General & miscellaneous repairs' },
-
-    // Food & Beverage (FNB)
-    { departmentCode: 'FNB', code: 'FNB_KITCHEN', name: 'Kitchen Operations', description: 'Kitchen Operations' },
-    { departmentCode: 'FNB', code: 'FNB_PROD', name: 'Food Production', description: 'Food Production' },
-    { departmentCode: 'FNB', code: 'FNB_SERVICE', name: 'Food Service', description: 'Food Service' },
-    { departmentCode: 'FNB', code: 'FNB_CATERING', name: 'Catering', description: 'Catering' },
-    { departmentCode: 'FNB', code: 'FNB_STEWARD', name: 'Stewarding', description: 'Stewarding' },
-    { departmentCode: 'FNB', code: 'FNB_NUTRITION', name: 'Nutrition & Dietary', description: 'Nutrition & Dietary' },
-
-    // Gate & Security (SEC) - ONLY Visitor Management
-    { departmentCode: 'SEC', code: 'SEC_VISITOR', name: 'Visitor Management', description: 'Visitor Management' },
 
     // Concierge (CON)
     { departmentCode: 'CON', code: 'CON_HK', name: 'Housekeeping', description: 'Housekeeping & cleaning services' },
@@ -181,29 +176,53 @@ export async function seedRbacData() {
     },
     { departmentCode: 'CON', code: 'CON_OTHERS', name: 'Others', description: 'Other concierge services' },
 
-    // Events (EVT)
-    { departmentCode: 'EVT', code: 'EVT_PLANNING', name: 'Event Planning', description: 'Event Planning' },
-    { departmentCode: 'EVT', code: 'EVT_OPS', name: 'Event Operations', description: 'Event Operations' },
-    { departmentCode: 'EVT', code: 'EVT_COMMUNITY', name: 'Community Activities', description: 'Community Activities' },
-    { departmentCode: 'EVT', code: 'EVT_REC', name: 'Recreation', description: 'Recreation' },
-    { departmentCode: 'EVT', code: 'EVT_ENTERTAIN', name: 'Entertainment', description: 'Entertainment' },
+    // Food & Beverage (FNB) - ONLY F&B Operations
+    { departmentCode: 'FNB', code: 'FNB_OPS', name: 'F&B Operations', description: 'Food & Beverage Operations' },
 
-    // Medical / Doctor (DOC)
-    { departmentCode: 'DOC', code: 'DOC_GEN', name: 'General Medicine', description: 'General Medicine' },
-    { departmentCode: 'DOC', code: 'DOC_SPEC', name: 'Specialist Medicine', description: 'Specialist Medicine' },
-    { departmentCode: 'DOC', code: 'DOC_CLINICAL', name: 'Clinical Services', description: 'Clinical Services' },
-    { departmentCode: 'DOC', code: 'DOC_DIAG', name: 'Diagnostics', description: 'Diagnostics' },
-    { departmentCode: 'DOC', code: 'DOC_EMERGENCY', name: 'Emergency Care', description: 'Emergency Care' },
+    // Gate & Security (SEC) - ONLY Visitor Management
+    { departmentCode: 'SEC', code: 'SEC_VISITOR', name: 'Visitor Management', description: 'Visitor Management' },
+
+    // Housekeeping (HK) - ONLY Housekeeping Operations
+    { departmentCode: 'HK', code: 'HK_OPS', name: 'Housekeeping Operations', description: 'Housekeeping Operations' },
+
+    // Events (EVT) - ONLY Event Operations
+    { departmentCode: 'EVT', code: 'EVT_OPS', name: 'Event Operations', description: 'Event Operations' },
+
+    // Medical (MED)
+    { departmentCode: 'MED', code: 'MED_INHOUSE', name: 'Inhouse', description: 'In-house Medical Staff' },
+    { departmentCode: 'MED', code: 'MED_VISITING', name: 'Visiting', description: 'Visiting Medical Staff' },
   ]
 
   const validCodes = jobCategoriesData.map((jc) => jc.code)
+
+  // Hard delete obsolete job categories
   await JobCategory.destroy({
     where: {
-      code: {
-        [Op.notIn]: validCodes,
-      },
+      [Op.or]: [
+        { code: { [Op.notIn]: validCodes } },
+        { name: { [Op.in]: OBSOLETE_CATEGORY_NAMES } },
+        ...(obsoleteDeptIds.length > 0 ? [{ departmentId: { [Op.in]: obsoleteDeptIds } }] : []),
+      ],
     },
   })
+
+  // Hard delete obsolete departments (NUR, DOC, ADM, ATT, FIN)
+  await Department.destroy({
+    where: { code: ['NUR', 'DOC', 'ADM', 'ATT', 'FIN'] },
+  })
+
+  const createdDepartments: Record<string, Department> = {}
+  for (const dep of departmentsData) {
+    const [d, created] = await Department.findOrCreate({
+      where: { code: dep.code },
+      defaults: { ...dep, isActive: true },
+    })
+    if (!created) {
+      await d.update({ name: dep.name, description: dep.description, isActive: true })
+    }
+    createdDepartments[dep.code] = d
+  }
+  console.log(`✅ Departments seeded: ${Object.keys(createdDepartments).length}`)
 
   let categoryCount = 0
   for (const jc of jobCategoriesData) {

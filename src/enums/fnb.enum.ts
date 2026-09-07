@@ -36,8 +36,25 @@ export enum FnbSubscriptionStatus {
 
 export enum FnbOrderStatus {
   PLACED = 'placed',
-  SERVED = 'served',
+  ACCEPTED = 'accepted',
+  PREPARING = 'preparing',
+  READY = 'ready',
+  DELIVERING_TO_ROOM = 'delivering_to_room',
+  COMPLETED = 'completed',
+  DELIVERED = 'delivered',
   CANCELLED = 'cancelled',
+}
+
+export enum FnbOrderType {
+  PERSONAL = 'personal',
+  GUEST = 'guest',
+  SPECIAL = 'special',
+  CUSTOM = 'custom',
+}
+
+export enum FnbServiceType {
+  DINE_IN = 'dine_in',
+  ROOM_SERVICE = 'room_service',
 }
 
 export enum FnbDishCategory {

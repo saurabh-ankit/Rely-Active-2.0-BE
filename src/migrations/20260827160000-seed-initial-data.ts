@@ -69,16 +69,6 @@ export async function up({ context: queryInterface }: { context: QueryInterface 
     },
     {
       id: randomUUID(),
-      name: 'Resident',
-      code: 'RESIDENT',
-      description: 'Resident / occupant',
-      isSystem: true,
-      isActive: true,
-      createdAt: now,
-      updatedAt: now,
-    },
-    {
-      id: randomUUID(),
       name: 'Caretaker',
       code: 'CARETAKER',
       description: 'Assigned resident caretaker',
@@ -230,120 +220,103 @@ export async function up({ context: queryInterface }: { context: QueryInterface 
   // ── 3. Departments ─────────────────────────────────────────────────────────
   const departmentsData = [
     {
-      id: randomUUID(),
       code: 'RNM',
       name: 'Repair & Maintenance',
       description: 'Maintenance & engineering services',
       isActive: true,
-      createdAt: now,
-      updatedAt: now,
     },
     {
-      id: randomUUID(),
       code: 'CON',
       name: 'Concierge',
       description: 'Front desk & resident services',
       isActive: true,
-      createdAt: now,
-      updatedAt: now,
     },
     {
-      id: randomUUID(),
       code: 'FNB',
       name: 'Food & Beverage',
       description: 'Dining, kitchen & catering',
       isActive: true,
-      createdAt: now,
-      updatedAt: now,
     },
     {
-      id: randomUUID(),
       code: 'EVT',
       name: 'Events',
       description: 'Community events & activities',
       isActive: true,
-      createdAt: now,
-      updatedAt: now,
     },
     {
-      id: randomUUID(),
       code: 'SEC',
       name: 'Gate & Security',
       description: 'Security guards & entry control',
       isActive: true,
-      createdAt: now,
-      updatedAt: now,
     },
     {
-      id: randomUUID(),
       code: 'HK',
       name: 'Housekeeping',
       description: 'Cleaning & facilities upkeep',
       isActive: true,
-      createdAt: now,
-      updatedAt: now,
     },
     {
-      id: randomUUID(),
-      code: 'NUR',
-      name: 'Nursing',
-      description: 'Healthcare & nursing staff',
+      code: 'MED',
+      name: 'Medical',
+      description: 'Medical & Healthcare Services',
       isActive: true,
-      createdAt: now,
-      updatedAt: now,
-    },
-    {
-      id: randomUUID(),
-      code: 'DOC',
-      name: 'Medical / Doctor',
-      description: 'Doctors & health practitioners',
-      isActive: true,
-      createdAt: now,
-      updatedAt: now,
-    },
-    {
-      id: randomUUID(),
-      code: 'ATT',
-      name: 'Attendance & Workforce',
-      description: 'Workforce management',
-      isActive: true,
-      createdAt: now,
-      updatedAt: now,
     },
   ]
 
-  const deptMap: Record<string, string> = {}
-  for (const dep of departmentsData) {
-    const existingId = await queryInterface.rawSelect('departments', { where: { code: dep.code } }, ['id'])
+  // Hard delete job categories of obsolete departments first to prevent foreign key errors
+  await queryInterface.sequelize.query(
+    `DELETE FROM job_categories WHERE departmentId IN (SELECT id FROM departments WHERE code IN ('NUR', 'DOC', 'ADM', 'ATT', 'FIN'))`,
+  )
+
+  // Hard delete obsolete departments
+  await queryInterface.sequelize.query(`DELETE FROM departments WHERE code IN ('NUR', 'DOC', 'ADM', 'ATT', 'FIN')`)
+
+  // Map to hold department code -> UUID
+  const deptIdMap: Record<string, string> = {}
+
+  for (const dept of departmentsData) {
+    const [existingRows] = (await queryInterface.sequelize.query(
+      `SELECT id FROM departments WHERE code = :code LIMIT 1`,
+      { replacements: { code: dept.code } },
+    )) as [Array<{ id: string }>, unknown]
+
+    const existingId = existingRows?.[0]?.id
+
     if (existingId) {
-      deptMap[dep.code] = String(existingId)
+      deptIdMap[dept.code] = existingId
+      await queryInterface.sequelize.query(
+        `UPDATE departments SET name = :name, description = :description, isActive = true, updatedAt = :updatedAt WHERE id = :id`,
+        {
+          replacements: {
+            id: existingId,
+            name: dept.name,
+            description: dept.description,
+            updatedAt: now,
+          },
+        },
+      )
     } else {
-      await queryInterface.bulkInsert('departments', [dep])
-      deptMap[dep.code] = dep.id
+      const newId = randomUUID()
+      deptIdMap[dept.code] = newId
+      await queryInterface.sequelize.query(
+        `INSERT INTO departments (id, code, name, description, isActive, createdAt, updatedAt)
+         VALUES (:id, :code, :name, :description, true, :createdAt, :updatedAt)`,
+        {
+          replacements: {
+            id: newId,
+            code: dept.code,
+            name: dept.name,
+            description: dept.description,
+            createdAt: now,
+            updatedAt: now,
+          },
+        },
+      )
     }
   }
 
   // ── 4. Job Categories ──────────────────────────────────────────────────────
   const jobCategoriesData = [
-    // Housekeeping (HK)
-    { departmentCode: 'HK', code: 'HK_OPS', name: 'Housekeeping Operations', description: 'Housekeeping Operations' },
-    { departmentCode: 'HK', code: 'HK_CLEAN', name: 'Cleaning Services', description: 'Cleaning Services' },
-    { departmentCode: 'HK', code: 'HK_LAUNDRY', name: 'Laundry Services', description: 'Laundry Services' },
-    { departmentCode: 'HK', code: 'HK_WASTE', name: 'Waste Management', description: 'Waste Management' },
-    { departmentCode: 'HK', code: 'HK_ATTENDANT', name: 'Room Attendant', description: 'Room Attendant' },
-
-    // Attendance & Workforce (ATT)
-    { departmentCode: 'ATT', code: 'ATT_MGMT', name: 'Attendance Management', description: 'Attendance Management' },
-    { departmentCode: 'ATT', code: 'ATT_WORKFORCE', name: 'Workforce Planning', description: 'Workforce Planning' },
-    { departmentCode: 'ATT', code: 'ATT_HROPS', name: 'HR Operations', description: 'HR Operations' },
-    { departmentCode: 'ATT', code: 'ATT_PAYROLL', name: 'Payroll & Timekeeping', description: 'Payroll & Timekeeping' },
-
-    // Nursing (NUR)
-    { departmentCode: 'NUR', code: 'NUR_OPS', name: 'Nursing Operations', description: 'Nursing Operations' },
-    { departmentCode: 'NUR', code: 'NUR_CLINICAL', name: 'Clinical Nursing', description: 'Clinical Nursing' },
-    { departmentCode: 'NUR', code: 'NUR_PATIENT_CARE', name: 'Patient Care', description: 'Patient Care' },
-    { departmentCode: 'NUR', code: 'NUR_ADMIN', name: 'Nursing Administration', description: 'Nursing Administration' },
-
     // Repair & Maintenance (RNM)
     { departmentCode: 'RNM', code: 'RNM_ELEC', name: 'Electrical', description: 'Electrical maintenance & repairs' },
     { departmentCode: 'RNM', code: 'RNM_CARP', name: 'Carpentry', description: 'Carpentry & woodwork maintenance' },
@@ -365,40 +338,144 @@ export async function up({ context: queryInterface }: { context: QueryInterface 
       name: 'Transportation',
       description: 'Transportation & shuttle services',
     },
+    { departmentCode: 'CON', code: 'CON_OTHERS', name: 'Others', description: 'Other concierge services' },
 
-    // Events (EVT)
-    { departmentCode: 'EVT', code: 'EVT_PLANNING', name: 'Event Planning', description: 'Event Planning' },
+    // Gate & Security (SEC) - ONLY Visitor Management
+    {
+      departmentCode: 'SEC',
+      code: 'SEC_VISITOR',
+      name: 'Visitor Management',
+      description: 'Visitor management & gate entry',
+    },
+
+    // Food & Beverage (FNB) - ONLY F&B Operations
+    { departmentCode: 'FNB', code: 'FNB_OPS', name: 'F&B Operations', description: 'Food & Beverage Operations' },
+
+    // Housekeeping (HK) - ONLY Housekeeping Operations
+    { departmentCode: 'HK', code: 'HK_OPS', name: 'Housekeeping Operations', description: 'Housekeeping Operations' },
+
+    // Events (EVT) - ONLY Event Operations
     { departmentCode: 'EVT', code: 'EVT_OPS', name: 'Event Operations', description: 'Event Operations' },
-    { departmentCode: 'EVT', code: 'EVT_COMMUNITY', name: 'Community Activities', description: 'Community Activities' },
-    { departmentCode: 'EVT', code: 'EVT_REC', name: 'Recreation', description: 'Recreation' },
-    { departmentCode: 'EVT', code: 'EVT_ENTERTAIN', name: 'Entertainment', description: 'Entertainment' },
 
-    // Medical / Doctor (DOC)
-    { departmentCode: 'DOC', code: 'DOC_GEN', name: 'General Medicine', description: 'General Medicine' },
-    { departmentCode: 'DOC', code: 'DOC_SPEC', name: 'Specialist Medicine', description: 'Specialist Medicine' },
-    { departmentCode: 'DOC', code: 'DOC_CLINICAL', name: 'Clinical Services', description: 'Clinical Services' },
-    { departmentCode: 'DOC', code: 'DOC_DIAG', name: 'Diagnostics', description: 'Diagnostics' },
-    { departmentCode: 'DOC', code: 'DOC_EMERGENCY', name: 'Emergency Care', description: 'Emergency Care' },
+    // Medical (MED)
+    { departmentCode: 'MED', code: 'MED_INHOUSE', name: 'Inhouse', description: 'In-house Medical Staff' },
+    { departmentCode: 'MED', code: 'MED_VISITING', name: 'Visiting', description: 'Visiting Medical Staff' },
   ]
 
   for (const jc of jobCategoriesData) {
-    const deptId = deptMap[jc.departmentCode]
-    if (deptId) {
-      const existing = await queryInterface.rawSelect('job_categories', { where: { code: jc.code } }, ['id'])
-      if (!existing) {
-        await queryInterface.bulkInsert('job_categories', [
-          {
-            id: randomUUID(),
+    const deptId = deptIdMap[jc.departmentCode]
+    if (!deptId) continue
+
+    const [existingRows] = (await queryInterface.sequelize.query(
+      `SELECT id FROM job_categories WHERE code = :code LIMIT 1`,
+      { replacements: { code: jc.code } },
+    )) as [Array<{ id: string }>, unknown]
+
+    const existingId = existingRows?.[0]?.id
+
+    if (existingId) {
+      await queryInterface.sequelize.query(
+        `UPDATE job_categories
+         SET departmentId = :departmentId, name = :name, description = :description, isActive = true, updatedAt = :updatedAt
+         WHERE id = :id`,
+        {
+          replacements: {
+            id: existingId,
+            departmentId: deptId,
+            name: jc.name,
+            description: jc.description,
+            updatedAt: now,
+          },
+        },
+      )
+    } else {
+      const newId = randomUUID()
+      await queryInterface.sequelize.query(
+        `INSERT INTO job_categories (id, departmentId, code, name, description, isActive, createdAt, updatedAt)
+         VALUES (:id, :departmentId, :code, :name, :description, true, :createdAt, :updatedAt)`,
+        {
+          replacements: {
+            id: newId,
             departmentId: deptId,
             code: jc.code,
             name: jc.name,
             description: jc.description,
-            isActive: true,
             createdAt: now,
             updatedAt: now,
           },
-        ])
-      }
+        },
+      )
+    }
+  }
+
+  // Hard delete obsolete job categories
+  const obsoleteJobCatNames = [
+    'Civil Maintenance',
+    'General Maintenance',
+    'HVAC',
+    'Biomedical Equipment',
+    'Front Desk',
+    'Resident Services',
+    'Guest Services',
+    'Event Planning',
+    'Community Activities',
+    'Recreation',
+    'Entertainment',
+    'Catering',
+    'Nutrition & Dietary',
+    'Food Production',
+    'Food Service',
+    'Kitchen Operations',
+    'Stewarding',
+    'Chef & Kitchen Staff',
+    'Dining Service Staff',
+    'F&B Manager / Supervisor',
+    'Meal Delivery Executive',
+    'Cleaning Services',
+    'Room Attendant',
+    'Laundry Services',
+    'Waste Management',
+    'Housekeeper / Cleaner',
+    'Housekeeping Supervisor',
+    'Linen & Laundry Attendant',
+  ]
+
+  await queryInterface.sequelize.query(
+    `DELETE FROM job_categories
+     WHERE name IN (:obsoleteJobCatNames)
+        OR code LIKE 'DOC_%'
+        OR code LIKE 'NUR_%'`,
+    {
+      replacements: {
+        obsoleteJobCatNames,
+      },
+    },
+  )
+
+  // Hard delete obsolete department job categories for SEC, EVT, FNB, HK
+  const deptCleanupItems: Array<{ deptCode: string; allowedCode: string; allowedName: string }> = [
+    { deptCode: 'SEC', allowedCode: 'SEC_VISITOR', allowedName: 'Visitor Management' },
+    { deptCode: 'EVT', allowedCode: 'EVT_OPS', allowedName: 'Event Operations' },
+    { deptCode: 'FNB', allowedCode: 'FNB_OPS', allowedName: 'F&B Operations' },
+    { deptCode: 'HK', allowedCode: 'HK_OPS', allowedName: 'Housekeeping Operations' },
+  ]
+
+  for (const item of deptCleanupItems) {
+    const deptId = deptIdMap[item.deptCode]
+    if (deptId) {
+      await queryInterface.sequelize.query(
+        `DELETE FROM job_categories
+         WHERE departmentId = :departmentId
+           AND code != :allowedCode
+           AND name != :allowedName`,
+        {
+          replacements: {
+            departmentId: deptId,
+            allowedCode: item.allowedCode,
+            allowedName: item.allowedName,
+          },
+        },
+      )
     }
   }
 

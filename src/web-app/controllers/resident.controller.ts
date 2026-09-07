@@ -1,4 +1,5 @@
 import type { Request, Response } from 'express'
+import type { AuthenticatedRequest } from '../../middlewares/authenticate.js'
 import bcrypt from 'bcryptjs'
 import { Op } from 'sequelize'
 import { Property, PropertyFloor, PropertyUnit, Resident, ResidentFamilyMember } from '../../models/index.js'
@@ -6,7 +7,7 @@ import { OwnershipType, ResidentStatus, ResidentType } from '../../enums/residen
 import { OccupancyStatus } from '../../enums/propertyUnit.enum.js'
 import { uploadFileToS3, uploadBase64ToS3 } from '../../middlewares/s3/index.js'
 
-export async function createResident(req: Request, res: Response): Promise<void> {
+export async function createResident(req: AuthenticatedRequest, res: Response): Promise<void> {
   try {
     const {
       unitId,

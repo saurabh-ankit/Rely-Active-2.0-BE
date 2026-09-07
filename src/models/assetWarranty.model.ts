@@ -1,7 +1,7 @@
 import { DataTypes, Optional } from 'sequelize'
 import sequelize from '../config/db/index.js'
 import { BaseAttributes, BaseModel, baseModelColumns } from './base.model.js'
-import { WarrantyType } from '../enums/asset/index.js'
+import { WarrantyType } from '../enums/asset.enum.js'
 
 export interface AssetWarrantyAttributes extends BaseAttributes {
   assetId: string

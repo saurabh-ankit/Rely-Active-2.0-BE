@@ -1,7 +1,7 @@
 import { DataTypes, Optional } from 'sequelize'
 import sequelize from '../config/db/index.js'
 import { BaseAttributes, BaseModel, baseModelColumns } from './base.model.js'
-import { ServiceType } from '../enums/asset/index.js'
+import { ServiceType } from '../enums/asset.enum.js'
 
 export interface AssetServiceLogAttributes extends BaseAttributes {
   assetId: string

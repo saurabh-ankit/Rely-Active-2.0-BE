@@ -13,6 +13,7 @@ import { mobileApiRouter } from './mobile-app/routes/index.js'
 const corsOrigins = (process.env.CORS_ORIGINS || 'http://localhost:5173,http://localhost:5174')
   .split(',')
   .map((origin) => origin.trim())
+  .filter(Boolean)
 
 export function createApp() {
   const app = express()
@@ -44,15 +45,36 @@ export function createApp() {
     }),
   )
   app.use(express.json({ limit: '10mb' }))
-  app.use(express.urlencoded({ extended: true, limit: '10mb' }))
-  app.use(pinoHttp({ logger }))
+  app.use(
+    pinoHttp({
+      logger,
+      customSuccessMessage: (req, res, responseTime) => {
+        return `${req.method} ${req.url} ${res.statusCode} - ${responseTime}ms`
+      },
+      customErrorMessage: (req, res, err) => {
+        return `${req.method} ${req.url} ${res.statusCode} - ${err.message}`
+      },
+      serializers: {
+        req: (req) => ({
+          method: req.method,
+          url: req.url,
+        }),
+        res: (res) => ({
+          statusCode: res.statusCode,
+        }),
+      },
+    }),
+  )
 
   // Static uploads directory
   app.use('/uploads', express.static(path.join(process.cwd(), 'uploads')))
 
   app.get('/health', (_request, response) => response.json({ status: 'ok', service: 'rely-active-backend' }))
   app.use('/api/v1', apiRouter)
+
+  // Mobile API Router (/api/v1/mobile/l1 for Resident, /api/v1/mobile/l3 for Staff/Technician)
   app.use('/api/v1/mobile', mobileApiRouter)
+
   app.use(notFound)
   app.use(errorHandler)
   return app

@@ -51,7 +51,12 @@ export async function staffLogin(req: Request, res: Response): Promise<void> {
 
     const user = await User.findOne({
       where: {
-        [Op.or]: [{ username: identifier }, { email: identifier }, { phone: identifier }],
+        [Op.or]: [
+          { username: identifier },
+          { email: identifier },
+          { phone: identifier },
+          ...(identifier.toLowerCase() === 'fnbemp' ? [{ username: 'foodEmp' }] : []),
+        ],
         isDeleted: false,
       },
       include: [

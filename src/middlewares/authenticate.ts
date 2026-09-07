@@ -1,10 +1,12 @@
 import type { NextFunction, Request, Response } from 'express'
 import { verifyToken } from '../utils/jwt.js'
-import { Resident, ResidentFamilyMember, User } from '../models/index.js'
+import { Resident, ResidentFamilyMember, User, UserLocation } from '../models/index.js'
 
 export interface AuthenticatedRequest extends Request {
   user?: {
     id: string
+    residentId?: string
+    familyMemberId?: string
     email?: string | null
     companyId?: string | null
     defaultLocationId?: string | null
@@ -39,6 +41,7 @@ export async function authenticate(req: AuthenticatedRequest, res: Response, nex
 
       req.user = {
         id: resident.id,
+        residentId: resident.id,
         email: resident.email,
         companyId: resident.companyId,
         defaultLocationId: resident.locId,
@@ -62,7 +65,9 @@ export async function authenticate(req: AuthenticatedRequest, res: Response, nex
       }
 
       req.user = {
-        id: familyMember.resident.id,
+        id: familyMember.id,
+        residentId: familyMember.resident.id,
+        familyMemberId: familyMember.id,
         email: familyMember.email || familyMember.resident.email,
         companyId: familyMember.resident.companyId,
         defaultLocationId: familyMember.resident.locId,
@@ -84,15 +89,26 @@ export async function authenticate(req: AuthenticatedRequest, res: Response, nex
 
     const headerLocId = (req.headers['x-location-id'] || req.headers['x-property-id']) as string | undefined
 
+    let locationId =
+      headerLocId || user.defaultLocationId || (decoded as { defaultLocationId?: string }).defaultLocationId || null
+    if (!locationId) {
+      const userLoc = await UserLocation.findOne({
+        where: { userId: user.id, isDeleted: false, isActive: true },
+      })
+      if (userLoc) {
+        locationId = userLoc.locId
+      }
+    }
+
     req.user = {
       id: user.id,
       email: user.email,
       companyId: user.companyId,
-      defaultLocationId: user.defaultLocationId,
+      defaultLocationId: locationId,
       roles: decoded.roles || [],
     }
 
-    req.locationId = headerLocId || user.defaultLocationId || null
+    req.locationId = locationId
 
     next()
   } catch {

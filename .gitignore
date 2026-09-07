@@ -1,9 +1,8 @@
 node_modules
+package-lock.json
 dist
 coverage
 .env
 logs
 uploads
 *.log
-package-lock.json
-package.lock.json
