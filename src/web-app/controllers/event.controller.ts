@@ -1426,6 +1426,10 @@ export const updateRegistrationStatus = async (req: AuthenticatedRequest, res: R
 // ─── From venue.controller.ts ───────────────────────────────────────────
 type VenueImage = { url: string; caption?: string }
 
+function toVenueImage(url: string, caption?: string): VenueImage {
+  return caption !== undefined ? { url, caption } : { url }
+}
+
 const VENUE_S3_FOLDER = 'events/venues'
 const EVENT_POSTER_S3_FOLDER = 'events/posters'
 
@@ -1481,18 +1485,15 @@ async function resolveVenueImagesFromRequest(
       return bodyImages
         .map((img) => {
           if (img.url && img.url.trim()) {
-            return { url: img.url.trim(), caption: img.caption }
+            return toVenueImage(img.url.trim(), img.caption)
           }
           const url = uploadedUrls[uploadIdx++]
-          return url ? { url, caption: img.caption } : null
+          return url ? toVenueImage(url, img.caption) : null
         })
         .filter((img): img is VenueImage => img !== null)
     }
 
-    return uploadedUrls.map((url, index) => ({
-      url,
-      caption: bodyImages?.[index]?.caption,
-    }))
+    return uploadedUrls.map((url, index) => toVenueImage(url, bodyImages?.[index]?.caption))
   }
 
   if (bodyImages === undefined) {
@@ -1502,14 +1503,13 @@ async function resolveVenueImagesFromRequest(
   if (bodyImages.some((img) => typeof img.url === 'string' && img.url.trim())) {
     return bodyImages
       .filter((img) => typeof img.url === 'string' && img.url.trim())
-      .map((img) => ({ url: img.url.trim(), caption: img.caption }))
+      .map((img) => toVenueImage(img.url.trim(), img.caption))
   }
 
   if (existingImages && existingImages.length > 0) {
-    return existingImages.map((existing, index) => ({
-      url: existing.url,
-      caption: bodyImages[index]?.caption ?? existing.caption,
-    }))
+    return existingImages.map((existing, index) =>
+      toVenueImage(existing.url, bodyImages[index]?.caption ?? existing.caption),
+    )
   }
 
   return undefined
@@ -1742,7 +1742,7 @@ export const checkVenueAvailability = async (req: AuthenticatedRequest, res: Res
       venueId,
       locationId,
       ranges: [{ startDate, endDate }],
-      excludeEventId,
+      ...(excludeEventId !== undefined ? { excludeEventId } : {}),
     })
 
     if (conflictResult) {
