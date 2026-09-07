@@ -53,6 +53,7 @@ import { FnbFoodDelivery } from './fnbFoodDelivery.model.js'
 import { EventVenue } from './eventVenue.model.js'
 import { Event } from './event.model.js'
 import { EventRegistration } from './eventRegistration.model.js'
+import { EventRequest } from './eventRequest.model.js'
 import { EventGlobalService } from './eventGlobalService.model.js'
 import { EventGlobalServiceProperty } from './eventGlobalServiceProperty.model.js'
 
@@ -347,6 +348,18 @@ EventRegistration.belongsTo(Resident, { foreignKey: 'residentId', as: 'resident'
 Property.hasMany(EventRegistration, { foreignKey: 'locationId', as: 'eventRegistrations' })
 EventRegistration.belongsTo(Property, { foreignKey: 'locationId', as: 'location' })
 
+EventVenue.hasMany(EventRequest, { foreignKey: 'venueId', as: 'eventRequests' })
+EventRequest.belongsTo(EventVenue, { foreignKey: 'venueId', as: 'venue' })
+
+Resident.hasMany(EventRequest, { foreignKey: 'residentId', as: 'eventRequests' })
+EventRequest.belongsTo(Resident, { foreignKey: 'residentId', as: 'resident' })
+
+Property.hasMany(EventRequest, { foreignKey: 'locationId', as: 'eventRequests' })
+EventRequest.belongsTo(Property, { foreignKey: 'locationId', as: 'location' })
+
+Event.hasMany(EventRequest, { foreignKey: 'confirmedEventId', as: 'confirmedFromRequests' })
+EventRequest.belongsTo(Event, { foreignKey: 'confirmedEventId', as: 'confirmedEvent' })
+
 export {
   BaseModel,
   baseModelColumns,
@@ -406,6 +419,7 @@ export {
   EventVenue,
   Event,
   EventRegistration,
+  EventRequest,
   EventGlobalService,
   EventGlobalServiceProperty,
 }

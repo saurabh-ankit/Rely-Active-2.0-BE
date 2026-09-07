@@ -50,12 +50,13 @@ const baseEventSchema = z
   .object({
     eventType: eventTypeSchema.optional().default('special'),
     title: z.string().trim().min(1, 'title is required'),
-    description: z.string().trim().min(1, 'description is required'),
+    description: z.string().trim().optional().nullable(),
     venueId: z.string().optional(),
     startDate: z.string().optional(),
     endDate: z.string().optional(),
     allowReservation: z.union([z.boolean(), z.string()]).optional(),
     frequencyType: frequencyTypeSchema.optional().default('once'),
+    occupancy: positiveInt.optional(),
     maxCapacity: optionalPositiveInt.optional(),
     reservationPerFlat: optionalPositiveInt.optional(),
     recurrenceDaysOfWeek: z.any().optional(),
@@ -114,18 +115,19 @@ const validateEventRules = (data: z.infer<typeof baseEventSchema>, ctx: z.Refine
     })
   }
 
+  if (data.occupancy === null || data.occupancy === undefined || data.occupancy <= 0) {
+    ctx.addIssue({
+      code: 'custom',
+      message: 'occupancy is required and must be greater than 0',
+      path: ['occupancy'],
+    })
+  }
+
   if (allowReservation) {
-    if (!data.maxCapacity || data.maxCapacity <= 0) {
+    if (!data.reservationPerFlat || data.reservationPerFlat <= 0) {
       ctx.addIssue({
         code: 'custom',
-        message: 'maxCapacity is required and must be greater than 0 when allowReservation is enabled',
-        path: ['maxCapacity'],
-      })
-    }
-    if (data.reservationPerFlat !== null && data.reservationPerFlat !== undefined && data.reservationPerFlat <= 0) {
-      ctx.addIssue({
-        code: 'custom',
-        message: 'reservationPerFlat must be a positive integer',
+        message: 'reservationPerFlat is required and must be greater than 0 when allowReservation is enabled',
         path: ['reservationPerFlat'],
       })
     }
@@ -223,3 +225,21 @@ export const createGlobalServiceSchema = z
   })
 
 export const updateGlobalServiceSchema = createGlobalServiceSchema
+
+export const scheduleEventRequestMeetingSchema = z.object({
+  meetingScheduledAt: z.union([z.string(), z.date()]).refine(
+    (val) => {
+      const d = val instanceof Date ? val : new Date(val)
+      return !Number.isNaN(d.getTime())
+    },
+    { message: 'meetingScheduledAt must be a valid datetime' },
+  ),
+})
+
+export const cancelEventRequestSchema = z.object({
+  cancellationReason: z
+    .string()
+    .trim()
+    .min(1, 'Reason for cancellation is required')
+    .max(2000, 'Reason for cancellation must be at most 2000 characters'),
+})

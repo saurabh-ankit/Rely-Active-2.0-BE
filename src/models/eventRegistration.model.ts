@@ -9,6 +9,7 @@ export interface EventRegistrationAttributes extends BaseAttributes {
   status: RegistrationStatus
   registeredAt: Date
   registrationDate: string
+  seatCount: number
   cancelledAt?: Date | null
   cancellationReason?: string | null
   attendedAt?: Date | null
@@ -22,6 +23,7 @@ export type EventRegistrationCreationAttributes = Optional<
   EventRegistrationAttributes,
   | 'id'
   | 'status'
+  | 'seatCount'
   | 'cancelledAt'
   | 'cancellationReason'
   | 'attendedAt'
@@ -43,6 +45,7 @@ export class EventRegistration
   declare status: RegistrationStatus
   declare registeredAt: Date
   declare registrationDate: string
+  declare seatCount: number
   declare cancelledAt: Date | null
   declare cancellationReason: string | null
   declare attendedAt: Date | null
@@ -64,6 +67,7 @@ EventRegistration.init(
     },
     registeredAt: { type: DataTypes.DATE, allowNull: false },
     registrationDate: { type: DataTypes.DATEONLY, allowNull: false },
+    seatCount: { type: DataTypes.INTEGER, allowNull: false, defaultValue: 1 },
     cancelledAt: { type: DataTypes.DATE, allowNull: true },
     cancellationReason: { type: DataTypes.STRING(500), allowNull: true },
     attendedAt: { type: DataTypes.DATE, allowNull: true },

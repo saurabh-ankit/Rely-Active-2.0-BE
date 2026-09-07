@@ -7,12 +7,13 @@ import type { AddOnService } from './eventVenue.model.js'
 export interface EventAttributes extends BaseAttributes {
   eventType: EventType
   title: string
-  description: string
+  description?: string | null
   startDate: Date
   endDate: Date
   venueId: string
   allowReservation: boolean
   frequencyType: FrequencyType
+  occupancy: number
   maxCapacity?: number | null
   reservationPerFlat?: number | null
   recurrenceDayOfWeek?: number | null
@@ -30,9 +31,11 @@ export interface EventAttributes extends BaseAttributes {
 export type EventCreationAttributes = Optional<
   EventAttributes,
   | 'id'
+  | 'description'
   | 'poster'
   | 'entryFee'
   | 'selectedServices'
+  | 'occupancy'
   | 'maxCapacity'
   | 'reservationPerFlat'
   | 'recurrenceDayOfWeek'
@@ -51,12 +54,13 @@ export type EventCreationAttributes = Optional<
 export class Event extends BaseModel<EventAttributes, EventCreationAttributes> implements EventAttributes {
   declare eventType: EventType
   declare title: string
-  declare description: string
+  declare description: string | null
   declare startDate: Date
   declare endDate: Date
   declare venueId: string
   declare allowReservation: boolean
   declare frequencyType: FrequencyType
+  declare occupancy: number
   declare maxCapacity: number | null
   declare reservationPerFlat: number | null
   declare recurrenceDayOfWeek: number | null
@@ -79,7 +83,7 @@ Event.init(
       allowNull: false,
     },
     title: { type: DataTypes.STRING(255), allowNull: false },
-    description: { type: DataTypes.TEXT, allowNull: false },
+    description: { type: DataTypes.TEXT, allowNull: true },
     startDate: { type: DataTypes.DATE, allowNull: false },
     endDate: { type: DataTypes.DATE, allowNull: false },
     venueId: { type: DataTypes.UUID, allowNull: false },
@@ -88,6 +92,7 @@ Event.init(
       type: DataTypes.ENUM(...Object.values(FrequencyType)),
       allowNull: false,
     },
+    occupancy: { type: DataTypes.INTEGER, allowNull: false, defaultValue: 1 },
     maxCapacity: { type: DataTypes.INTEGER, allowNull: true },
     reservationPerFlat: { type: DataTypes.INTEGER, allowNull: true },
     recurrenceDayOfWeek: { type: DataTypes.TINYINT, allowNull: true },

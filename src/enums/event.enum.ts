@@ -19,3 +19,11 @@ export enum RegistrationStatus {
   ATTENDED = 'ATTENDED',
   NO_SHOW = 'NO_SHOW',
 }
+
+export enum EventRequestStatus {
+  OPEN = 'OPEN',
+  IN_PROGRESS = 'IN_PROGRESS',
+  CLOSED = 'CLOSED',
+  REJECTED = 'REJECTED',
+  CANCELLED = 'CANCELLED',
+}

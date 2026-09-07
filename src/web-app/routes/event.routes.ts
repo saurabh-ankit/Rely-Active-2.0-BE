@@ -9,6 +9,8 @@ import {
   updateVenueSchema,
   createGlobalServiceSchema,
   updateGlobalServiceSchema,
+  scheduleEventRequestMeetingSchema,
+  cancelEventRequestSchema,
 } from '../../validations/event.validation.js'
 import {
   bulkDeleteEvents,
@@ -26,16 +28,23 @@ import {
   getAllVenues,
   getVenueById,
   updateVenue,
+  checkVenueAvailability,
   createGlobalService,
   deleteGlobalService,
   getAllGlobalServices,
   getLocationGlobalServices,
   updateGlobalService,
+  getAllEventRequests,
+  getEventRequestById,
+  scheduleEventRequestMeeting,
+  confirmEventRequest,
+  cancelEventRequest,
 } from '../controllers/event.controller.js'
 
 const eventRouter = Router({ mergeParams: true })
 const venueRouter = Router({ mergeParams: true })
 const globalServiceRouter = Router({ mergeParams: true })
+const eventRequestRouter = Router({ mergeParams: true })
 
 // ── Event Routes ──────────────────────────────────────────────────────────────
 eventRouter.use(authenticate)
@@ -63,6 +72,7 @@ venueRouter.post(
   createVenue,
 )
 venueRouter.get('/', getAllVenues)
+venueRouter.get('/availability', checkVenueAvailability)
 venueRouter.get('/:id', getVenueById)
 venueRouter.put(
   '/:id',
@@ -74,6 +84,18 @@ venueRouter.put(
   updateVenue,
 )
 venueRouter.delete('/:id', deleteVenue)
+
+// ── Event Request (Resident RFQ) Routes ───────────────────────────────────────
+eventRequestRouter.use(authenticate)
+eventRequestRouter.get('/', getAllEventRequests)
+eventRequestRouter.post(
+  '/:id/schedule-meeting',
+  validateBody(scheduleEventRequestMeetingSchema),
+  scheduleEventRequestMeeting,
+)
+eventRequestRouter.post('/:id/confirm', confirmEventRequest)
+eventRequestRouter.post('/:id/cancel', validateBody(cancelEventRequestSchema), cancelEventRequest)
+eventRequestRouter.get('/:id', getEventRequestById)
 
 // ── Global Service Routes ─────────────────────────────────────────────────────
 globalServiceRouter.use(authenticate)
@@ -88,5 +110,5 @@ globalServiceRouter.post('/', upload.single('image'), validateBody(createGlobalS
 globalServiceRouter.put('/:id', upload.single('image'), validateBody(updateGlobalServiceSchema), updateGlobalService)
 globalServiceRouter.delete('/:id', deleteGlobalService)
 
-export { eventRouter, venueRouter, globalServiceRouter }
+export { eventRouter, venueRouter, globalServiceRouter, eventRequestRouter }
 export default eventRouter

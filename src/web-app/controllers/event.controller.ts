@@ -1,16 +1,20 @@
 import { Response, Request } from 'express'
 import { Op, Sequelize } from 'sequelize'
 import sequelize from '../../config/db/index.js'
-import { EventType, FrequencyType, RegistrationStatus } from '../../enums/event.enum.js'
+import { EventType, FrequencyType, RegistrationStatus, EventRequestStatus } from '../../enums/event.enum.js'
 import { AuthenticatedRequest } from '../../middlewares/authenticate.js'
 import {
   Event,
   Property,
   EventVenue,
   EventRegistration,
+  EventRequest,
   Resident,
   EventGlobalServiceProperty,
   EventGlobalService,
+  PropertyUnit,
+  PropertyFloor,
+  PropertyBlock,
 } from '../../models/index.js'
 import { AddOnService } from '../../models/eventVenue.model.js'
 import {
@@ -19,12 +23,14 @@ import {
   getWeeklyRecurrenceDays,
   RecurrenceConfig,
   parseJsonBodyField,
-  getUploadedFilePath,
-  getUploadedFilePaths,
   normalizeServiceQuantity,
   parsePositiveInt,
   getAllocatedQuantity,
   getAllocatedQuantitiesByService,
+  findFirstVenueBookingConflictForRanges,
+  formatBookingUnavailableMessage,
+  resolveResidentRequestEventPoster,
+  RESIDENT_CONFIRMED_EVENT_DESCRIPTION_PREFIX,
 } from '../../utils/event.util.js'
 import { errorResponse, successResponse } from '../../utils/response/index.js'
 import { EventRegistrationAttributes } from '../../models/eventRegistration.model.js'
@@ -88,6 +94,38 @@ const parseOptionalInt = (value: unknown): number | null => {
   if (value === undefined || value === null || value === '') return null
   const parsed = parseInt(String(value), 10)
   return isNaN(parsed) ? null : parsed
+}
+
+const assertEventDateRange = (
+  start: Date,
+  end: Date,
+  options?: { dateOnly?: boolean },
+): { ok: true } | { ok: false; error: string } => {
+  if (isNaN(start.getTime()) || isNaN(end.getTime())) {
+    return { ok: false, error: 'Invalid date format' }
+  }
+
+  const now = new Date()
+  if (options?.dateOnly) {
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate())
+    const startDay = new Date(start.getFullYear(), start.getMonth(), start.getDate())
+    if (startDay < today) {
+      return { ok: false, error: 'Start date cannot be in the past' }
+    }
+  } else if (start < now) {
+    return { ok: false, error: 'Start date and time cannot be in the past' }
+  }
+
+  if (end < start) {
+    return {
+      ok: false,
+      error: options?.dateOnly
+        ? 'End date must be on or after start date'
+        : 'End date and time must be on or after start date and time',
+    }
+  }
+
+  return { ok: true }
 }
 
 const parseRecurrenceDaysOfWeek = (raw: unknown): number[] | undefined => {
@@ -179,11 +217,9 @@ const parseEventOccurrences = (
     }
     const occStart = new Date(occurrence.startDate)
     const occEnd = new Date(occurrence.endDate)
-    if (isNaN(occStart.getTime()) || isNaN(occEnd.getTime())) {
-      return { ok: false, error: 'Invalid date format in event occurrences' }
-    }
-    if (occStart > occEnd) {
-      return { ok: false, error: 'End date must be on or after start date for each occurrence' }
+    const dateCheck = assertEventDateRange(occStart, occEnd)
+    if (!dateCheck.ok) {
+      return { ok: false, error: dateCheck.error }
     }
     dates.push({ eventStartDate: occStart, eventEndDate: occEnd })
   }
@@ -203,6 +239,7 @@ const buildEventRowData = (
     entryFee: number | null
     selectedServices: AddOnService[] | null
     locationId: string
+    occupancy: number
     maxCapacity: number | null
     reservationPerFlat: number | null
     recurrenceDayOfWeek: number | null
@@ -240,14 +277,20 @@ export const createEvent = async (req: AuthenticatedRequest, res: Response) => {
     const locationId = req.params.locationId as string
     const parsedSelectedServices = parseJsonBodyField<AddOnService[]>(req.body.selectedServices)
     const recurrenceConfig = parseRecurrenceConfig(req.body)
+    const occupancy = parseOptionalInt(req.body.occupancy)
     const maxCapacity = parseOptionalInt(req.body.maxCapacity)
     const reservationPerFlat = parseOptionalInt(req.body.reservationPerFlat)
 
-    const poster = getUploadedFilePath(req, 'poster') || ''
+    const poster = (await resolveEventPosterFromRequest(req)) || ''
 
     if (!createdBy) {
       await transaction.rollback()
       return res.status(401).json(errorResponse('User not authenticated'))
+    }
+
+    if (occupancy === null || occupancy <= 0) {
+      await transaction.rollback()
+      return res.status(400).json(errorResponse('occupancy is required and must be greater than 0'))
     }
 
     const location = await Property.findByPk(locationId)
@@ -263,6 +306,11 @@ export const createEvent = async (req: AuthenticatedRequest, res: Response) => {
     if (!venue) {
       await transaction.rollback()
       return res.status(404).json(errorResponse('EventVenue not found in this location'))
+    }
+
+    if (Number(venue.occupancy) < occupancy) {
+      await transaction.rollback()
+      return res.status(400).json(errorResponse('Selected venue occupancy is less than event occupancy'))
     }
 
     const selectedResult = resolveSelectedServices(parsedSelectedServices, venue.addOnServices)
@@ -292,13 +340,11 @@ export const createEvent = async (req: AuthenticatedRequest, res: Response) => {
       }
       const start = new Date(startDate)
       const end = new Date(endDate)
-      if (isNaN(start.getTime()) || isNaN(end.getTime())) {
+      const dateOnly = resolvedFrequency !== FrequencyType.ONCE
+      const dateCheck = assertEventDateRange(start, end, { dateOnly })
+      if (!dateCheck.ok) {
         await transaction.rollback()
-        return res.status(400).json(errorResponse('Invalid date format'))
-      }
-      if (start > end) {
-        await transaction.rollback()
-        return res.status(400).json(errorResponse('End date must be on or after start date'))
+        return res.status(400).json(errorResponse(dateCheck.error))
       }
       eventDates = generateRecurringEventDates(start, end, resolvedFrequency, recurrenceConfig)
       if (eventDates.length === 0) {
@@ -314,6 +360,22 @@ export const createEvent = async (req: AuthenticatedRequest, res: Response) => {
         .json(errorResponse(`Too many events generated (${eventDates.length}). Maximum allowed is 1000.`))
     }
 
+    const bookingConflict = await findFirstVenueBookingConflictForRanges({
+      venueId,
+      locationId,
+      ranges: eventDates.map((d) => ({ startDate: d.eventStartDate, endDate: d.eventEndDate })),
+    })
+    if (bookingConflict) {
+      await transaction.rollback()
+      return res
+        .status(409)
+        .json(
+          errorResponse(
+            formatBookingUnavailableMessage(bookingConflict.conflict.startDate, bookingConflict.conflict.endDate),
+          ),
+        )
+    }
+
     const allowRes = allowReservation === true || allowReservation === 'true'
 
     const weeklyRecurrence = resolveStoredWeeklyRecurrence(recurrenceConfig)
@@ -321,7 +383,7 @@ export const createEvent = async (req: AuthenticatedRequest, res: Response) => {
     const baseRow = {
       eventType: resolvedEventType,
       title,
-      description: description || '',
+      description: description?.trim() ? description.trim() : null,
       venueId,
       allowReservation: allowRes,
       frequencyType: resolvedFrequency,
@@ -329,6 +391,7 @@ export const createEvent = async (req: AuthenticatedRequest, res: Response) => {
       entryFee: entryFee !== undefined && entryFee !== '' ? parseFloat(entryFee) : null,
       selectedServices: selectedResult.services,
       locationId,
+      occupancy,
       maxCapacity: allowRes ? maxCapacity : null,
       reservationPerFlat: allowRes ? reservationPerFlat : null,
       recurrenceDayOfWeek: weeklyRecurrence.recurrenceDayOfWeek,
@@ -412,7 +475,7 @@ export const getAllEvents = async (req: AuthenticatedRequest, res: Response) => 
     const queryOptions: Record<string, unknown> = {
       where: whereClause,
       include: [
-        { model: EventVenue, as: 'venue', attributes: ['id', 'name', 'occupancy', 'price'] },
+        { model: EventVenue, as: 'venue', attributes: ['id', 'name', 'occupancy', 'price', 'coverPhoto'] },
         { model: Property, as: 'location', attributes: ['id', 'property_name'] },
       ],
       order: [[String(sortBy), String(sortOrder)]],
@@ -425,9 +488,19 @@ export const getAllEvents = async (req: AuthenticatedRequest, res: Response) => 
       queryOptions.offset = (pageNum - 1) * limitNum
     }
 
-    const { count, rows } = await Event.findAndCountAll(queryOptions)
+    const { count, rows } = await Event.findAndCountAll({
+      ...queryOptions,
+      distinct: true,
+      col: 'id',
+    })
 
-    const responseData: Record<string, unknown> = { events: rows }
+    const events = rows.map((event) => {
+      const json = event.toJSON() as Event & { venue?: EventVenue | null; poster?: string | null }
+      json.poster = resolveResidentRequestEventPoster(json, json.venue)
+      return json
+    })
+
+    const responseData: Record<string, unknown> = { events }
     if (!isAll) {
       const limitNum = parseInt(String(limit))
       responseData.pagination = {
@@ -478,7 +551,10 @@ export const getEventById = async (req: AuthenticatedRequest, res: Response) => 
       return res.status(404).json(errorResponse('Event not found'))
     }
 
-    return res.status(200).json(successResponse('Event fetched successfully', event))
+    const json = event.toJSON() as Event & { venue?: EventVenue | null; poster?: string | null }
+    json.poster = resolveResidentRequestEventPoster(json, json.venue)
+
+    return res.status(200).json(successResponse('Event fetched successfully', json))
   } catch (error) {
     console.error('Get Event Error:', error)
     return res.status(500).json(errorResponse('Failed to fetch event'))
@@ -504,10 +580,11 @@ export const updateEvent = async (req: AuthenticatedRequest, res: Response) => {
     const updatedBy = req.user?.id
     const parsedSelectedServices = parseJsonBodyField<AddOnService[]>(req.body.selectedServices)
     const recurrenceConfig = parseRecurrenceConfig(req.body)
+    const occupancy = parseOptionalInt(req.body.occupancy)
     const maxCapacity = parseOptionalInt(req.body.maxCapacity)
     const reservationPerFlat = parseOptionalInt(req.body.reservationPerFlat)
 
-    const poster = getUploadedFilePath(req, 'poster')
+    const poster = await resolveEventPosterFromRequest(req)
 
     if (!updatedBy) {
       return res.status(401).json(errorResponse('User not authenticated'))
@@ -527,6 +604,14 @@ export const updateEvent = async (req: AuthenticatedRequest, res: Response) => {
     })
     if (!venue) {
       return res.status(404).json(errorResponse('EventVenue not found in this location'))
+    }
+
+    const resolvedOccupancy = occupancy ?? event.occupancy ?? 1
+    if (resolvedOccupancy <= 0) {
+      return res.status(400).json(errorResponse('occupancy is required and must be greater than 0'))
+    }
+    if (Number(venue.occupancy) < resolvedOccupancy) {
+      return res.status(400).json(errorResponse('Selected venue occupancy is less than event occupancy'))
     }
 
     let resolvedSelectedServices = event.selectedServices
@@ -554,9 +639,10 @@ export const updateEvent = async (req: AuthenticatedRequest, res: Response) => {
     } else {
       const start = startDate ? new Date(startDate) : event.startDate
       const end = endDate ? new Date(endDate) : event.endDate
-
-      if (start > end) {
-        return res.status(400).json(errorResponse('End date must be on or after start date'))
+      const dateOnly = freqType !== FrequencyType.ONCE
+      const dateCheck = assertEventDateRange(start, end, { dateOnly })
+      if (!dateCheck.ok) {
+        return res.status(400).json(errorResponse(dateCheck.error))
       }
 
       const config: RecurrenceConfig = {}
@@ -585,6 +671,22 @@ export const updateEvent = async (req: AuthenticatedRequest, res: Response) => {
         .json(errorResponse(`Too many events generated (${eventDates.length}). Maximum allowed is 1000.`))
     }
 
+    const updateConflict = await findFirstVenueBookingConflictForRanges({
+      venueId: targetVenueId,
+      locationId,
+      ranges: eventDates.map((d) => ({ startDate: d.eventStartDate, endDate: d.eventEndDate })),
+      excludeEventId: event.id,
+    })
+    if (updateConflict) {
+      return res
+        .status(409)
+        .json(
+          errorResponse(
+            formatBookingUnavailableMessage(updateConflict.conflict.startDate, updateConflict.conflict.endDate),
+          ),
+        )
+    }
+
     const targetTitle = title || event.title
     const targetCreatedAt = event.createdAt
     const allowRes =
@@ -605,7 +707,7 @@ export const updateEvent = async (req: AuthenticatedRequest, res: Response) => {
       await Event.update({ isDeleted: true, updatedBy }, { where: { id: { [Op.in]: siblingEvents.map((s) => s.id) } } })
     }
 
-    const resolvedMaxCapacity = allowRes ? (maxCapacity ?? event.maxCapacity) : null
+    const resolvedMaxCapacity = allowRes ? maxCapacity : null
     const resolvedReservationPerFlat = allowRes ? (reservationPerFlat ?? event.reservationPerFlat) : null
     const resolvedWeeklyRecurrence = resolveStoredWeeklyRecurrence(recurrenceConfig, {
       recurrenceDayOfWeek: event.recurrenceDayOfWeek,
@@ -618,12 +720,14 @@ export const updateEvent = async (req: AuthenticatedRequest, res: Response) => {
     await event.update({
       eventType: resolvedEventType,
       title: title || event.title,
-      description: description !== undefined ? description : event.description,
+      description:
+        description !== undefined ? (description?.trim() ? String(description).trim() : null) : event.description,
       startDate: firstOcc.eventStartDate,
       endDate: firstOcc.eventEndDate,
       venueId: targetVenueId,
       allowReservation: allowRes,
       frequencyType: freqType,
+      occupancy: resolvedOccupancy,
       maxCapacity: resolvedMaxCapacity,
       reservationPerFlat: resolvedReservationPerFlat,
       recurrenceDayOfWeek: resolvedWeeklyRecurrence.recurrenceDayOfWeek,
@@ -642,12 +746,14 @@ export const updateEvent = async (req: AuthenticatedRequest, res: Response) => {
       const eventsToCreate = additionalOccurrences.map((occ) => ({
         eventType: resolvedEventType,
         title: title || event.title,
-        description: description !== undefined ? description : event.description,
+        description:
+          description !== undefined ? (description?.trim() ? String(description).trim() : null) : event.description,
         startDate: occ.eventStartDate,
         endDate: occ.eventEndDate,
         venueId: targetVenueId,
         allowReservation: allowRes,
         frequencyType: freqType,
+        occupancy: resolvedOccupancy,
         maxCapacity: resolvedMaxCapacity,
         reservationPerFlat: resolvedReservationPerFlat,
         recurrenceDayOfWeek: resolvedWeeklyRecurrence.recurrenceDayOfWeek,
@@ -829,12 +935,18 @@ export const getEventsCalendar = async (req: AuthenticatedRequest, res: Response
         isDeleted: false,
         [Op.and]: [{ startDate: { [Op.lte]: endDate } }, { endDate: { [Op.gte]: startDate } }],
       },
-      include: [{ model: EventVenue, as: 'venue', attributes: ['id', 'name'] }],
+      include: [{ model: EventVenue, as: 'venue', attributes: ['id', 'name', 'coverPhoto'] }],
       order: [['startDate', 'ASC']],
     })
 
+    const serializedEvents = events.map((event) => {
+      const json = event.toJSON() as Event & { venue?: EventVenue | null; poster?: string | null }
+      json.poster = resolveResidentRequestEventPoster(json, json.venue)
+      return json
+    })
+
     const eventsByDate: Record<string, unknown[]> = {}
-    events.forEach((event) => {
+    serializedEvents.forEach((event) => {
       const evtStart = new Date(event.startDate)
       const evtEnd = new Date(event.endDate)
 
@@ -875,7 +987,7 @@ export const getEventsCalendar = async (req: AuthenticatedRequest, res: Response
       startDate: startDate.toISOString(),
       endDate: endDate.toISOString(),
       eventsByDate,
-      events,
+      events: serializedEvents,
     }
 
     if (viewType === 'week') {
@@ -994,6 +1106,7 @@ export const getEventRegistrations = async (req: AuthenticatedRequest, res: Resp
         residentId: regData.residentId,
         patientId: regData.residentId,
         status: regData.status,
+        seatCount: regData.seatCount ?? 1,
         registeredAt: regData.registeredAt,
         registrationDate: regData.registrationDate,
         cancelledAt: regData.cancelledAt,
@@ -1095,6 +1208,15 @@ export const getEventCapacity = async (req: AuthenticatedRequest, res: Response)
 
     const baseWhere = { eventId, locationId, isDeleted: false }
 
+    const sumSeats = async (extraWhere: Record<string, unknown> = {}): Promise<number> => {
+      const result = (await EventRegistration.findOne({
+        attributes: [[Sequelize.fn('COALESCE', Sequelize.fn('SUM', Sequelize.col('seatCount')), 0), 'totalSeats']],
+        where: { ...baseWhere, ...extraWhere },
+        raw: true,
+      })) as { totalSeats?: string | number } | null
+      return Number(result?.totalSeats ?? 0)
+    }
+
     const totalRegistrations = await EventRegistration.count({ where: baseWhere })
     const confirmedRegistrations = await EventRegistration.count({
       where: { ...baseWhere, status: RegistrationStatus.CONFIRMED },
@@ -1112,10 +1234,16 @@ export const getEventCapacity = async (req: AuthenticatedRequest, res: Response)
       where: { ...baseWhere, status: RegistrationStatus.NO_SHOW },
     })
 
+    const confirmedSeats = await sumSeats({ status: RegistrationStatus.CONFIRMED })
+    const pendingSeats = await sumSeats({ status: RegistrationStatus.PENDING })
+    const attendedSeats = await sumSeats({ status: RegistrationStatus.ATTENDED })
+
     const totalCapacity = event.maxCapacity ?? venue.occupancy ?? 0
-    const activeRegistrations = confirmedRegistrations + pendingRegistrations
-    const availableSpots = totalCapacity > 0 ? totalCapacity - activeRegistrations : null
-    const utilizationPercentage = totalCapacity > 0 ? (activeRegistrations / totalCapacity) * 100 : 0
+    // Capacity uses seatCount (multi-seat reservations), not registration row count
+    const activeSeats = confirmedSeats + pendingSeats
+    const activeRegistrations = activeSeats
+    const availableSpots = totalCapacity > 0 ? Math.max(0, totalCapacity - activeSeats) : null
+    const utilizationPercentage = totalCapacity > 0 ? (activeSeats / totalCapacity) * 100 : 0
 
     return res.status(200).json(
       successResponse('Event capacity retrieved successfully', {
@@ -1133,6 +1261,10 @@ export const getEventCapacity = async (req: AuthenticatedRequest, res: Response)
         cancelledRegistrations,
         attendedRegistrations,
         noShowRegistrations,
+        confirmedSeats,
+        pendingSeats,
+        attendedSeats,
+        activeSeats,
         activeRegistrations,
         availableSpots,
         utilizationPercentage: Math.round(utilizationPercentage * 100) / 100,
@@ -1294,10 +1426,94 @@ export const updateRegistrationStatus = async (req: AuthenticatedRequest, res: R
 // ─── From venue.controller.ts ───────────────────────────────────────────
 type VenueImage = { url: string; caption?: string }
 
-const parseVenueJsonFields = (body: Record<string, unknown>) => ({
-  images: parseJsonBodyField<VenueImage[]>(body.images),
-  addOnServices: parseJsonBodyField<AddOnService[]>(body.addOnServices),
-})
+const VENUE_S3_FOLDER = 'events/venues'
+const EVENT_POSTER_S3_FOLDER = 'events/posters'
+
+async function resolveEventPosterFromRequest(req: AuthenticatedRequest): Promise<string | undefined> {
+  const files = (req.files as Record<string, Express.Multer.File[]> | undefined) || {}
+  const file = files.poster?.[0]
+  if (!file) return undefined
+  const s3Res = await uploadFileToS3(file, EVENT_POSTER_S3_FOLDER)
+  return s3Res.location
+}
+
+const parseVenueJsonFields = (body: Record<string, unknown>) => {
+  let imagesRaw: unknown = body.images
+  // Multipart can put the captions JSON under the same key as file parts.
+  if (Array.isArray(imagesRaw)) {
+    const jsonStr = imagesRaw.find((item) => typeof item === 'string' && String(item).trim().startsWith('['))
+    if (jsonStr !== undefined) imagesRaw = jsonStr
+  }
+
+  return {
+    images: parseJsonBodyField<VenueImage[]>(imagesRaw),
+    addOnServices: parseJsonBodyField<AddOnService[]>(body.addOnServices),
+  }
+}
+
+function getVenueMulterFiles(req: AuthenticatedRequest): Record<string, Express.Multer.File[]> {
+  return (req.files as Record<string, Express.Multer.File[]> | undefined) || {}
+}
+
+async function resolveVenueCoverPhotoFromRequest(req: AuthenticatedRequest): Promise<string | undefined> {
+  const file = getVenueMulterFiles(req).coverPhoto?.[0]
+  if (!file) return undefined
+  const s3Res = await uploadFileToS3(file, VENUE_S3_FOLDER)
+  return s3Res.location
+}
+
+async function resolveVenueImagesFromRequest(
+  req: AuthenticatedRequest,
+  bodyImages: VenueImage[] | undefined,
+  existingImages: VenueImage[] | null | undefined,
+): Promise<VenueImage[] | undefined> {
+  const files = getVenueMulterFiles(req).images || []
+  const uploadedUrls: string[] = []
+  for (const file of files) {
+    const s3Res = await uploadFileToS3(file, VENUE_S3_FOLDER)
+    uploadedUrls.push(s3Res.location)
+  }
+
+  if (uploadedUrls.length > 0) {
+    const hasExistingUrls = !!bodyImages?.some((img) => typeof img.url === 'string' && img.url.trim())
+    if (hasExistingUrls && bodyImages) {
+      let uploadIdx = 0
+      return bodyImages
+        .map((img) => {
+          if (img.url && img.url.trim()) {
+            return { url: img.url.trim(), caption: img.caption }
+          }
+          const url = uploadedUrls[uploadIdx++]
+          return url ? { url, caption: img.caption } : null
+        })
+        .filter((img): img is VenueImage => img !== null)
+    }
+
+    return uploadedUrls.map((url, index) => ({
+      url,
+      caption: bodyImages?.[index]?.caption,
+    }))
+  }
+
+  if (bodyImages === undefined) {
+    return undefined
+  }
+
+  if (bodyImages.some((img) => typeof img.url === 'string' && img.url.trim())) {
+    return bodyImages
+      .filter((img) => typeof img.url === 'string' && img.url.trim())
+      .map((img) => ({ url: img.url.trim(), caption: img.caption }))
+  }
+
+  if (existingImages && existingImages.length > 0) {
+    return existingImages.map((existing, index) => ({
+      url: existing.url,
+      caption: bodyImages[index]?.caption ?? existing.caption,
+    }))
+  }
+
+  return undefined
+}
 
 async function validateVenueAddOnServices(
   locationId: string,
@@ -1379,23 +1595,8 @@ export const createVenue = async (req: AuthenticatedRequest, res: Response) => {
       return res.status(400).json(errorResponse('EventVenue name already exists in this location'))
     }
 
-    const coverPhoto = getUploadedFilePath(req, 'coverPhoto') || ''
-    const uploadedImages = getUploadedFilePaths(req, 'images').map((url) => ({ url }))
-
-    let finalImages = uploadedImages
-    if (images && Array.isArray(images) && images.length > 0) {
-      if (uploadedImages.length > 0) {
-        finalImages = uploadedImages.map((uploaded, index) => {
-          const bodyImage = images[index]
-          if (bodyImage?.caption) {
-            return { url: uploaded.url, caption: bodyImage.caption }
-          }
-          return uploaded
-        })
-      } else {
-        finalImages = images
-      }
-    }
+    const coverPhoto = (await resolveVenueCoverPhotoFromRequest(req)) || ''
+    const finalImages = (await resolveVenueImagesFromRequest(req, images, null)) || []
 
     const addOnValidation = await validateVenueAddOnServices(locationId, addOnServices)
     if (!addOnValidation.ok) {
@@ -1419,7 +1620,9 @@ export const createVenue = async (req: AuthenticatedRequest, res: Response) => {
     return res.status(201).json(successResponse('EventVenue created successfully', venue))
   } catch (error) {
     console.error('Create EventVenue Error:', error)
-    return res.status(500).json(errorResponse('Failed to create venue'))
+    const message =
+      error instanceof Error && /s3|upload/i.test(error.message) ? error.message : 'Failed to create venue'
+    return res.status(500).json(errorResponse(message))
   }
 }
 
@@ -1501,6 +1704,80 @@ export const getVenueById = async (req: AuthenticatedRequest, res: Response) => 
   }
 }
 
+/**
+ * GET /api/v1/location/:locationId/venues/availability?venueId=&startDate=&endDate=&excludeEventId=
+ */
+export const checkVenueAvailability = async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const locationId = req.params.locationId as string
+    const venueId = String(req.query.venueId || '').trim()
+    const startDateRaw = req.query.startDate
+    const endDateRaw = req.query.endDate
+    const excludeEventId = req.query.excludeEventId ? String(req.query.excludeEventId) : undefined
+
+    if (!venueId) {
+      return res.status(400).json(errorResponse('venueId is required'))
+    }
+    if (!startDateRaw || !endDateRaw) {
+      return res.status(400).json(errorResponse('startDate and endDate are required'))
+    }
+
+    const startDate = new Date(String(startDateRaw))
+    const endDate = new Date(String(endDateRaw))
+    if (Number.isNaN(startDate.getTime()) || Number.isNaN(endDate.getTime())) {
+      return res.status(400).json(errorResponse('Invalid startDate or endDate'))
+    }
+    if (endDate <= startDate) {
+      return res.status(400).json(errorResponse('endDate must be after startDate'))
+    }
+
+    const venue = await EventVenue.findOne({
+      where: { id: venueId, locationId, isDeleted: false },
+    })
+    if (!venue) {
+      return res.status(404).json(errorResponse('EventVenue not found in this location'))
+    }
+
+    const conflictResult = await findFirstVenueBookingConflictForRanges({
+      venueId,
+      locationId,
+      ranges: [{ startDate, endDate }],
+      excludeEventId,
+    })
+
+    if (conflictResult) {
+      const message = formatBookingUnavailableMessage(
+        conflictResult.conflict.startDate,
+        conflictResult.conflict.endDate,
+      )
+      return res.status(200).json(
+        successResponse(message, {
+          available: false,
+          message,
+          conflict: {
+            source: conflictResult.conflict.source,
+            id: conflictResult.conflict.id,
+            title: conflictResult.conflict.title,
+            startDate: conflictResult.conflict.startDate,
+            endDate: conflictResult.conflict.endDate,
+          },
+        }),
+      )
+    }
+
+    return res.status(200).json(
+      successResponse('Venue is available for the selected schedule', {
+        available: true,
+        message: null,
+        conflict: null,
+      }),
+    )
+  } catch (error) {
+    console.error('Check Venue Availability Error:', error)
+    return res.status(500).json(errorResponse('Failed to check venue availability'))
+  }
+}
+
 export const updateVenue = async (req: AuthenticatedRequest, res: Response) => {
   try {
     const id = req.params.id as string
@@ -1536,25 +1813,8 @@ export const updateVenue = async (req: AuthenticatedRequest, res: Response) => {
       }
     }
 
-    const coverPhoto = getUploadedFilePath(req, 'coverPhoto')
-    const uploadedImages = getUploadedFilePaths(req, 'images').map((url) => ({ url }))
-
-    let finalImages: Array<{ url: string; caption?: string }> | undefined
-    if (uploadedImages.length > 0) {
-      if (images && Array.isArray(images) && images.length > 0) {
-        finalImages = uploadedImages.map((uploaded, index) => {
-          const bodyImage = images[index]
-          if (bodyImage?.caption) {
-            return { url: uploaded.url, caption: bodyImage.caption }
-          }
-          return uploaded
-        })
-      } else {
-        finalImages = uploadedImages
-      }
-    } else if (images !== undefined) {
-      finalImages = images
-    }
+    const coverPhoto = await resolveVenueCoverPhotoFromRequest(req)
+    const finalImages = await resolveVenueImagesFromRequest(req, images, venue.images)
 
     let validatedAddOnServices: AddOnService[] | null | undefined
     if (addOnServices !== undefined) {
@@ -1580,7 +1840,9 @@ export const updateVenue = async (req: AuthenticatedRequest, res: Response) => {
     return res.status(200).json(successResponse('EventVenue updated successfully', venue))
   } catch (error) {
     console.error('Update EventVenue Error:', error)
-    return res.status(500).json(errorResponse('Failed to update venue'))
+    const message =
+      error instanceof Error && /s3|upload/i.test(error.message) ? error.message : 'Failed to update venue'
+    return res.status(500).json(errorResponse(message))
   }
 }
 
@@ -1713,7 +1975,7 @@ export async function getAllGlobalServices(_req: Request, res: Response): Promis
     })
   } catch (error) {
     console.error('Error fetching global services:', error)
-    res.status(500).json({ success: false, message: 'Failed to fetch global services' })
+    res.status(500).json({ success: false, message: 'Failed to fetch Event Global Services' })
   }
 }
 
@@ -1763,12 +2025,12 @@ export async function getLocationGlobalServices(req: Request, res: Response): Pr
 
     res.status(200).json({
       success: true,
-      message: 'Location global services fetched successfully',
+      message: 'Location Event Global Services fetched successfully',
       data,
     })
   } catch (error) {
     console.error('Error fetching location global services:', error)
-    res.status(500).json({ success: false, message: 'Failed to fetch location global services' })
+    res.status(500).json({ success: false, message: 'Failed to fetch location Event Global Services' })
   }
 }
 
@@ -1818,12 +2080,16 @@ export async function createGlobalService(req: AuthenticatedRequest, res: Respon
 
     res.status(201).json({
       success: true,
-      message: 'Global service created successfully',
+      message: 'Event Global Service created successfully',
       data: reloaded ? reloaded.toJSON() : service.toJSON(),
     })
   } catch (error) {
     console.error('Error creating global service:', error)
-    res.status(500).json({ success: false, message: 'Failed to create global service' })
+    const message =
+      error instanceof Error && /s3|upload/i.test(error.message)
+        ? error.message
+        : 'Failed to create Event Global Service'
+    res.status(500).json({ success: false, message })
   }
 }
 
@@ -1836,7 +2102,7 @@ export async function updateGlobalService(req: AuthenticatedRequest, res: Respon
       include: [{ model: EventGlobalServiceProperty, as: 'propertyServices' }],
     })
     if (!service) {
-      res.status(404).json({ success: false, message: 'Global service not found' })
+      res.status(404).json({ success: false, message: 'Event Global Service not found' })
       return
     }
 
@@ -1911,12 +2177,16 @@ export async function updateGlobalService(req: AuthenticatedRequest, res: Respon
 
     res.status(200).json({
       success: true,
-      message: 'Global service updated successfully',
+      message: 'Event Global Service updated successfully',
       data: reloaded ? reloaded.toJSON() : service.toJSON(),
     })
   } catch (error) {
     console.error('Error updating global service:', error)
-    res.status(500).json({ success: false, message: 'Failed to update global service' })
+    const message =
+      error instanceof Error && /s3|upload/i.test(error.message)
+        ? error.message
+        : 'Failed to update Event Global Service'
+    res.status(500).json({ success: false, message })
   }
 }
 
@@ -1925,16 +2195,539 @@ export async function deleteGlobalService(req: Request, res: Response): Promise<
     const id = req.params.id as string
     const service = await EventGlobalService.findByPk(id)
     if (!service) {
-      res.status(404).json({ success: false, message: 'Global service not found' })
+      res.status(404).json({ success: false, message: 'Event Global Service not found' })
       return
     }
 
     await EventGlobalServiceProperty.destroy({ where: { globalServiceId: id } })
     await service.destroy()
 
-    res.status(200).json({ success: true, message: 'Global service deleted successfully' })
+    res.status(200).json({ success: true, message: 'Event Global Service deleted successfully' })
   } catch (error) {
     console.error('Error deleting global service:', error)
-    res.status(500).json({ success: false, message: 'Failed to delete global service' })
+    res.status(500).json({ success: false, message: 'Failed to delete Event Global Service' })
+  }
+}
+
+type EventRequestWithRelations = EventRequest & {
+  venue?: EventVenue | null
+  resident?:
+    | (Resident & {
+        unit?:
+          | (PropertyUnit & {
+              floor?:
+                | (PropertyFloor & {
+                    block?: PropertyBlock | null
+                  })
+                | null
+            })
+          | null
+      })
+    | null
+}
+
+function computeEventRequestTotalCost(
+  venuePrice: number | string | null | undefined,
+  services: AddOnService[] | null | undefined,
+): number {
+  const venueCost = Number(venuePrice ?? 0) || 0
+  const servicesTotal = (Array.isArray(services) ? services : []).reduce((sum, service) => {
+    const qty = Number(service.quantity ?? 1) || 1
+    const unit = Number(service.price ?? 0) || 0
+    return sum + unit * qty
+  }, 0)
+  return venueCost + servicesTotal
+}
+
+function getResidentFlatTower(resident: EventRequestWithRelations['resident']): {
+  flatNumber: string | null
+  tower: string | null
+} {
+  const unit = resident?.unit
+  const block = unit?.floor?.block
+  return {
+    flatNumber: unit?.unit_number || null,
+    tower: block?.block_name || null,
+  }
+}
+
+const eventRequestResidentInclude = {
+  model: Resident,
+  as: 'resident',
+  attributes: ['id', 'firstName', 'lastName', 'email', 'phone', 'photoUrl', 'unitId'],
+  required: false,
+  include: [
+    {
+      model: PropertyUnit,
+      as: 'unit',
+      attributes: ['id', 'unit_number'],
+      required: false,
+      include: [
+        {
+          model: PropertyFloor,
+          as: 'floor',
+          attributes: ['id', 'floor_name', 'floor_number'],
+          required: false,
+          include: [
+            {
+              model: PropertyBlock,
+              as: 'block',
+              attributes: ['id', 'block_name'],
+              required: false,
+            },
+          ],
+        },
+      ],
+    },
+  ],
+}
+
+function serializeEventRequest(request: EventRequestWithRelations) {
+  const resident = request.resident
+  const venue = request.venue
+  const { flatNumber, tower } = getResidentFlatTower(resident)
+  return {
+    id: request.id,
+    requestNumber: request.requestNumber || null,
+    title: request.title,
+    startDate: request.startDate,
+    endDate: request.endDate,
+    occupancy: request.occupancy,
+    customRequest: request.customRequest,
+    schedule: Array.isArray(request.schedule) ? request.schedule : null,
+    selectedServices: Array.isArray(request.selectedServices) ? request.selectedServices : null,
+    status: request.status,
+    meetingScheduledAt: request.meetingScheduledAt || null,
+    confirmedEventId: request.confirmedEventId || null,
+    cancellationReason: request.cancellationReason || null,
+    totalCost: computeEventRequestTotalCost(venue?.price, request.selectedServices),
+    venueId: request.venueId,
+    residentId: request.residentId,
+    locationId: request.locationId,
+    createdAt: request.createdAt,
+    updatedAt: request.updatedAt,
+    venue: venue
+      ? {
+          id: venue.id,
+          name: venue.name,
+          occupancy: venue.occupancy,
+          coverPhoto: venue.coverPhoto,
+          keyFeatures: venue.keyFeatures,
+          otherServices: venue.otherServices,
+          addOnServices: venue.addOnServices,
+          price: venue.price,
+        }
+      : null,
+    resident: resident
+      ? {
+          id: resident.id,
+          firstName: resident.firstName,
+          lastName: resident.lastName,
+          fullName: `${resident.firstName || ''} ${resident.lastName || ''}`.trim(),
+          email: resident.email,
+          phone: resident.phone,
+          photoUrl: resident.photoUrl,
+          flatNumber,
+          tower,
+        }
+      : null,
+  }
+}
+
+/**
+ * GET /api/v1/location/:locationId/event-requests
+ */
+export const getAllEventRequests = async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const locationId = req.params.locationId as string
+    const { page = 1, limit = 10, search, status, sortBy = 'createdAt', sortOrder = 'DESC' } = req.query
+
+    const pageNum = parseInt(String(page), 10) || 1
+    const limitNum = String(limit) === 'all' ? undefined : parseInt(String(limit), 10) || 10
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const whereClause: any = {
+      locationId,
+      isDeleted: false,
+    }
+
+    if (status && String(status).trim() !== '' && String(status) !== 'all') {
+      whereClause.status = String(status).toUpperCase()
+    }
+
+    if (search) {
+      const searchTerm = String(search).trim()
+      whereClause[Op.or] = [
+        Sequelize.where(Sequelize.fn('LOWER', Sequelize.col('EventRequest.title')), {
+          [Op.like]: `%${searchTerm.toLowerCase()}%`,
+        }),
+      ]
+    }
+
+    const findOptions: {
+      where: typeof whereClause
+      include: object[]
+      order: [string, string][]
+      limit?: number
+      offset?: number
+    } = {
+      where: whereClause,
+      include: [
+        {
+          model: EventVenue,
+          as: 'venue',
+          attributes: [
+            'id',
+            'name',
+            'occupancy',
+            'price',
+            'coverPhoto',
+            'keyFeatures',
+            'otherServices',
+            'addOnServices',
+          ],
+          required: false,
+        },
+        eventRequestResidentInclude,
+      ],
+      order: [[String(sortBy), String(sortOrder)]],
+    }
+
+    if (limitNum) {
+      findOptions.limit = limitNum
+      findOptions.offset = (pageNum - 1) * limitNum
+    }
+
+    const { count, rows } = await EventRequest.findAndCountAll(findOptions)
+
+    return res.status(200).json(
+      successResponse('Event requests fetched successfully', {
+        requests: (rows as EventRequestWithRelations[]).map(serializeEventRequest),
+        pagination: {
+          total: count,
+          page: pageNum,
+          limit: limitNum ?? count,
+          totalPages: limitNum ? Math.ceil(count / limitNum) : 1,
+        },
+      }),
+    )
+  } catch (error) {
+    console.error('Get Event Requests Error:', error)
+    return res.status(500).json(errorResponse('Failed to fetch event requests'))
+  }
+}
+
+/**
+ * GET /api/v1/location/:locationId/event-requests/:id
+ */
+export const getEventRequestById = async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const locationId = req.params.locationId as string
+    const { id } = req.params
+
+    const request = (await EventRequest.findOne({
+      where: {
+        id,
+        locationId,
+        isDeleted: false,
+      },
+      include: [
+        {
+          model: EventVenue,
+          as: 'venue',
+          attributes: [
+            'id',
+            'name',
+            'occupancy',
+            'price',
+            'coverPhoto',
+            'images',
+            'keyFeatures',
+            'otherServices',
+            'addOnServices',
+          ],
+          required: false,
+        },
+        eventRequestResidentInclude,
+      ],
+    })) as EventRequestWithRelations | null
+
+    if (!request) {
+      return res.status(404).json(errorResponse('Event request not found'))
+    }
+
+    return res.status(200).json(successResponse('Event request fetched successfully', serializeEventRequest(request)))
+  } catch (error) {
+    console.error('Get Event Request Error:', error)
+    return res.status(500).json(errorResponse('Failed to fetch event request'))
+  }
+}
+
+function getStartOfDay(date: Date): Date {
+  const d = new Date(date)
+  d.setHours(0, 0, 0, 0)
+  return d
+}
+
+function getEventRequestBookingRanges(request: EventRequest): Array<{ startDate: Date; endDate: Date }> {
+  if (Array.isArray(request.schedule) && request.schedule.length > 0) {
+    return request.schedule
+      .map((slot) => ({
+        startDate: new Date(slot.startDate),
+        endDate: new Date(slot.endDate),
+      }))
+      .filter((slot) => !Number.isNaN(slot.startDate.getTime()) && !Number.isNaN(slot.endDate.getTime()))
+  }
+  return [{ startDate: new Date(request.startDate), endDate: new Date(request.endDate) }]
+}
+
+async function loadEventRequestForMutation(locationId: string, id: string): Promise<EventRequestWithRelations | null> {
+  return (await EventRequest.findOne({
+    where: { id, locationId, isDeleted: false },
+    include: [
+      {
+        model: EventVenue,
+        as: 'venue',
+        attributes: [
+          'id',
+          'name',
+          'occupancy',
+          'price',
+          'coverPhoto',
+          'images',
+          'keyFeatures',
+          'otherServices',
+          'addOnServices',
+        ],
+        required: false,
+      },
+      eventRequestResidentInclude,
+    ],
+  })) as EventRequestWithRelations | null
+}
+
+/**
+ * POST /api/v1/location/:locationId/event-requests/:id/schedule-meeting
+ */
+export const scheduleEventRequestMeeting = async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const locationId = req.params.locationId as string
+    const id = String(req.params.id)
+    const updatedBy = req.user?.id
+    const meetingScheduledAtRaw = req.body?.meetingScheduledAt
+
+    if (!updatedBy) {
+      return res.status(401).json(errorResponse('User not authenticated'))
+    }
+
+    if (!meetingScheduledAtRaw) {
+      return res.status(400).json(errorResponse('meetingScheduledAt is required'))
+    }
+
+    const meetingScheduledAt = new Date(meetingScheduledAtRaw)
+    if (Number.isNaN(meetingScheduledAt.getTime())) {
+      return res.status(400).json(errorResponse('meetingScheduledAt must be a valid datetime'))
+    }
+
+    const request = await loadEventRequestForMutation(locationId, id)
+    if (!request) {
+      return res.status(404).json(errorResponse('Event request not found'))
+    }
+
+    if (request.status !== EventRequestStatus.OPEN && request.status !== EventRequestStatus.IN_PROGRESS) {
+      return res.status(400).json(errorResponse('Meeting can only be scheduled for Open or In-Progress requests'))
+    }
+
+    const eventDayStart = getStartOfDay(new Date(request.startDate))
+    if (meetingScheduledAt >= eventDayStart) {
+      return res.status(400).json(errorResponse('Meeting must be scheduled before the event day'))
+    }
+
+    const now = new Date()
+    if (meetingScheduledAt < now) {
+      return res.status(400).json(errorResponse('Meeting cannot be scheduled in the past'))
+    }
+
+    await request.update({
+      meetingScheduledAt,
+      status: EventRequestStatus.IN_PROGRESS,
+      updatedBy,
+    })
+
+    const refreshed = await loadEventRequestForMutation(locationId, id)
+    return res
+      .status(200)
+      .json(successResponse('Meeting scheduled successfully', serializeEventRequest(refreshed || request)))
+  } catch (error) {
+    console.error('Schedule Event Request Meeting Error:', error)
+    return res.status(500).json(errorResponse('Failed to schedule meeting'))
+  }
+}
+
+/**
+ * POST /api/v1/location/:locationId/event-requests/:id/confirm
+ */
+export const confirmEventRequest = async (req: AuthenticatedRequest, res: Response) => {
+  const transaction = await sequelize.transaction()
+
+  try {
+    const locationId = req.params.locationId as string
+    const id = String(req.params.id)
+    const updatedBy = req.user?.id
+
+    if (!updatedBy) {
+      await transaction.rollback()
+      return res.status(401).json(errorResponse('User not authenticated'))
+    }
+
+    const request = await loadEventRequestForMutation(locationId, id)
+    if (!request) {
+      await transaction.rollback()
+      return res.status(404).json(errorResponse('Event request not found'))
+    }
+
+    if (request.status === EventRequestStatus.CLOSED && request.confirmedEventId) {
+      await transaction.rollback()
+      return res.status(200).json(
+        successResponse('Event request already confirmed', {
+          request: serializeEventRequest(request),
+          eventId: request.confirmedEventId,
+        }),
+      )
+    }
+
+    if (request.status !== EventRequestStatus.OPEN && request.status !== EventRequestStatus.IN_PROGRESS) {
+      await transaction.rollback()
+      return res.status(400).json(errorResponse('Only Open or In-Progress requests can be confirmed'))
+    }
+
+    const venue = request.venue
+    if (!venue) {
+      await transaction.rollback()
+      return res.status(404).json(errorResponse('Venue not found for this request'))
+    }
+
+    const ranges = getEventRequestBookingRanges(request)
+    if (ranges.length === 0) {
+      await transaction.rollback()
+      return res.status(400).json(errorResponse('Request has invalid booking dates'))
+    }
+
+    const bookingConflict = await findFirstVenueBookingConflictForRanges({
+      venueId: request.venueId,
+      locationId,
+      ranges,
+      excludeRequestId: request.id,
+    })
+    if (bookingConflict) {
+      await transaction.rollback()
+      return res
+        .status(409)
+        .json(
+          errorResponse(
+            formatBookingUnavailableMessage(bookingConflict.conflict.startDate, bookingConflict.conflict.endDate),
+          ),
+        )
+    }
+
+    const descriptionParts = [
+      request.requestNumber ? `${RESIDENT_CONFIRMED_EVENT_DESCRIPTION_PREFIX} ${request.requestNumber}` : null,
+      request.customRequest?.trim() ? request.customRequest.trim() : null,
+    ].filter(Boolean)
+
+    const createdEvent = await Event.create(
+      {
+        eventType: EventType.SPECIAL,
+        title: request.title,
+        description: descriptionParts.length > 0 ? descriptionParts.join('\n') : null,
+        startDate: new Date(request.startDate),
+        endDate: new Date(request.endDate),
+        venueId: request.venueId,
+        allowReservation: false,
+        frequencyType: FrequencyType.ONCE,
+        occupancy: request.occupancy,
+        maxCapacity: null,
+        reservationPerFlat: null,
+        selectedServices: Array.isArray(request.selectedServices) ? request.selectedServices : null,
+        locationId,
+        poster: venue.coverPhoto || '',
+        entryFee: null,
+        isActive: true,
+        isDeleted: false,
+        createdBy: updatedBy,
+        updatedBy,
+      },
+      { transaction },
+    )
+
+    await request.update(
+      {
+        status: EventRequestStatus.CLOSED,
+        confirmedEventId: createdEvent.id,
+        updatedBy,
+      },
+      { transaction },
+    )
+
+    await transaction.commit()
+
+    const refreshed = await loadEventRequestForMutation(locationId, id)
+    return res.status(200).json(
+      successResponse('Booking confirmed and event scheduled successfully', {
+        request: serializeEventRequest(refreshed || request),
+        eventId: createdEvent.id,
+      }),
+    )
+  } catch (error) {
+    await transaction.rollback()
+    console.error('Confirm Event Request Error:', error)
+    return res.status(500).json(errorResponse('Failed to confirm booking request'))
+  }
+}
+
+/**
+ * POST /api/v1/location/:locationId/event-requests/:id/cancel
+ */
+export const cancelEventRequest = async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const locationId = req.params.locationId as string
+    const id = String(req.params.id)
+    const updatedBy = req.user?.id
+    const cancellationReason = String(req.body?.cancellationReason || '').trim()
+
+    if (!updatedBy) {
+      return res.status(401).json(errorResponse('User not authenticated'))
+    }
+
+    if (!cancellationReason) {
+      return res.status(400).json(errorResponse('Reason for cancellation is required'))
+    }
+
+    const request = await loadEventRequestForMutation(locationId, id)
+    if (!request) {
+      return res.status(404).json(errorResponse('Event request not found'))
+    }
+
+    if (request.status === EventRequestStatus.CANCELLED) {
+      return res.status(200).json(successResponse('Event request already canceled', serializeEventRequest(request)))
+    }
+
+    if (request.status !== EventRequestStatus.OPEN && request.status !== EventRequestStatus.IN_PROGRESS) {
+      return res.status(400).json(errorResponse('Only Open or In-Progress requests can be canceled'))
+    }
+
+    await request.update({
+      status: EventRequestStatus.CANCELLED,
+      cancellationReason,
+      updatedBy,
+    })
+
+    const refreshed = await loadEventRequestForMutation(locationId, id)
+    return res
+      .status(200)
+      .json(successResponse('Event request canceled successfully', serializeEventRequest(refreshed || request)))
+  } catch (error) {
+    console.error('Cancel Event Request Error:', error)
+    return res.status(500).json(errorResponse('Failed to cancel event request'))
   }
 }
