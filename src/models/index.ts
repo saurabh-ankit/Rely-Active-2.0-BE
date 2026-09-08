@@ -190,7 +190,7 @@ AssetItem.belongsToMany(Property, {
 AssetItem.hasMany(Asset, { foreignKey: 'itemId', as: 'assets' })
 Asset.belongsTo(AssetItem, { foreignKey: 'itemId', as: 'item' })
 
-Asset.belongsTo(Property, { foreignKey: 'locationId', as: 'property' })
+Asset.belongsTo(Property, { foreignKey: 'locationId', as: 'location' })
 Property.hasMany(Asset, { foreignKey: 'locationId', as: 'propertyAssets' })
 
 Asset.belongsTo(AssetVendor, { foreignKey: 'vendorId', as: 'vendor' })
