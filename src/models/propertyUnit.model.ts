@@ -3,6 +3,8 @@ import sequelize from '../config/db/index.js'
 import { BaseAttributes, BaseModel, baseModelColumns } from './base.model.js'
 import { OccupancyStatus, UnitAreaUnit, UnitFacing, UnitStatus, UnitType } from '../enums/propertyUnit.enum.js'
 
+import type { PropertyFloor } from './propertyFloor.model.js'
+
 export interface PropertyUnitAttributes extends BaseAttributes {
   floorId: string
   unit_number: string
@@ -69,6 +71,7 @@ export class PropertyUnit
   declare occupancyStatus: OccupancyStatus
   declare isActive: boolean
   declare isDeleted: boolean
+  declare floor?: PropertyFloor
 }
 
 PropertyUnit.init(

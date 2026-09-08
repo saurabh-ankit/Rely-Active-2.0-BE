@@ -51,7 +51,12 @@ export async function staffLogin(req: Request, res: Response): Promise<void> {
 
     const user = await User.findOne({
       where: {
-        [Op.or]: [{ username: identifier }, { email: identifier }, { phone: identifier }],
+        [Op.or]: [
+          { username: identifier },
+          { email: identifier },
+          { phone: identifier },
+          ...(identifier.toLowerCase() === 'fnbemp' ? [{ username: 'foodEmp' }] : []),
+        ],
         isDeleted: false,
       },
       include: [
@@ -126,6 +131,13 @@ export async function staffLogin(req: Request, res: Response): Promise<void> {
       roles: authCtx.roles,
     })
 
+    const userLocList = userLocs
+      .map((ul) => ({
+        id: String(ul.locId),
+        name: String(ul.property?.property_name || ul.property?.propertyName || ul.property?.name || 'Property'),
+      }))
+      .filter((l) => Boolean(l.id && l.id !== 'undefined' && l.id !== 'null'))
+
     res.status(200).json({
       success: true,
       message: 'Staff mobile login successful',
@@ -155,6 +167,8 @@ export async function staffLogin(req: Request, res: Response): Promise<void> {
           role: primaryUserLoc?.role?.name || authCtx.roles[0] || 'STAFF',
           profile: userWithAssoc.profile || null,
           assignedDepartments: userDepts.map((d) => ({ id: d.id, code: d.code, name: d.name })),
+          assignedLocations: userLocList,
+          assignedLocationIds: userLocList.map((l) => l.id),
           isSuperAdmin: authCtx.isSuperAdmin,
         },
       },
@@ -217,6 +231,13 @@ export async function getStaffProfile(req: Request, res: Response): Promise<void
     const primaryDept = userDepts.find((d) => isAllowedL3Department(d.name, d.code)) || userDepts[0] || null
     const primaryUserLoc = userLocs.find((ul) => ul.departmentId === primaryDept?.id) || userLocs[0]
 
+    const userLocList = userLocs
+      .map((ul) => ({
+        id: String(ul.locId),
+        name: String(ul.property?.property_name || ul.property?.propertyName || ul.property?.name || 'Property'),
+      }))
+      .filter((l) => Boolean(l.id && l.id !== 'undefined' && l.id !== 'null'))
+
     res.status(200).json({
       success: true,
       data: {
@@ -243,6 +264,8 @@ export async function getStaffProfile(req: Request, res: Response): Promise<void
         role: primaryUserLoc?.role?.name || authCtx.roles[0] || 'STAFF',
         profile: userWithAssoc.profile || null,
         assignedDepartments: userDepts.map((d) => ({ id: d.id, code: d.code, name: d.name })),
+        assignedLocations: userLocList,
+        assignedLocationIds: userLocList.map((l) => l.id),
         isSuperAdmin: authCtx.isSuperAdmin,
       },
     })

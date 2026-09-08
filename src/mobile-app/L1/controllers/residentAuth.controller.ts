@@ -48,10 +48,10 @@ export async function residentLogin(req: Request, res: Response): Promise<void> 
 
     const trimmedUsername = (username as string).trim()
 
-    // 1. Try finding primary resident first
+    // 1. Try finding primary resident first (by username, phone, or email)
     const resident = await Resident.findOne({
       where: {
-        username: trimmedUsername,
+        [Op.or]: [{ username: trimmedUsername }, { phone: trimmedUsername }, { email: trimmedUsername }],
         isDeleted: false,
       },
       include: [
@@ -72,9 +72,12 @@ export async function residentLogin(req: Request, res: Response): Promise<void> 
     })
 
     if (!resident || !resident.passwordHash) {
-      // 2. Try finding in resident_family_members table
+      // 2. Try finding in resident_family_members table (by username, phone, or email)
       const familyMember = await ResidentFamilyMember.findOne({
-        where: { username: trimmedUsername, isDeleted: false },
+        where: {
+          [Op.or]: [{ username: trimmedUsername }, { phone: trimmedUsername }, { email: trimmedUsername }],
+          isDeleted: false,
+        },
         include: [
           {
             model: Resident,

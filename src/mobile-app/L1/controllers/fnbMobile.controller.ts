@@ -262,51 +262,9 @@ export async function getResidentSpecialMenu(req: AuthenticatedRequest, res: Res
 
 export async function placeMealOrder(req: AuthenticatedRequest, res: Response): Promise<void> {
   try {
-    const {
-      orderType = 'personal',
-      orderMode,
-      selectionType = 'dish',
-      serviceType = 'room_service',
-      date,
-      mealSlotId,
-      mealSlot,
-      specialMealSlotId,
-      items: rawItems,
-      menuItemId: topMenuItemId,
-      dishId: topDishId,
-      quantity: topQuantity,
-    } = req.body
+    const rawOrdersList = Array.isArray(req.body.orders) && req.body.orders.length > 0 ? req.body.orders : [req.body]
 
-    const targetOrderType = orderMode || orderType
-    const targetDate = date || new Date().toISOString().split('T')[0]
-
-    let itemsPayload: Array<{
-      dishId?: string
-      menuItemId?: string
-      specialMealSlotDishId?: string
-      quantity?: number
-      unitPrice?: number
-    }> = Array.isArray(rawItems) ? rawItems : []
-
-    if (itemsPayload.length === 0 && topDishId) {
-      itemsPayload = [
-        {
-          dishId: topDishId,
-          menuItemId: topMenuItemId || undefined,
-          quantity: topQuantity || 1,
-        },
-      ]
-    }
-
-    if (itemsPayload.length === 0 && selectionType === 'dish') {
-      res.status(400).json({
-        success: false,
-        message: 'Please select at least one dish item to place an order',
-      })
-      return
-    }
-
-    // Resolve authenticated resident or family member
+    // Resolve authenticated resident or family member once
     const userId = req.user?.id
     let resident = await Resident.findByPk(userId)
     let familyMemberId: string | null = null
@@ -339,129 +297,184 @@ export async function placeMealOrder(req: AuthenticatedRequest, res: Response): 
       ],
     })
 
-    // Resolve meal slot string
-    let resolvedMealSlot: string = (mealSlot as string) || 'breakfast'
-    if (mealSlotId) {
-      const pSlot = await FnbPropertyMealSlot.findByPk(mealSlotId, {
-        include: [{ model: FnbGlobalMealSlot, as: 'globalMealSlot' }],
-      })
-      if (pSlot) {
-        resolvedMealSlot = pSlot.globalMealSlot?.name || 'breakfast'
-      } else {
-        const gSlot = await FnbGlobalMealSlot.findByPk(mealSlotId)
-        if (gSlot) resolvedMealSlot = gSlot.name
+    const globalSlots = await FnbGlobalMealSlot.findAll()
+    const slotMap = new Map<string, string>()
+    globalSlots.forEach((gs) => {
+      if (gs.id) slotMap.set(gs.id, gs.name)
+    })
+
+    const createdOrders: FnbResidentOrder[] = []
+
+    for (const singleBody of rawOrdersList) {
+      const {
+        orderType = 'personal',
+        orderMode,
+        selectionType = 'dish',
+        serviceType = 'room_service',
+        date,
+        mealSlotId,
+        mealSlot,
+        specialMealSlotId,
+        items: rawItems,
+        menuItemId: topMenuItemId,
+        dishId: topDishId,
+        quantity: topQuantity,
+      } = singleBody
+
+      const targetOrderType = orderMode || orderType
+      const targetDate = date || new Date().toISOString().split('T')[0]
+
+      let itemsPayload: Array<{
+        dishId?: string
+        menuItemId?: string
+        specialMealSlotDishId?: string
+        quantity?: number
+        unitPrice?: number
+      }> = Array.isArray(rawItems) ? rawItems : []
+
+      if (itemsPayload.length === 0 && topDishId) {
+        itemsPayload = [
+          {
+            dishId: topDishId,
+            menuItemId: topMenuItemId || undefined,
+            quantity: topQuantity || 1,
+          },
+        ]
       }
-    }
 
-    // Determine package coverage for this specific meal slot
-    let isPackageCovered = false
-    if (targetOrderType === 'personal' && activePkg) {
-      const gp = activePkg.propertyPackage?.globalPackage
-      const includedSlots = gp?.includedMealSlots || []
+      if (itemsPayload.length === 0 && selectionType === 'dish') {
+        continue
+      }
 
-      const globalSlots = await FnbGlobalMealSlot.findAll()
-      const slotMap = new Map<string, string>()
-      globalSlots.forEach((gs) => {
-        if (gs.id) slotMap.set(gs.id, gs.name)
-      })
-
-      const targetSlotObj = mealSlotId
-        ? await FnbPropertyMealSlot.findByPk(mealSlotId, {
-            include: [{ model: FnbGlobalMealSlot, as: 'globalMealSlot' }],
-          })
-        : null
-
-      const targetGlobalSlotId = targetSlotObj?.globalMealSlotId || null
-      const targetSlotName = targetSlotObj?.globalMealSlot?.name || resolvedMealSlot
-
-      isPackageCovered = includedSlots.some((inc: string) => {
-        if (inc === targetGlobalSlotId || inc === mealSlotId) return true
-        const incName = slotMap.get(inc) || inc
-        return (
-          incName.toLowerCase().replace(/[^a-z0-9]/g, '') === targetSlotName.toLowerCase().replace(/[^a-z0-9]/g, '')
-        )
-      })
-    }
-
-    const firstItem = itemsPayload[0]
-    const totalQty = itemsPayload.reduce((sum, item) => sum + Number(item.quantity || 1), 0) || 1
-
-    // Calculate item prices and total header amount
-    let calculatedHeaderTotal = 0
-    const detailsRecordsPayload = []
-
-    for (const it of itemsPayload) {
-      const targetDishId = it.dishId || firstItem?.dishId
-      let unitPrice = Number(it.unitPrice || 0)
-
-      if (!isPackageCovered && unitPrice === 0 && targetDishId) {
-        const dishObj = await FnbDish.findByPk(targetDishId)
-        if (dishObj && dishObj.basePrice) {
-          unitPrice = Number(dishObj.basePrice)
+      // Resolve meal slot string
+      let resolvedMealSlot: string = (mealSlot as string) || 'breakfast'
+      if (mealSlotId) {
+        const pSlot = await FnbPropertyMealSlot.findByPk(mealSlotId, {
+          include: [{ model: FnbGlobalMealSlot, as: 'globalMealSlot' }],
+        })
+        if (pSlot) {
+          resolvedMealSlot = pSlot.globalMealSlot?.name || 'breakfast'
+        } else {
+          const gSlot = await FnbGlobalMealSlot.findByPk(mealSlotId)
+          if (gSlot) resolvedMealSlot = gSlot.name
         }
       }
 
-      const qty = Number(it.quantity || 1)
-      const itemAmount = isPackageCovered ? 0 : qty * unitPrice
-      calculatedHeaderTotal += itemAmount
+      // Determine package coverage for this specific meal slot
+      let isPackageCovered = false
+      if (targetOrderType === 'personal' && activePkg) {
+        const gp = activePkg.propertyPackage?.globalPackage
+        const includedSlots = gp?.includedMealSlots || []
 
-      if (targetDishId) {
-        detailsRecordsPayload.push({
-          dishId: targetDishId,
-          mealSlotId: mealSlotId || null,
-          specialMealSlotId: specialMealSlotId || null,
-          specialMealSlotDishId: it.specialMealSlotDishId || null,
-          quantity: qty,
-          unitPrice: isPackageCovered ? 0 : unitPrice,
-          amount: itemAmount,
-          isPackageCovered,
-          createdBy: req.user?.id || null,
+        const targetSlotObj = mealSlotId
+          ? await FnbPropertyMealSlot.findByPk(mealSlotId, {
+              include: [{ model: FnbGlobalMealSlot, as: 'globalMealSlot' }],
+            })
+          : null
+
+        const targetGlobalSlotId = targetSlotObj?.globalMealSlotId || null
+        const targetSlotName = targetSlotObj?.globalMealSlot?.name || resolvedMealSlot
+
+        isPackageCovered = includedSlots.some((inc: string) => {
+          if (inc === targetGlobalSlotId || inc === mealSlotId) return true
+          const incName = slotMap.get(inc) || inc
+          return (
+            incName.toLowerCase().replace(/[^a-z0-9]/g, '') === targetSlotName.toLowerCase().replace(/[^a-z0-9]/g, '')
+          )
         })
       }
-    }
 
-    if (!isPackageCovered && calculatedHeaderTotal === 0 && req.body.totalAmount) {
-      calculatedHeaderTotal = Number(req.body.totalAmount)
-    }
+      const firstItem = itemsPayload[0]
+      const totalQty = itemsPayload.reduce((sum, item) => sum + Number(item.quantity || 1), 0) || 1
 
-    const order = await FnbResidentOrder.create({
-      locId: resident.locId,
-      residentId: resident.id,
-      familyMemberId,
-      residentPackageId: activePkg?.id || null,
-      date: targetDate,
-      mealSlotId: mealSlotId || null,
-      specialMealSlotId: specialMealSlotId || null,
-      orderType: targetOrderType,
-      selectionType,
-      serviceType,
-      quantity: totalQty,
-      unitPrice: isPackageCovered ? 0 : detailsRecordsPayload[0]?.unitPrice || 0,
-      totalAmount: isPackageCovered ? 0 : calculatedHeaderTotal,
-      isPackageCovered,
-      orderStatus: FnbOrderStatus.PLACED,
-      menuItemId: firstItem?.menuItemId || topMenuItemId || null,
-      dishId: firstItem?.dishId || topDishId || null,
-      mealSlot: (resolvedMealSlot.toLowerCase().replace(/[^a-z0-9]/g, '_') as FnbMealSlot) || FnbMealSlot.BREAKFAST,
-    })
+      // Calculate item prices and total header amount
+      let calculatedHeaderTotal = 0
+      const detailsRecordsPayload = []
 
-    if (detailsRecordsPayload.length > 0) {
-      try {
-        const recordsToInsert = detailsRecordsPayload.map((rec) => ({
-          ...rec,
-          orderId: order.id,
-          mealSlotId: null, // Avoid FK constraint mismatch on global/property slot ID
-        }))
-        await FnbResidentOrderDetail.bulkCreate(recordsToInsert)
-      } catch (detailErr) {
-        console.error('Error inserting order details:', detailErr)
+      for (const it of itemsPayload) {
+        const targetDishId = it.dishId || firstItem?.dishId
+        let unitPrice = Number(it.unitPrice || 0)
+
+        if (!isPackageCovered && unitPrice === 0 && targetDishId) {
+          const dishObj = await FnbDish.findByPk(targetDishId)
+          if (dishObj && dishObj.basePrice) {
+            unitPrice = Number(dishObj.basePrice)
+          }
+        }
+
+        const qty = Number(it.quantity || 1)
+        const itemAmount = isPackageCovered ? 0 : qty * unitPrice
+        calculatedHeaderTotal += itemAmount
+
+        if (targetDishId) {
+          detailsRecordsPayload.push({
+            dishId: targetDishId,
+            mealSlotId: mealSlotId || null,
+            specialMealSlotId: specialMealSlotId || null,
+            specialMealSlotDishId: it.specialMealSlotDishId || null,
+            quantity: qty,
+            unitPrice: isPackageCovered ? 0 : unitPrice,
+            amount: itemAmount,
+            isPackageCovered,
+            createdBy: req.user?.id || null,
+          })
+        }
       }
+
+      if (!isPackageCovered && calculatedHeaderTotal === 0 && singleBody.totalAmount) {
+        calculatedHeaderTotal = Number(singleBody.totalAmount)
+      }
+
+      const order = await FnbResidentOrder.create({
+        locId: resident.locId,
+        residentId: resident.id,
+        familyMemberId,
+        residentPackageId: activePkg?.id || null,
+        date: targetDate,
+        mealSlotId: mealSlotId || null,
+        specialMealSlotId: specialMealSlotId || null,
+        orderType: targetOrderType,
+        selectionType,
+        serviceType,
+        quantity: totalQty,
+        unitPrice: isPackageCovered ? 0 : detailsRecordsPayload[0]?.unitPrice || 0,
+        totalAmount: isPackageCovered ? 0 : calculatedHeaderTotal,
+        isPackageCovered,
+        orderStatus: FnbOrderStatus.PLACED,
+        menuItemId: firstItem?.menuItemId || topMenuItemId || null,
+        dishId: firstItem?.dishId || topDishId || null,
+        mealSlot: (resolvedMealSlot.toLowerCase().replace(/[^a-z0-9]/g, '_') as FnbMealSlot) || FnbMealSlot.BREAKFAST,
+      })
+
+      if (detailsRecordsPayload.length > 0) {
+        try {
+          const recordsToInsert = detailsRecordsPayload.map((rec) => ({
+            ...rec,
+            orderId: order.id,
+            mealSlotId: null, // Avoid FK constraint mismatch on global/property slot ID
+          }))
+          await FnbResidentOrderDetail.bulkCreate(recordsToInsert)
+        } catch (detailErr) {
+          console.error('Error inserting order details:', detailErr)
+        }
+      }
+
+      createdOrders.push(order)
     }
 
+    if (createdOrders.length === 0) {
+      res.status(400).json({
+        success: false,
+        message: 'Please select at least one dish item to place an order',
+      })
+      return
+    }
+
+    const isBatch = Array.isArray(req.body.orders)
     res.status(201).json({
       success: true,
-      message: 'Meal order placed successfully',
-      data: order,
+      message: createdOrders.length > 1 ? 'Meal orders placed successfully' : 'Meal order placed successfully',
+      data: isBatch ? createdOrders : createdOrders[0],
     })
   } catch (err) {
     console.error('Error placing meal order:', err)

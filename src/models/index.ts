@@ -1,3 +1,4 @@
+import { GuestMaster } from './guestMaster.model.js'
 import { BaseModel, baseModelColumns, type BaseAttributes, type BaseCreationAttributes } from './base.model.js'
 import { Company } from './company.model.js'
 import { CompanyCustomField } from './companyCustomField.model.js'
@@ -43,6 +44,8 @@ import { TicketCategory } from './ticketCategory.model.js'
 import { TicketSubCategory } from './ticketSubCategory.model.js'
 import { Ticket } from './ticket.model.js'
 import { TicketActivityLog } from './ticketActivityLog.model.js'
+import { GatePreapproved } from './gatePreapproved.model.js'
+import { GateEntry } from './gateEntry.model.js'
 import { FnbGlobalMealSlot } from './fnbGlobalMealSlot.model.js'
 import { FnbPropertyMealSlot } from './fnbPropertyMealSlot.model.js'
 import { FnbGlobalSpecialSlot } from './fnbGlobalSpecialSlot.model.js'
@@ -50,6 +53,13 @@ import { FnbPropertySpecialSlot } from './fnbPropertySpecialSlot.model.js'
 import { FnbPropertySpecialSlotDish } from './fnbPropertySpecialSlotDish.model.js'
 import { FnbResidentOrderDetail } from './fnbResidentOrderDetail.model.js'
 import { FnbFoodDelivery } from './fnbFoodDelivery.model.js'
+import { EventVenue } from './eventVenue.model.js'
+import { Event } from './event.model.js'
+import { EventRegistration } from './eventRegistration.model.js'
+import { EventRequest } from './eventRequest.model.js'
+import { EventGlobalService } from './eventGlobalService.model.js'
+import { EventGlobalServiceProperty } from './eventGlobalServiceProperty.model.js'
+import { FnbFoodAttendance } from './fnbFoodAttendance.model.js'
 
 // ── F&B Meal Slot associations ──────────────────────────────────────────────
 FnbGlobalMealSlot.hasMany(FnbPropertyMealSlot, { foreignKey: 'globalMealSlotId', as: 'propertyMealSlots' })
@@ -255,6 +265,7 @@ FnbResidentOrder.belongsTo(Resident, { foreignKey: 'residentId', as: 'resident' 
 FnbResidentOrder.belongsTo(ResidentFamilyMember, { foreignKey: 'familyMemberId', as: 'familyMember' })
 FnbResidentOrder.belongsTo(FnbResidentPackage, { foreignKey: 'residentPackageId', as: 'residentPackage' })
 FnbResidentOrder.belongsTo(FnbPropertySpecialSlot, { foreignKey: 'specialMealSlotId', as: 'specialMealSlot' })
+FnbResidentOrder.belongsTo(FnbGlobalMealSlot, { foreignKey: 'mealSlotId', as: 'globalMealSlot' })
 FnbResidentOrder.hasMany(FnbResidentOrderDetail, { foreignKey: 'orderId', as: 'details' })
 
 FnbResidentOrderDetail.belongsTo(FnbResidentOrder, { foreignKey: 'orderId', as: 'order' })
@@ -267,6 +278,7 @@ FnbResidentOrderDetail.belongsTo(FnbPropertySpecialSlotDish, {
 })
 
 FnbResidentOrder.hasOne(FnbFoodDelivery, { foreignKey: 'orderId', as: 'delivery' })
+FnbResidentOrder.belongsTo(User, { foreignKey: 'assignedEmployeeId', as: 'assignedEmployee' })
 FnbFoodDelivery.belongsTo(FnbResidentOrder, { foreignKey: 'orderId', as: 'order' })
 FnbFoodDelivery.belongsTo(User, { foreignKey: 'employeeId', as: 'employee' })
 FnbFoodDelivery.belongsTo(UserDetail, { foreignKey: 'employeeId', targetKey: 'userId', as: 'employeeDetail' })
@@ -318,7 +330,75 @@ Ticket.hasMany(TicketActivityLog, { foreignKey: 'ticketId', as: 'activityLogs' }
 TicketActivityLog.belongsTo(Ticket, { foreignKey: 'ticketId', as: 'ticket' })
 TicketActivityLog.belongsTo(User, { foreignKey: 'performedByUserId', as: 'performedByUser' })
 
+// ── Gate Management associations ───────────────────────────────────────────
+Property.hasMany(GatePreapproved, { foreignKey: 'locId', as: 'gatePreapproveds' })
+GatePreapproved.belongsTo(Property, { foreignKey: 'locId', as: 'property' })
+
+PropertyUnit.hasMany(GatePreapproved, { foreignKey: 'unitId', as: 'gatePreapproveds' })
+GatePreapproved.belongsTo(PropertyUnit, { foreignKey: 'unitId', as: 'unit' })
+
+Resident.hasMany(GatePreapproved, { foreignKey: 'residentId', as: 'gatePreapproveds' })
+GatePreapproved.belongsTo(Resident, { foreignKey: 'residentId', as: 'resident' })
+
+Property.hasMany(GateEntry, { foreignKey: 'locId', as: 'gateEntries' })
+GateEntry.belongsTo(Property, { foreignKey: 'locId', as: 'property' })
+
+PropertyUnit.hasMany(GateEntry, { foreignKey: 'unitId', as: 'gateEntries' })
+GateEntry.belongsTo(PropertyUnit, { foreignKey: 'unitId', as: 'unit' })
+
+GatePreapproved.hasOne(GateEntry, { foreignKey: 'preapprovedId', as: 'entry' })
+GateEntry.belongsTo(GatePreapproved, { foreignKey: 'preapprovedId', as: 'preapproved' })
+
+GateEntry.belongsTo(User, { foreignKey: 'clockedInBy', as: 'clockedInByUser' })
+GateEntry.belongsTo(User, { foreignKey: 'clockedOutBy', as: 'clockedOutByUser' })
+GateEntry.belongsTo(User, { foreignKey: 'approvedBy', as: 'approvedByUser' })
+// ── Global Services associations ───────────────────────────────────────────
+EventGlobalService.hasMany(EventGlobalServiceProperty, { foreignKey: 'globalServiceId', as: 'propertyServices' })
+EventGlobalServiceProperty.belongsTo(EventGlobalService, { foreignKey: 'globalServiceId', as: 'globalService' })
+EventGlobalServiceProperty.belongsTo(Property, { foreignKey: 'locId', as: 'property' })
+
+// ── Events Management associations ─────────────────────────────────────────
+Property.hasMany(EventVenue, { foreignKey: 'locationId', as: 'venues' })
+EventVenue.belongsTo(Property, { foreignKey: 'locationId', as: 'location' })
+
+EventVenue.hasMany(Event, { foreignKey: 'venueId', as: 'events' })
+Event.belongsTo(EventVenue, { foreignKey: 'venueId', as: 'venue' })
+
+Property.hasMany(Event, { foreignKey: 'locationId', as: 'events' })
+Event.belongsTo(Property, { foreignKey: 'locationId', as: 'location' })
+
+Event.hasMany(EventRegistration, { foreignKey: 'eventId', as: 'registrations' })
+EventRegistration.belongsTo(Event, { foreignKey: 'eventId', as: 'event' })
+
+Resident.hasMany(EventRegistration, { foreignKey: 'residentId', as: 'eventRegistrations' })
+EventRegistration.belongsTo(Resident, { foreignKey: 'residentId', as: 'resident' })
+
+// ── F&B Food Attendance Associations ───────────────────────────────────────
+FnbFoodAttendance.belongsTo(Property, { foreignKey: 'locId', as: 'property' })
+FnbFoodAttendance.belongsTo(PropertyUnit, { foreignKey: 'unitId', as: 'unit' })
+FnbFoodAttendance.belongsTo(Resident, { foreignKey: 'residentId', as: 'resident' })
+FnbFoodAttendance.belongsTo(ResidentFamilyMember, { foreignKey: 'familyMemberId', as: 'familyMember' })
+FnbFoodAttendance.belongsTo(FnbPropertyMealSlot, { foreignKey: 'mealSlotId', as: 'mealSlot' })
+FnbFoodAttendance.belongsTo(User, { foreignKey: 'createdBy', as: 'creator' })
+
+FnbPropertyMealSlot.hasMany(FnbFoodAttendance, { foreignKey: 'mealSlotId', as: 'foodAttendances' })
+Resident.hasMany(FnbFoodAttendance, { foreignKey: 'residentId', as: 'foodAttendances' })
+ResidentFamilyMember.hasMany(FnbFoodAttendance, { foreignKey: 'familyMemberId', as: 'foodAttendances' })
+
+EventVenue.hasMany(EventRequest, { foreignKey: 'venueId', as: 'eventRequests' })
+EventRequest.belongsTo(EventVenue, { foreignKey: 'venueId', as: 'venue' })
+
+Resident.hasMany(EventRequest, { foreignKey: 'residentId', as: 'eventRequests' })
+EventRequest.belongsTo(Resident, { foreignKey: 'residentId', as: 'resident' })
+
+Property.hasMany(EventRequest, { foreignKey: 'locationId', as: 'eventRequests' })
+EventRequest.belongsTo(Property, { foreignKey: 'locationId', as: 'location' })
+
+Event.hasMany(EventRequest, { foreignKey: 'confirmedEventId', as: 'confirmedFromRequests' })
+EventRequest.belongsTo(Event, { foreignKey: 'confirmedEventId', as: 'confirmedEvent' })
+
 export {
+  GuestMaster,
   BaseModel,
   baseModelColumns,
   type BaseAttributes,
@@ -367,6 +447,8 @@ export {
   TicketSubCategory,
   Ticket,
   TicketActivityLog,
+  GatePreapproved,
+  GateEntry,
   FnbResidentOrderDetail,
   FnbFoodDelivery,
   FnbGlobalMealSlot,
@@ -374,4 +456,11 @@ export {
   FnbGlobalSpecialSlot,
   FnbPropertySpecialSlot,
   FnbPropertySpecialSlotDish,
+  EventVenue,
+  Event,
+  EventRegistration,
+  EventRequest,
+  EventGlobalService,
+  EventGlobalServiceProperty,
+  FnbFoodAttendance,
 }
