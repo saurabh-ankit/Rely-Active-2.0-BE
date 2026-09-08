@@ -55,6 +55,19 @@ import { Event } from './event.model.js'
 import { EventRegistration } from './eventRegistration.model.js'
 import { EventGlobalService } from './eventGlobalService.model.js'
 import { EventGlobalServiceProperty } from './eventGlobalServiceProperty.model.js'
+import {
+  CareTask,
+  type CareTaskAttributes,
+  type CareTaskCreationAttributes,
+  type PriceOption,
+} from './careTasks.model.js'
+import {
+  Package,
+  type PackageAttributes,
+  type PackageCreationAttributes,
+  type PackageDuration,
+  type PackageTaskItem,
+} from './package.model.js'
 
 // ── F&B Meal Slot associations ──────────────────────────────────────────────
 FnbGlobalMealSlot.hasMany(FnbPropertyMealSlot, { foreignKey: 'globalMealSlotId', as: 'propertyMealSlots' })
@@ -349,6 +362,14 @@ EventRegistration.belongsTo(Resident, { foreignKey: 'residentId', as: 'resident'
 Property.hasMany(EventRegistration, { foreignKey: 'locationId', as: 'eventRegistrations' })
 EventRegistration.belongsTo(Property, { foreignKey: 'locationId', as: 'location' })
 
+// ── Care Tasks associations ──────────────────────────────────────────────────
+Property.hasMany(CareTask, { foreignKey: 'propertyId', as: 'careTasks' })
+CareTask.belongsTo(Property, { foreignKey: 'propertyId', as: 'property' })
+
+// ── Packages associations ────────────────────────────────────────────────────
+Property.hasMany(Package, { foreignKey: 'propertyId', as: 'packages' })
+Package.belongsTo(Property, { foreignKey: 'propertyId', as: 'property' })
+
 export {
   BaseModel,
   baseModelColumns,
@@ -410,4 +431,13 @@ export {
   EventRegistration,
   EventGlobalService,
   EventGlobalServiceProperty,
+  CareTask,
+  type CareTaskAttributes,
+  type CareTaskCreationAttributes,
+  type PriceOption,
+  Package,
+  type PackageAttributes,
+  type PackageCreationAttributes,
+  type PackageDuration,
+  type PackageTaskItem,
 }

@@ -526,6 +526,28 @@ export async function up({ context: queryInterface }: { context: QueryInterface 
 
   if (superAdminRoleId) {
     const defaultLocId = '00000000-0000-0000-0000-000000000000'
+
+    try {
+      const [fkRows] = (await queryInterface.sequelize.query(`
+        SELECT CONSTRAINT_NAME
+        FROM information_schema.KEY_COLUMN_USAGE
+        WHERE TABLE_SCHEMA = DATABASE()
+          AND TABLE_NAME = 'user_locations'
+          AND COLUMN_NAME = 'locId'
+          AND REFERENCED_TABLE_NAME IS NOT NULL
+      `)) as [Array<{ CONSTRAINT_NAME: string }>, unknown]
+
+      for (const row of fkRows) {
+        if (row.CONSTRAINT_NAME) {
+          await queryInterface.sequelize.query(
+            `ALTER TABLE \`user_locations\` DROP FOREIGN KEY \`${row.CONSTRAINT_NAME}\``,
+          )
+        }
+      }
+    } catch {
+      // Ignore if no foreign keys exist
+    }
+
     const userLocExisting = await queryInterface.rawSelect(
       'user_locations',
       { where: { userId: superAdminId, roleId: superAdminRoleId } },
