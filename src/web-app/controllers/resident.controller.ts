@@ -28,6 +28,8 @@ export async function createResident(req: AuthenticatedRequest, res: Response): 
       bloodGroup,
       photoUrl,
       moveInDate,
+      rentAmount,
+      payRentToCompany,
       familyMembers,
     } = req.body
 
@@ -168,6 +170,8 @@ export async function createResident(req: AuthenticatedRequest, res: Response): 
       bloodGroup: bloodGroup || null,
       photoUrl: finalPhotoUrl,
       moveInDate: moveInDate || null,
+      rentAmount: rentAmount !== undefined && rentAmount !== null && rentAmount !== '' ? Number(rentAmount) : null,
+      payRentToCompany: payRentToCompany !== undefined ? Boolean(payRentToCompany) : false,
       status: ResidentStatus.ACTIVE,
       isActive: true,
       createdBy: operatorId,
@@ -367,6 +371,8 @@ export async function updateResident(req: Request, res: Response): Promise<void>
       bloodGroup,
       photoUrl,
       moveOutDate,
+      rentAmount,
+      payRentToCompany,
       status,
       isResiding,
       familyMembers,
@@ -459,6 +465,13 @@ export async function updateResident(req: Request, res: Response): Promise<void>
       bloodGroup: bloodGroup !== undefined ? bloodGroup : resident.bloodGroup,
       photoUrl: finalPhotoUrl,
       moveOutDate: moveOutDate !== undefined ? moveOutDate : resident.moveOutDate,
+      rentAmount:
+        rentAmount !== undefined
+          ? rentAmount !== null && rentAmount !== ''
+            ? Number(rentAmount)
+            : null
+          : resident.rentAmount,
+      payRentToCompany: payRentToCompany !== undefined ? Boolean(payRentToCompany) : resident.payRentToCompany,
       status: status || resident.status,
       isResiding: updatedResiding,
       updatedBy: operatorId,

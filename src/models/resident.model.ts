@@ -28,6 +28,8 @@ export interface ResidentAttributes extends BaseAttributes {
   photoUrl?: string | null
   moveInDate?: Date | string | null
   moveOutDate?: Date | string | null
+  rentAmount?: number | null
+  payRentToCompany?: boolean
   status: ResidentStatus
   isActive?: boolean
   isDeleted?: boolean
@@ -51,6 +53,8 @@ export type ResidentCreationAttributes = Optional<
   | 'photoUrl'
   | 'moveInDate'
   | 'moveOutDate'
+  | 'rentAmount'
+  | 'payRentToCompany'
   | 'status'
   | 'isActive'
   | 'isDeleted'
@@ -84,6 +88,8 @@ export class Resident extends BaseModel<ResidentAttributes, ResidentCreationAttr
   declare photoUrl: string | null
   declare moveInDate: Date | string | null
   declare moveOutDate: Date | string | null
+  declare rentAmount: number | null
+  declare payRentToCompany: boolean
   declare status: ResidentStatus
   declare isActive: boolean
   declare isDeleted: boolean
@@ -172,6 +178,15 @@ Resident.init(
     moveOutDate: {
       type: DataTypes.DATEONLY,
       allowNull: true,
+    },
+    rentAmount: {
+      type: DataTypes.DECIMAL(10, 2),
+      allowNull: true,
+    },
+    payRentToCompany: {
+      type: DataTypes.BOOLEAN,
+      allowNull: false,
+      defaultValue: false,
     },
     status: {
       type: DataTypes.ENUM('PENDING', 'ACTIVE', 'INACTIVE', 'MOVED_OUT'),
