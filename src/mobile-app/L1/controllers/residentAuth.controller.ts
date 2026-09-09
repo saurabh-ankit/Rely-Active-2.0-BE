@@ -36,7 +36,7 @@ interface PkgType {
 
 export async function residentLogin(req: Request, res: Response): Promise<void> {
   try {
-    const { username, password } = req.body
+    const { username, password } = req.body || {}
 
     if (!username || !password) {
       res.status(400).json({
@@ -46,7 +46,16 @@ export async function residentLogin(req: Request, res: Response): Promise<void> 
       return
     }
 
-    const trimmedUsername = (username as string).trim()
+    const trimmedUsername = String(username).trim()
+    const strPassword = String(password)
+
+    if (!trimmedUsername || !strPassword) {
+      res.status(400).json({
+        success: false,
+        message: 'Please provide resident username and password.',
+      })
+      return
+    }
 
     // 1. Try finding primary resident first (by username, phone, or email)
     const resident = await Resident.findOne({
@@ -98,7 +107,7 @@ export async function residentLogin(req: Request, res: Response): Promise<void> 
         return
       }
 
-      const isMatchFm = await bcrypt.compare(password, familyMember.passwordHash)
+      const isMatchFm = await bcrypt.compare(strPassword, familyMember.passwordHash)
       if (!isMatchFm) {
         res.status(401).json({
           success: false,
@@ -150,7 +159,7 @@ export async function residentLogin(req: Request, res: Response): Promise<void> 
       return
     }
 
-    const isMatch = await bcrypt.compare(password, resident.passwordHash)
+    const isMatch = await bcrypt.compare(strPassword, resident.passwordHash)
     if (!isMatch) {
       res.status(401).json({
         success: false,
