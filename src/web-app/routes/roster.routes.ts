@@ -20,38 +20,35 @@ import {
 } from '../../validations/roster.validation.js'
 import {
   bulkCreateEmployeeShifts,
-  createEmployeeShift,
-  deleteEmployeeShift,
-  exportEmployeeShifts,
-  listEmployeeShifts,
-  updateEmployeeShift,
-} from '../controllers/employeeShift.controller.js'
-import {
   coverShiftEmployeeDate,
-  createShiftEmployeeDate,
-  generateShiftEmployeeDates,
-  listShiftEmployeeDates,
-  markDayOff,
-  swapShiftEmployeeDates,
-  unmarkDayOff,
-} from '../controllers/shiftEmployeeDate.controller.js'
-import {
+  createArea,
+  createEmployeeShift,
   createShift,
+  createShiftEmployeeDate,
+  createShiftResidentPool,
+  deleteArea,
+  deleteEmployeeShift,
   deleteShift,
+  deleteShiftResidentPool,
+  exportEmployeeShifts,
+  generateShiftEmployeeDates,
+  getAreas,
   getRolePolicies,
   getSettings,
   getShift,
+  listEmployeeShifts,
+  listShiftEmployeeDates,
+  listShiftResidentPool,
   listShifts,
+  markDayOff,
+  swapShiftEmployeeDates,
+  unmarkDayOff,
+  updateArea,
+  updateEmployeeShift,
   updateRolePolicies,
   updateSettings,
   updateShift,
-} from '../controllers/shift.controller.js'
-import {
-  createShiftResidentPool,
-  deleteShiftResidentPool,
-  listShiftResidentPool,
-} from '../controllers/shiftResidentPool.controller.js'
-import { createArea, deleteArea, getAreas, updateArea } from '../controllers/roster.controller.js'
+} from '../controllers/roster.controller.js'
 
 // ── Shift settings / policies / CRUD ──────────────────────────────────────────
 export const shiftRouter = Router({ mergeParams: true })

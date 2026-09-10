@@ -439,7 +439,8 @@ ShiftResidentPool.belongsTo(ShiftDate, {
   foreignKey: 'shiftEmployeeDateId',
   as: 'shiftEmployeeDate',
 })
-ShiftResidentPool.belongsTo(Resident, { foreignKey: 'residentId', as: 'resident' })
+ShiftResidentPool.belongsTo(PropertyUnit, { foreignKey: 'unitId', as: 'unit' })
+PropertyUnit.hasMany(ShiftResidentPool, { foreignKey: 'unitId', as: 'shiftResidentPools' })
 ShiftResidentPool.belongsTo(Property, { foreignKey: 'locationId', as: 'location' })
 
 Property.hasMany(ShiftSetting, { foreignKey: 'locationId', as: 'shiftSettings' })

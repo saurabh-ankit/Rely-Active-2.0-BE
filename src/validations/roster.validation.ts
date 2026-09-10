@@ -203,7 +203,7 @@ export const swapShiftEmployeeDatesSchema = z.object({
 // ── Shift resident pool ───────────────────────────────────────────────────────
 export const createShiftResidentPoolSchema = z.object({
   shiftEmployeeDateId: uuid,
-  residentId: uuid,
+  unitId: uuid,
   fromTime: timeHHmm.optional().nullable(),
   toTime: timeHHmm.optional().nullable(),
   notes: z.string().optional().nullable(),

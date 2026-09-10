@@ -4,7 +4,7 @@ import { BaseAttributes, BaseModel, baseModelColumns } from './base.model.js'
 
 export interface ShiftResidentPoolAttributes extends BaseAttributes {
   shiftEmployeeDateId: string
-  residentId: string
+  unitId: string
   fromTime?: string | null
   toTime?: string | null
   notes?: string | null
@@ -32,7 +32,7 @@ export class ShiftResidentPool
   implements ShiftResidentPoolAttributes
 {
   declare shiftEmployeeDateId: string
-  declare residentId: string
+  declare unitId: string
   declare fromTime: string | null
   declare toTime: string | null
   declare notes: string | null
@@ -45,7 +45,7 @@ ShiftResidentPool.init(
   {
     ...baseModelColumns,
     shiftEmployeeDateId: { type: DataTypes.UUID, allowNull: false },
-    residentId: { type: DataTypes.UUID, allowNull: false },
+    unitId: { type: DataTypes.UUID, allowNull: false },
     fromTime: { type: DataTypes.STRING(5), allowNull: true },
     toTime: { type: DataTypes.STRING(5), allowNull: true },
     notes: { type: DataTypes.TEXT, allowNull: true },
