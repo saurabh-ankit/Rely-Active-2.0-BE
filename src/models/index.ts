@@ -59,6 +59,13 @@ import { EventRegistration } from './eventRegistration.model.js'
 import { EventRequest } from './eventRequest.model.js'
 import { EventGlobalService } from './eventGlobalService.model.js'
 import { EventGlobalServiceProperty } from './eventGlobalServiceProperty.model.js'
+import { Shift, ShiftV2 } from './shift.model.js'
+import { ShiftAssignment, EmployeeShiftAssignmentV2 } from './shiftAssignment.model.js'
+import { ShiftDate, ShiftEmployeeDate } from './shiftDate.model.js'
+import { ShiftResidentPool } from './shiftResidentPool.model.js'
+import { ShiftSetting, RosterSetting } from './shiftSetting.model.js'
+import { ShiftRolePolicy, RosterRolePolicy } from './shiftRolePolicy.model.js'
+import { ShiftArea, RosterArea } from './shiftArea.model.js'
 
 // ── F&B Meal Slot associations ──────────────────────────────────────────────
 FnbGlobalMealSlot.hasMany(FnbPropertyMealSlot, { foreignKey: 'globalMealSlotId', as: 'propertyMealSlots' })
@@ -387,6 +394,52 @@ EventRequest.belongsTo(Property, { foreignKey: 'locationId', as: 'location' })
 Event.hasMany(EventRequest, { foreignKey: 'confirmedEventId', as: 'confirmedFromRequests' })
 EventRequest.belongsTo(Event, { foreignKey: 'confirmedEventId', as: 'confirmedEvent' })
 
+// ── Shift & Roster associations ────────────────────────────────────────────
+Property.hasMany(Shift, { foreignKey: 'locationId', as: 'shifts' })
+Shift.belongsTo(Property, { foreignKey: 'locationId', as: 'location' })
+
+Shift.hasMany(ShiftAssignment, { foreignKey: 'shiftId', as: 'assignments' })
+ShiftAssignment.belongsTo(Shift, { foreignKey: 'shiftId', as: 'shift' })
+ShiftAssignment.belongsTo(User, { foreignKey: 'employeeId', as: 'employee' })
+User.hasMany(ShiftAssignment, { foreignKey: 'employeeId', as: 'shiftAssignments' })
+ShiftAssignment.belongsTo(Property, { foreignKey: 'locationId', as: 'location' })
+ShiftAssignment.belongsTo(ShiftArea, { foreignKey: 'areaId', as: 'area' })
+ShiftAssignment.belongsTo(PropertyUnit, { foreignKey: 'unitId', as: 'unit' })
+ShiftAssignment.belongsTo(PropertyBlock, { foreignKey: 'blockId', as: 'block' })
+ShiftAssignment.belongsTo(PropertyFloor, { foreignKey: 'floorId', as: 'floor' })
+PropertyUnit.hasMany(ShiftAssignment, { foreignKey: 'unitId', as: 'employeeShiftAssignments' })
+PropertyBlock.hasMany(ShiftAssignment, { foreignKey: 'blockId', as: 'employeeShiftAssignments' })
+PropertyFloor.hasMany(ShiftAssignment, { foreignKey: 'floorId', as: 'employeeShiftAssignments' })
+
+ShiftAssignment.hasMany(ShiftDate, {
+  foreignKey: 'employeeShiftAssignmentId',
+  as: 'dates',
+})
+ShiftDate.belongsTo(ShiftAssignment, {
+  foreignKey: 'employeeShiftAssignmentId',
+  as: 'shiftAssignment',
+})
+ShiftDate.belongsTo(User, { foreignKey: 'coveredByEmployeeId', as: 'coveringEmployee' })
+ShiftDate.belongsTo(User, { foreignKey: 'markedBy', as: 'markedByUser' })
+ShiftDate.belongsTo(Property, { foreignKey: 'locationId', as: 'location' })
+ShiftDate.belongsTo(ShiftArea, { foreignKey: 'areaId', as: 'area' })
+
+ShiftDate.hasMany(ShiftResidentPool, { foreignKey: 'shiftEmployeeDateId', as: 'residentPool' })
+ShiftResidentPool.belongsTo(ShiftDate, {
+  foreignKey: 'shiftEmployeeDateId',
+  as: 'shiftEmployeeDate',
+})
+ShiftResidentPool.belongsTo(Resident, { foreignKey: 'residentId', as: 'resident' })
+ShiftResidentPool.belongsTo(Property, { foreignKey: 'locationId', as: 'location' })
+
+Property.hasMany(ShiftSetting, { foreignKey: 'locationId', as: 'shiftSettings' })
+ShiftSetting.belongsTo(Property, { foreignKey: 'locationId', as: 'location' })
+Property.hasMany(ShiftRolePolicy, { foreignKey: 'locationId', as: 'shiftRolePolicies' })
+ShiftRolePolicy.belongsTo(Property, { foreignKey: 'locationId', as: 'location' })
+
+Property.hasMany(ShiftArea, { foreignKey: 'locationId', as: 'shiftAreas' })
+ShiftArea.belongsTo(Property, { foreignKey: 'locationId', as: 'property' })
+
 export {
   GuestMaster,
   BaseModel,
@@ -452,4 +505,17 @@ export {
   EventRequest,
   EventGlobalService,
   EventGlobalServiceProperty,
+  Shift,
+  ShiftV2,
+  ShiftAssignment,
+  EmployeeShiftAssignmentV2,
+  ShiftDate,
+  ShiftEmployeeDate,
+  ShiftResidentPool,
+  ShiftSetting,
+  RosterSetting,
+  ShiftRolePolicy,
+  RosterRolePolicy,
+  ShiftArea,
+  RosterArea,
 }

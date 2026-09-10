@@ -13,6 +13,13 @@ import fnbRouter from './fnb.routes.js'
 import ticketRouter from './ticket.routes.js'
 import gateRouter from './gate.routes.js'
 import { eventRouter, venueRouter, globalServiceRouter, eventRequestRouter } from './event.routes.js'
+import {
+  shiftRouter,
+  employeeShiftRouter,
+  shiftEmployeeDateRouter,
+  shiftResidentPoolRouter,
+  shiftRosterRouter,
+} from './roster.routes.js'
 
 export const apiRouter = Router()
 
@@ -45,5 +52,11 @@ apiRouter.use('/event-requests', eventRequestRouter)
 apiRouter.use('/location/:locationId/event-requests', eventRequestRouter)
 apiRouter.use('/global-services', globalServiceRouter)
 apiRouter.use('/location/:locationId/global-services', globalServiceRouter)
+
+apiRouter.use('/location/:locationId/shifts', shiftRouter)
+apiRouter.use('/location/:locationId/employee-shifts', employeeShiftRouter)
+apiRouter.use('/location/:locationId/shift-employee-dates', shiftEmployeeDateRouter)
+apiRouter.use('/location/:locationId/shift-resident-pools', shiftResidentPoolRouter)
+apiRouter.use('/location/:locationId/shift-roster', shiftRosterRouter)
 
 export default apiRouter
