@@ -211,7 +211,7 @@ export async function up({ context: queryInterface }: { context: QueryInterface 
     }
 
     // 2. Rename columns expectedDate/expectedTime -> startDate/startTime (legacy)
-    const preapprovedDesc = (await queryInterface.describeTable('gate_preapproved', { transaction })) as Record<
+    const preapprovedDesc = (await queryInterface.describeTable('gate_preapproved').catch(() => ({}))) as Record<
       string,
       object
     >
@@ -228,7 +228,7 @@ export async function up({ context: queryInterface }: { context: QueryInterface 
       await queryInterface.removeColumn('gate_preapproved', 'flatNumber', { transaction })
     }
 
-    const entriesDesc = (await queryInterface.describeTable('gate_entries', { transaction })) as Record<string, object>
+    const entriesDesc = (await queryInterface.describeTable('gate_entries').catch(() => ({}))) as Record<string, object>
     if (entriesDesc['flatNumber']) {
       await queryInterface.removeColumn('gate_entries', 'flatNumber', { transaction })
     }
