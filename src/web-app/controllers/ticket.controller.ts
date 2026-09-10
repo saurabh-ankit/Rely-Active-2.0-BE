@@ -221,8 +221,19 @@ export async function getTickets(req: Request, res: Response): Promise<void> {
     if (tab && tab !== 'ALL') {
       if (tab === 'OPEN') {
         where.status = TicketStatus.OPEN
+        if (!assignedToUserId) {
+          where.assignedToUserId = null
+        }
       } else if (tab === 'IN_PROGRESS') {
-        where.status = { [Op.in]: [TicketStatus.IN_PROGRESS, TicketStatus.ON_HOLD] }
+        where.status = {
+          [Op.notIn]: [TicketStatus.RESOLVED, TicketStatus.CLOSED, TicketStatus.CANCELLED],
+        }
+        if (!assignedToUserId) {
+          where[Op.or as unknown as string] = [
+            { status: { [Op.in]: [TicketStatus.IN_PROGRESS, TicketStatus.ON_HOLD] } },
+            { assignedToUserId: { [Op.ne]: null } },
+          ]
+        }
       } else if (tab === 'CLOSED') {
         where.status = { [Op.in]: [TicketStatus.RESOLVED, TicketStatus.CLOSED, TicketStatus.CANCELLED] }
       }

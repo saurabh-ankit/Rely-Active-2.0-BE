@@ -1,6 +1,8 @@
 import { Router } from 'express'
 import staffAuthRouter from './staffAuth.routes.js'
+import ticketStaffMobileRouter from './ticketStaffMobile.routes.js'
 import gnsRouter from './gns.routes.js'
+import fnbEmployeeRouter from './fnbEmployee.routes.js'
 
 export const l3MobileRouter = Router()
 
@@ -14,5 +16,14 @@ l3MobileRouter.use('/auth', staffAuthRouter)
 l3MobileRouter.use('/staff/auth', staffAuthRouter)
 // L3 Gate & Security (/api/v1/mobile/l3/gns)
 l3MobileRouter.use('/gns', gnsRouter)
+
+// Staff F&B (/api/v1/mobile/l3/fnb)
+l3MobileRouter.use('/fnb', fnbEmployeeRouter)
+
+// Staff Tickets (/api/v1/mobile/l3/tickets)
+l3MobileRouter.use('/tickets', ticketStaffMobileRouter)
+
+// Staff F&B Delivery (/api/v1/mobile/l3/fnb)
+l3MobileRouter.use('/fnb', fnbEmployeeRouter)
 
 export default l3MobileRouter

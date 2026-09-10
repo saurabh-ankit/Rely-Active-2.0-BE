@@ -2,6 +2,8 @@ import { DataTypes, Optional } from 'sequelize'
 import sequelize from '../config/db/index.js'
 import { BaseAttributes, BaseModel, baseModelColumns } from './base.model.js'
 
+import type { PropertyBlock } from './propertyBlock.model.js'
+
 export interface PropertyFloorAttributes extends BaseAttributes {
   blockId: string
   floor_number: number
@@ -33,6 +35,7 @@ export class PropertyFloor
   implements PropertyFloorAttributes
 {
   declare blockId: string
+  declare block?: PropertyBlock
   declare floor_number: number
   declare floor_name: string | null
   declare floor_type: string | null

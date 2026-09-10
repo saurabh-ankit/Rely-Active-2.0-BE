@@ -22,8 +22,11 @@ export const errorHandler: ErrorRequestHandler = (error: unknown, _request, resp
     return void response
       .status(error.status)
       .json({ success: false, error: { code: 'REQUEST_ERROR', message: error.message, details: error.details } })
-  logger.error({ error }, 'Unhandled request error')
-  response
-    .status(500)
-    .json({ success: false, error: { code: 'INTERNAL_ERROR', message: 'An unexpected error occurred' } })
+
+  const errObj = error instanceof Error ? error : new Error(String(error || 'Unhandled request error'))
+  logger.error({ err: errObj }, errObj.message || 'Unhandled request error')
+  response.status(500).json({
+    success: false,
+    error: { code: 'INTERNAL_ERROR', message: errObj.message || 'An unexpected error occurred' },
+  })
 }

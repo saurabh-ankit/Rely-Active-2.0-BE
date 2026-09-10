@@ -84,13 +84,11 @@ export const createWalkin = async (req: Request, res: Response) => {
     return res.status(201).json({ success: true, data: entries })
   } catch (error) {
     console.error('Error creating walkin:', error)
-    return res
-      .status(500)
-      .json({
-        success: false,
-        message: 'Error creating walkin entry',
-        error: error instanceof Error ? error.message : error,
-      })
+    return res.status(500).json({
+      success: false,
+      message: 'Error creating walkin entry',
+      error: error instanceof Error ? error.message : error,
+    })
   }
 }
 
