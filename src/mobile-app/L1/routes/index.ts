@@ -4,9 +4,7 @@ import residentDetailsRouter from './residentDetails.routes.js'
 import fnbMobileRouter from './fnbMobile.routes.js'
 import ticketMobileRouter from './ticketMobile.routes.js'
 import gnsRouter from './gns.routes.js'
-import eventMobileRouter from './eventMobile.routes.js'
-import eventVenueMobileRouter from './eventVenueMobile.routes.js'
-import eventRequestMobileRouter from './eventRequestMobile.routes.js'
+import eventMobileRouter, { eventVenueMobileRouter, eventRequestMobileRouter } from './eventMobile.routes.js'
 
 export const l1MobileRouter = Router()
 
@@ -25,6 +23,7 @@ l1MobileRouter.use('/fnb', fnbMobileRouter)
 
 // Resident Gate & Security (/api/v1/mobile/l1/gns)
 l1MobileRouter.use('/gns', gnsRouter)
+
 // Resident Event Venues (/api/v1/mobile/l1/venues)
 l1MobileRouter.use('/venues', eventVenueMobileRouter)
 

@@ -1,16 +1,216 @@
 import { QueryInterface, DataTypes, ModelAttributeColumnOptions, Model } from 'sequelize'
 
+const commonFields = {
+  id: {
+    type: DataTypes.UUID,
+    defaultValue: DataTypes.UUIDV4,
+    primaryKey: true,
+    allowNull: false,
+  },
+  createdBy: {
+    type: DataTypes.CHAR(36),
+    allowNull: true,
+  },
+  updatedBy: {
+    type: DataTypes.CHAR(36),
+    allowNull: true,
+  },
+  createdAt: {
+    type: DataTypes.DATE,
+    allowNull: false,
+    defaultValue: DataTypes.NOW,
+  },
+  updatedAt: {
+    type: DataTypes.DATE,
+    allowNull: false,
+    defaultValue: DataTypes.NOW,
+  },
+}
+
+function normalizeTableNames(rawTables: Awaited<ReturnType<QueryInterface['showAllTables']>>): string[] {
+  return rawTables.map((t) => (typeof t === 'string' ? t : (t as { tableName?: string }).tableName || String(t)))
+}
+
 export async function up({ context: queryInterface }: { context: QueryInterface }) {
   const transaction = await queryInterface.sequelize.transaction()
 
   try {
-    // 1. Rename table gate_invites -> gate_preapproved
-    const tableNames = await queryInterface.showAllTables()
+    let tableNames = normalizeTableNames(await queryInterface.showAllTables())
+
+    // 1. Rename table gate_invites -> gate_preapproved (legacy installs)
     if (tableNames.includes('gate_invites') && !tableNames.includes('gate_preapproved')) {
       await queryInterface.renameTable('gate_invites', 'gate_preapproved', { transaction })
+      tableNames = normalizeTableNames(await queryInterface.showAllTables())
     }
 
-    // 2. Rename columns expectedDate/expectedTime -> startDate/startTime
+    // 1b. Fresh installs: create gate tables at the final schema
+    if (!tableNames.includes('gate_preapproved')) {
+      await queryInterface.createTable(
+        'gate_preapproved',
+        {
+          ...commonFields,
+          locId: {
+            type: DataTypes.UUID,
+            allowNull: false,
+            references: { model: 'properties', key: 'id' },
+            onUpdate: 'CASCADE',
+            onDelete: 'CASCADE',
+          },
+          unitId: {
+            type: DataTypes.UUID,
+            allowNull: true,
+            references: { model: 'property_units', key: 'id' },
+            onUpdate: 'CASCADE',
+            onDelete: 'SET NULL',
+          },
+          residentId: {
+            type: DataTypes.UUID,
+            allowNull: true,
+            references: { model: 'residents', key: 'id' },
+            onUpdate: 'CASCADE',
+            onDelete: 'SET NULL',
+          },
+          visitorName: {
+            type: DataTypes.STRING(255),
+            allowNull: false,
+          },
+          visitorPhone: {
+            type: DataTypes.STRING(50),
+            allowNull: true,
+          },
+          visitorType: {
+            type: DataTypes.ENUM('Guest', 'Delivery', 'Cab', 'Office', 'Other'),
+            allowNull: false,
+          },
+          startDate: {
+            type: DataTypes.DATEONLY,
+            allowNull: true,
+          },
+          startTime: {
+            type: DataTypes.TIME,
+            allowNull: true,
+          },
+          qrCode: {
+            type: DataTypes.TEXT,
+            allowNull: true,
+          },
+          qrCodeImage: {
+            type: DataTypes.TEXT('long'),
+            allowNull: true,
+          },
+          status: {
+            type: DataTypes.ENUM('Pending', 'Scanned', 'Expired', 'Cancelled', 'Rejected'),
+            allowNull: false,
+            defaultValue: 'Pending',
+          },
+          visitorPhotos: { type: DataTypes.JSON, allowNull: true },
+          vehicleNumber: { type: DataTypes.STRING(100), allowNull: true },
+          notes: { type: DataTypes.TEXT, allowNull: true },
+          company: { type: DataTypes.STRING(255), allowNull: true },
+          personToMeet: { type: DataTypes.STRING(255), allowNull: true },
+          scheduleType: { type: DataTypes.ENUM('ONCE', 'FREQUENT'), allowNull: true },
+          endDate: { type: DataTypes.DATE, allowNull: true },
+          endTime: { type: DataTypes.TIME, allowNull: true },
+        },
+        { transaction },
+      )
+    }
+
+    if (!tableNames.includes('gate_entries')) {
+      await queryInterface.createTable(
+        'gate_entries',
+        {
+          ...commonFields,
+          locId: {
+            type: DataTypes.UUID,
+            allowNull: false,
+            references: { model: 'properties', key: 'id' },
+            onUpdate: 'CASCADE',
+            onDelete: 'CASCADE',
+          },
+          preapprovedId: {
+            type: DataTypes.UUID,
+            allowNull: true,
+            references: { model: 'gate_preapproved', key: 'id' },
+            onUpdate: 'CASCADE',
+            onDelete: 'SET NULL',
+          },
+          entrySource: {
+            type: DataTypes.ENUM('Preapproved', 'Walkin'),
+            allowNull: false,
+          },
+          visitorType: {
+            type: DataTypes.ENUM('Guest', 'Delivery', 'Cab', 'Office', 'Other'),
+            allowNull: false,
+          },
+          visitorName: {
+            type: DataTypes.STRING(255),
+            allowNull: false,
+          },
+          visitorPhone: {
+            type: DataTypes.STRING(50),
+            allowNull: true,
+          },
+          unitId: {
+            type: DataTypes.UUID,
+            allowNull: true,
+            references: { model: 'property_units', key: 'id' },
+            onUpdate: 'CASCADE',
+            onDelete: 'SET NULL',
+          },
+          status: {
+            type: DataTypes.ENUM('PendingApproval', 'Approved', 'Rejected', 'Inside', 'Completed'),
+            allowNull: false,
+            defaultValue: 'PendingApproval',
+          },
+          clockedInAt: { type: DataTypes.DATE, allowNull: true },
+          clockedOutAt: { type: DataTypes.DATE, allowNull: true },
+          clockedInBy: { type: DataTypes.UUID, allowNull: true },
+          clockedOutBy: { type: DataTypes.UUID, allowNull: true },
+          approvedBy: { type: DataTypes.UUID, allowNull: true },
+          vehicleNumber: { type: DataTypes.STRING(100), allowNull: true },
+          visitorPhotos: { type: DataTypes.JSON, allowNull: true },
+          numberOfPeople: { type: DataTypes.INTEGER, allowNull: true },
+          notes: { type: DataTypes.TEXT, allowNull: true },
+          company: { type: DataTypes.STRING(255), allowNull: true },
+          personToMeet: { type: DataTypes.STRING(255), allowNull: true },
+        },
+        { transaction },
+      )
+    }
+
+    if (!tableNames.includes('gate_entry_items')) {
+      await queryInterface.createTable(
+        'gate_entry_items',
+        {
+          ...commonFields,
+          entryId: {
+            type: DataTypes.UUID,
+            allowNull: false,
+            references: { model: 'gate_entries', key: 'id' },
+            onUpdate: 'CASCADE',
+            onDelete: 'CASCADE',
+          },
+          itemName: {
+            type: DataTypes.STRING(255),
+            allowNull: false,
+          },
+          quantity: {
+            type: DataTypes.INTEGER,
+            allowNull: false,
+            defaultValue: 1,
+          },
+          isChecked: {
+            type: DataTypes.BOOLEAN,
+            allowNull: false,
+            defaultValue: false,
+          },
+        },
+        { transaction },
+      )
+    }
+
+    // 2. Rename columns expectedDate/expectedTime -> startDate/startTime (legacy)
     const preapprovedDesc = (await queryInterface.describeTable('gate_preapproved').catch(() => ({}))) as Record<
       string,
       object
@@ -33,7 +233,7 @@ export async function up({ context: queryInterface }: { context: QueryInterface 
       await queryInterface.removeColumn('gate_entries', 'flatNumber', { transaction })
     }
 
-    // 4. Add new columns to gate_preapproved
+    // 4. Add new columns to gate_preapproved (legacy installs missing them)
     const newPreapprovedCols = {
       visitorPhotos: { type: DataTypes.JSON, allowNull: true },
       vehicleNumber: { type: DataTypes.STRING(100), allowNull: true },
@@ -178,7 +378,8 @@ export async function down({ context: queryInterface }: { context: QueryInterfac
   const transaction = await queryInterface.sequelize.transaction()
 
   try {
-    await queryInterface.dropTable('guest_masters', { transaction })
+    await queryInterface.dropTable('guest_masters', { transaction }).catch(() => {})
+    await queryInterface.dropTable('gate_entry_items', { transaction }).catch(() => {})
 
     const newEntriesCols = ['visitorPhotos', 'numberOfPeople', 'notes', 'company', 'personToMeet']
     for (const colName of newEntriesCols) {

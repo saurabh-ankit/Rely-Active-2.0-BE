@@ -38,10 +38,11 @@ export function isAllowedL3Department(deptName?: string | null, deptCode?: strin
  */
 export async function staffLogin(req: Request, res: Response): Promise<void> {
   try {
-    const { username, email, phone, password } = req.body
+    const { username, email, phone, password } = req.body || {}
     const identifier = (username || email || phone || '').toString().trim()
+    const strPassword = password !== undefined && password !== null ? String(password) : ''
 
-    if (!identifier || !password) {
+    if (!identifier || !strPassword) {
       res.status(400).json({
         success: false,
         message: 'Please provide staff username/email and password.',
@@ -92,7 +93,7 @@ export async function staffLogin(req: Request, res: Response): Promise<void> {
       return
     }
 
-    const isMatch = await bcrypt.compare(password, user.passwordHash)
+    const isMatch = await bcrypt.compare(strPassword, user.passwordHash)
     if (!isMatch) {
       res.status(401).json({
         success: false,

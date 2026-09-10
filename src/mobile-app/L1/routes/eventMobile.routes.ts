@@ -1,13 +1,39 @@
 import { Router } from 'express'
 import { authenticate } from '../../../middlewares/authenticate.js'
-import { getResidentEventById, getResidentEvents, reserveEventSeats } from '../controllers/eventMobile.controller.js'
+import {
+  checkResidentVenueAvailability,
+  createEventRequest,
+  getMyEventRequestById,
+  getResidentEventById,
+  getResidentEvents,
+  getResidentVenueById,
+  getResidentVenues,
+  listMyEventRequests,
+  reserveEventSeats,
+} from '../controllers/eventMobile.controller.js'
 
-const router = Router()
+export const eventMobileRouter = Router()
+export const eventVenueMobileRouter = Router()
+export const eventRequestMobileRouter = Router()
 
-router.use(authenticate)
+// Apply authentication middleware
+eventMobileRouter.use(authenticate)
+eventVenueMobileRouter.use(authenticate)
+eventRequestMobileRouter.use(authenticate)
 
-router.get('/', getResidentEvents)
-router.get('/:id', getResidentEventById)
-router.post('/:id/reserve', reserveEventSeats)
+// ── Event Routes (/events) ──────────────────────────────────────────────────
+eventMobileRouter.get('/', getResidentEvents)
+eventMobileRouter.get('/:id', getResidentEventById)
+eventMobileRouter.post('/:id/reserve', reserveEventSeats)
 
-export default router
+// ── Venue Routes (/venues) ──────────────────────────────────────────────────
+eventVenueMobileRouter.get('/', getResidentVenues)
+eventVenueMobileRouter.get('/availability', checkResidentVenueAvailability)
+eventVenueMobileRouter.get('/:id', getResidentVenueById)
+
+// ── Event Request Routes (/event-requests) ──────────────────────────────────
+eventRequestMobileRouter.get('/', listMyEventRequests)
+eventRequestMobileRouter.get('/:id', getMyEventRequestById)
+eventRequestMobileRouter.post('/', createEventRequest)
+
+export default eventMobileRouter

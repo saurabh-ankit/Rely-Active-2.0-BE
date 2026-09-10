@@ -7,7 +7,7 @@ import type { AuthenticatedRequest } from '../../middlewares/authenticate.js'
 
 export async function login(req: Request, res: Response): Promise<void> {
   try {
-    const { username, password } = req.body
+    const { username, password } = req.body || {}
 
     if (!username || !password) {
       res.status(400).json({
@@ -17,7 +17,16 @@ export async function login(req: Request, res: Response): Promise<void> {
       return
     }
 
-    const trimmedUsername = (username as string).trim()
+    const trimmedUsername = String(username).trim()
+    const strPassword = String(password)
+
+    if (!trimmedUsername || !strPassword) {
+      res.status(400).json({
+        success: false,
+        message: 'Please provide username and password.',
+      })
+      return
+    }
 
     const user = await User.findOne({
       where: {
@@ -43,7 +52,7 @@ export async function login(req: Request, res: Response): Promise<void> {
       return
     }
 
-    const isMatch = await bcrypt.compare(password, user.passwordHash)
+    const isMatch = await bcrypt.compare(strPassword, user.passwordHash)
     if (!isMatch) {
       res.status(401).json({
         success: false,
