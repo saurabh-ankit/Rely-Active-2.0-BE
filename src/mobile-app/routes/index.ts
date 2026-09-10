@@ -4,10 +4,12 @@ import { l3MobileRouter } from '../L3/routes/index.js'
 
 export const mobileApiRouter = Router()
 
-// L1 Resident Mobile App routes mounted strictly under /l1
+// L1 Resident Mobile App routes mounted under /l1
 mobileApiRouter.use('/l1', l1MobileRouter)
+mobileApiRouter.use('/L1', l1MobileRouter)
 
-// L3 Staff / Technician Mobile App routes mounted strictly under /l3
+// L3 Staff / Technician Mobile App routes mounted under /l3
 mobileApiRouter.use('/l3', l3MobileRouter)
+mobileApiRouter.use('/L3', l3MobileRouter)
 
 export default mobileApiRouter

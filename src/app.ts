@@ -70,10 +70,11 @@ export function createApp() {
   app.use('/uploads', express.static(path.join(process.cwd(), 'uploads')))
 
   app.get('/health', (_request, response) => response.json({ status: 'ok', service: 'rely-active-backend' }))
-  app.use('/api/v1', apiRouter)
 
   // Mobile API Router (/api/v1/mobile/l1 for Resident, /api/v1/mobile/l3 for Staff/Technician)
   app.use('/api/v1/mobile', mobileApiRouter)
+
+  app.use('/api/v1', apiRouter)
 
   app.use(notFound)
   app.use(errorHandler)
