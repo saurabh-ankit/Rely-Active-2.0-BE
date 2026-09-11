@@ -11,11 +11,15 @@ import {
   createGuestMaster,
   updateGuestMaster,
   deleteGuestMaster,
+  getResidentEntries,
 } from '../controllers/gns.controller.js'
 
 const router = Router()
 
 router.use(authenticate)
+
+// Resident Entries Log
+router.get('/entries', getResidentEntries)
 
 // Preapproved & Walkins
 router.post('/preapproved', createPreapproved)

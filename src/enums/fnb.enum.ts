@@ -67,3 +67,8 @@ export enum FnbDishCategory {
   BEVERAGES = 'beverages',
   OTHER = 'other',
 }
+
+export enum FnbDiningType {
+  DINE_IN = 'dine_in',
+  HOME_DELIVERY = 'home_delivery',
+}
