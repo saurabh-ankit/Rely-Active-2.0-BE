@@ -30,6 +30,12 @@ export type UserLocationCreationAttributes = Optional<
   | 'updatedAt'
 >
 
+import type { Role } from './role.model.js'
+import type { User } from './user.model.js'
+import type { Property } from './property.model.js'
+import type { Department } from './department.model.js'
+import type { JobCategory } from './jobCategory.model.js'
+
 export class UserLocation
   extends BaseModel<UserLocationAttributes, UserLocationCreationAttributes>
   implements UserLocationAttributes
@@ -43,6 +49,12 @@ export class UserLocation
   declare assignedBy: string | null
   declare isActive: boolean
   declare isDeleted: boolean
+
+  declare role?: Role | null
+  declare user?: User | null
+  declare property?: Property | null
+  declare department?: Department | null
+  declare jobCategory?: JobCategory | null
 }
 
 UserLocation.init(

@@ -10,6 +10,7 @@ import type { Property } from './property.model.js'
 import type { PackageSubscription } from './packageSubscription.model.js'
 import type { AdditionalTaskCharge } from './additionalTaskCharge.model.js'
 import type { Package } from './package.model.js'
+import type { CareTaskAssignment } from './careTaskAssignment.model.js'
 
 export interface ResidentAttributes extends BaseAttributes {
   unitId: string
@@ -81,6 +82,7 @@ export class Resident extends BaseModel<ResidentAttributes, ResidentCreationAttr
   declare packageSubscriptions?: PackageSubscription[]
   declare additionalTaskCharges?: AdditionalTaskCharge[]
   declare carePackage?: Package
+  declare careTaskAssignments?: CareTaskAssignment[]
   declare residentType: ResidentType
   declare ownershipType: OwnershipType | null
   declare isResiding: boolean
