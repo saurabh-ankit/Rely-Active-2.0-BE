@@ -1,6 +1,9 @@
 import { DataTypes, Optional } from 'sequelize'
 import sequelize from '../config/db/index.js'
 import { BaseAttributes, BaseModel, baseModelColumns } from './base.model.js'
+import type { Package } from './package.model.js'
+import type { CareTask } from './careTasks.model.js'
+import type { PackageSubscription } from './packageSubscription.model.js'
 
 export type PropertyType = 'apartment' | 'villa' | 'duplex' | 'triplex'
 export type AreaUnit = 'sqft' | 'sqmt' | 'acres'
@@ -59,6 +62,10 @@ export class Property extends BaseModel<PropertyAttributes, PropertyCreationAttr
   declare launch_date: string | null
   declare isActive: boolean
   declare isDeleted: boolean
+
+  declare packages?: Package[]
+  declare careTasks?: CareTask[]
+  declare packageSubscriptions?: PackageSubscription[]
 }
 
 Property.init(

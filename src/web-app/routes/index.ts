@@ -12,7 +12,6 @@ import assetRouter from './asset.routes.js'
 import fnbRouter from './fnb.routes.js'
 import ticketRouter from './ticket.routes.js'
 import gateRouter from './gate.routes.js'
-import { eventRouter, venueRouter, globalServiceRouter, eventRequestRouter } from './event.routes.js'
 import {
   shiftRouter,
   employeeShiftRouter,
@@ -20,6 +19,9 @@ import {
   shiftResidentPoolRouter,
   shiftRosterRouter,
 } from './roster.routes.js'
+import { eventRouter, venueRouter, globalServiceRouter, eventRequestRouter } from './event.routes.js'
+import globalSettingsRouter from './globalSettings.js'
+import medicalRouter from './medical.routes.js'
 
 export const apiRouter = Router()
 
@@ -54,6 +56,11 @@ apiRouter.use('/event-requests', eventRequestRouter)
 apiRouter.use('/location/:locationId/event-requests', eventRequestRouter)
 apiRouter.use('/global-services', globalServiceRouter)
 apiRouter.use('/location/:locationId/global-services', globalServiceRouter)
+apiRouter.use('/global-settings', globalSettingsRouter)
+
+// Medical routes (Care Tasks, Care Packages, Subscriptions)
+apiRouter.use('/medical', medicalRouter)
+apiRouter.use('/location/:locationId/medical', medicalRouter)
 
 apiRouter.use('/location/:locationId/shifts', shiftRouter)
 apiRouter.use('/location/:locationId/employee-shifts', employeeShiftRouter)

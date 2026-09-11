@@ -3,6 +3,7 @@ import staffAuthRouter from './staffAuth.routes.js'
 import ticketStaffMobileRouter from './ticketStaffMobile.routes.js'
 import gnsRouter from './gns.routes.js'
 import fnbEmployeeRouter from './fnbEmployee.routes.js'
+import medicalRouter from './medical.routes.js'
 
 export const l3MobileRouter = Router()
 
@@ -26,5 +27,8 @@ l3MobileRouter.use('/fnb', fnbEmployeeRouter)
 // ── L3 Gate & Security Module (/api/v1/mobile/l3/gns & /api/v1/mobile/l3/gate) ──
 l3MobileRouter.use('/gns', gnsRouter)
 l3MobileRouter.use('/gate', gnsRouter)
+
+// Medical / Nurse Care Tasks (/api/v1/mobile/l3/medical)
+l3MobileRouter.use('/medical', medicalRouter)
 
 export default l3MobileRouter

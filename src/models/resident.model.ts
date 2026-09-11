@@ -7,11 +7,15 @@ import type { PropertyUnit } from './propertyUnit.model.js'
 import type { ResidentFamilyMember } from './residentFamilyMember.model.js'
 import type { FnbResidentPackage } from './fnbResidentPackage.model.js'
 import type { Property } from './property.model.js'
+import type { PackageSubscription } from './packageSubscription.model.js'
+import type { AdditionalTaskCharge } from './additionalTaskCharge.model.js'
+import type { Package } from './package.model.js'
 
 export interface ResidentAttributes extends BaseAttributes {
   unitId: string
   locId: string
   companyId?: string | null
+  carePackageId?: string | null
   residentType: ResidentType
   ownershipType?: OwnershipType | null
   isResiding: boolean
@@ -39,6 +43,7 @@ export type ResidentCreationAttributes = Optional<
   ResidentAttributes,
   | 'id'
   | 'companyId'
+  | 'carePackageId'
   | 'ownershipType'
   | 'isResiding'
   | 'lastName'
@@ -68,10 +73,14 @@ export class Resident extends BaseModel<ResidentAttributes, ResidentCreationAttr
   declare unitId: string
   declare locId: string
   declare companyId: string | null
+  declare carePackageId: string | null
   declare unit?: PropertyUnit
   declare property?: Property
   declare familyMembers?: ResidentFamilyMember[]
   declare fnbPackages?: FnbResidentPackage[]
+  declare packageSubscriptions?: PackageSubscription[]
+  declare additionalTaskCharges?: AdditionalTaskCharge[]
+  declare carePackage?: Package
   declare residentType: ResidentType
   declare ownershipType: OwnershipType | null
   declare isResiding: boolean
@@ -111,6 +120,11 @@ Resident.init(
     companyId: {
       type: DataTypes.UUID,
       allowNull: true,
+    },
+    carePackageId: {
+      type: DataTypes.UUID,
+      allowNull: true,
+      comment: 'FK -> packages.id',
     },
     residentType: {
       type: DataTypes.ENUM('OWNER', 'TENANT'),

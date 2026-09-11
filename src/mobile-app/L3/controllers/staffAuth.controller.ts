@@ -6,7 +6,7 @@ import { generateToken, verifyToken } from '../../../utils/jwt.js'
 import { AuthorizationService } from '../../../services/authorization.service.js'
 import type { AuthenticatedRequest } from '../../../middlewares/authenticate.js'
 
-const ALLOWED_L3_DEPT_CODES = ['FNB', 'SEC', 'CON', 'RNM', 'HK', 'HOUSEKEEPING', 'EVT', 'EVENTS']
+const ALLOWED_L3_DEPT_CODES = ['FNB', 'SEC', 'CON', 'RNM', 'HK', 'HOUSEKEEPING', 'EVT', 'EVENTS', 'MED']
 
 export function isAllowedL3Department(deptName?: string | null, deptCode?: string | null): boolean {
   if (deptCode && ALLOWED_L3_DEPT_CODES.includes(deptCode.toUpperCase())) {
@@ -27,7 +27,8 @@ export function isAllowedL3Department(deptName?: string | null, deptCode?: strin
     nameUpper.includes('R&M') ||
     nameUpper.includes('HOUSEKEEPING') ||
     nameUpper.includes('CLEANING') ||
-    nameUpper.includes('EVENT')
+    nameUpper.includes('EVENT') ||
+    nameUpper.includes('MED')
   )
 }
 
@@ -106,17 +107,30 @@ export async function staffLogin(req: Request, res: Response): Promise<void> {
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const userLocs = (userWithAssoc.userLocations || []) as any[]
-    const userDepts = userLocs.map((ul) => ul.department).filter((d): d is Department => Boolean(d && !d.isDeleted))
+    const userDepts = userLocs
+      .map((ul) => ul.department)
+      .filter((d): d is Department => Boolean(d && d.isActive !== false))
 
     const authCtx = await AuthorizationService.getUserAuthorizationContext(user.id)
 
-    const hasAllowedDept = authCtx.isSuperAdmin || userDepts.some((d) => isAllowedL3Department(d.name, d.code))
+    const isNurseOrMedical =
+      authCtx.roles.some((r) => /NURSE|MEDICAL|CARE|DOCTOR/i.test(r)) ||
+      userLocs.some(
+        (ul) =>
+          /NURSE|MEDICAL|CARE|DOCTOR/i.test(ul.role?.name || '') ||
+          /NURSE|MEDICAL|CARE|DOCTOR/i.test(ul.role?.code || '') ||
+          /NURSE|MED/i.test(ul.jobCategory?.name || '') ||
+          /NURSE|MED/i.test(ul.jobCategory?.code || ''),
+      )
+
+    const hasAllowedDept =
+      authCtx.isSuperAdmin || isNurseOrMedical || userDepts.some((d) => isAllowedL3Department(d.name, d.code))
 
     if (!hasAllowedDept) {
       res.status(403).json({
         success: false,
         message:
-          'Access restricted: Only staff members assigned to Food & Beverage, Gate & Security, Concierge, Repair & Maintenance, Housekeeping, or Event departments can log in to the L3 Mobile App.',
+          'Access restricted: Only staff members assigned to Food & Beverage, Gate & Security, Concierge, Repair & Maintenance, Housekeeping, Event, or Medical/Nursing departments can log in to the L3 Mobile App.',
       })
       return
     }
@@ -226,7 +240,9 @@ export async function getStaffProfile(req: Request, res: Response): Promise<void
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const userLocs = (userWithAssoc.userLocations || []) as any[]
-    const userDepts = userLocs.map((ul) => ul.department).filter((d): d is Department => Boolean(d && !d.isDeleted))
+    const userDepts = userLocs
+      .map((ul) => ul.department)
+      .filter((d): d is Department => Boolean(d && d.isActive !== false))
 
     const authCtx = await AuthorizationService.getUserAuthorizationContext(user.id)
     const primaryDept = userDepts.find((d) => isAllowedL3Department(d.name, d.code)) || userDepts[0] || null
