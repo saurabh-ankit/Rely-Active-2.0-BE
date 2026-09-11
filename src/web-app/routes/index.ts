@@ -12,7 +12,8 @@ import assetRouter from './asset.routes.js'
 import fnbRouter from './fnb.routes.js'
 import ticketRouter from './ticket.routes.js'
 import { eventRouter, venueRouter, globalServiceRouter } from './event.routes.js'
-import globalSettingsRouter, { careTaskRouter, packageRouter } from './globalSettings.js'
+import globalSettingsRouter from './globalSettings.js'
+import medicalRouter from './medical.routes.js'
 
 export const apiRouter = Router()
 
@@ -43,8 +44,9 @@ apiRouter.use('/location/:locationId/venues', venueRouter)
 apiRouter.use('/global-services', globalServiceRouter)
 apiRouter.use('/location/:locationId/global-services', globalServiceRouter)
 apiRouter.use('/global-settings', globalSettingsRouter)
-apiRouter.use('/care-tasks', careTaskRouter)
-apiRouter.use('/tasks', careTaskRouter)
-apiRouter.use('/packages', packageRouter)
+
+// Medical routes (Care Tasks, Care Packages, Subscriptions)
+apiRouter.use('/medical', medicalRouter)
+apiRouter.use('/location/:locationId/medical', medicalRouter)
 
 export default apiRouter

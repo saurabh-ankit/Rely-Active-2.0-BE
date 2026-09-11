@@ -51,6 +51,7 @@ globalSettingsRouter.use(authenticate)
 globalSettingsRouter.use('/care-tasks', careTaskRouter)
 globalSettingsRouter.use('/tasks', careTaskRouter)
 globalSettingsRouter.use('/packages', packageRouter)
+globalSettingsRouter.use('/care-packages', packageRouter)
 
 export { globalSettingsRouter, careTaskRouter, packageRouter }
 export default globalSettingsRouter

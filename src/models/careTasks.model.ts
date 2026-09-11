@@ -2,18 +2,18 @@ import { DataTypes, Optional } from 'sequelize'
 import sequelize from '../config/db/index.js'
 import { BaseAttributes, BaseModel, baseModelColumns } from './base.model.js'
 import type { Property } from './property.model.js'
+import type { AdditionalTaskCharge } from './additionalTaskCharge.model.js'
+import type { PackageSubscriptionFeature } from './packageSubscriptionFeature.model.js'
+import type { Package } from './package.model.js'
+import type { CarePackageFeaturesMap } from './carePackageFeaturesMap.model.js'
 
-export type PriceOption = 'Daily' | 'Monthly' | 'Session Wise'
+export type BillingType = 'MONTHLY' | 'SESSION'
 
 export interface CareTaskAttributes extends BaseAttributes {
   careTaskName: string
   careTaskDescription?: string | null
-  dailyRate: number
-  monthlyRate: number
-  sessionRate: number
-  sessionWiseRate?: number
-  careTaskPrice?: number | null
-  priceOption?: PriceOption | string | null
+  billingType: BillingType | string
+  price: number
   careTaskImage?: string | null
   propertyId?: string | null
   isActive: boolean
@@ -24,12 +24,8 @@ export type CareTaskCreationAttributes = Optional<
   CareTaskAttributes,
   | 'id'
   | 'careTaskDescription'
-  | 'dailyRate'
-  | 'monthlyRate'
-  | 'sessionRate'
-  | 'sessionWiseRate'
-  | 'careTaskPrice'
-  | 'priceOption'
+  | 'billingType'
+  | 'price'
   | 'careTaskImage'
   | 'propertyId'
   | 'isActive'
@@ -43,18 +39,18 @@ export type CareTaskCreationAttributes = Optional<
 export class CareTask extends BaseModel<CareTaskAttributes, CareTaskCreationAttributes> implements CareTaskAttributes {
   declare careTaskName: string
   declare careTaskDescription: string | null
-  declare dailyRate: number
-  declare monthlyRate: number
-  declare sessionRate: number
-  declare sessionWiseRate?: number
-  declare careTaskPrice?: number | null
-  declare priceOption?: PriceOption | string | null
+  declare billingType: BillingType | string
+  declare price: number
   declare careTaskImage: string | null
   declare propertyId: string | null
   declare isActive: boolean
   declare isDeleted: boolean
 
   declare property?: Property
+  declare additionalTaskCharges?: AdditionalTaskCharge[]
+  declare packageSubscriptionFeatures?: PackageSubscriptionFeature[]
+  declare packages?: (Package & { CarePackageFeaturesMap?: CarePackageFeaturesMap })[]
+  declare packageMaps?: CarePackageFeaturesMap[]
 }
 
 CareTask.init(
@@ -68,62 +64,18 @@ CareTask.init(
       type: DataTypes.TEXT,
       allowNull: true,
     },
-    dailyRate: {
+    billingType: {
+      type: DataTypes.STRING(50),
+      allowNull: false,
+      defaultValue: 'MONTHLY',
+    },
+    price: {
       type: DataTypes.DECIMAL(10, 2),
       allowNull: false,
       defaultValue: 0.0,
       get() {
-        const val = this.getDataValue('dailyRate')
+        const val = this.getDataValue('price')
         return val !== null && val !== undefined ? Number(val) : 0
-      },
-    },
-    monthlyRate: {
-      type: DataTypes.DECIMAL(10, 2),
-      allowNull: false,
-      defaultValue: 0.0,
-      get() {
-        const val = this.getDataValue('monthlyRate')
-        return val !== null && val !== undefined ? Number(val) : 0
-      },
-    },
-    sessionRate: {
-      type: DataTypes.DECIMAL(10, 2),
-      allowNull: false,
-      defaultValue: 0.0,
-      get() {
-        const val = this.getDataValue('sessionRate')
-        return val !== null && val !== undefined ? Number(val) : 0
-      },
-    },
-    sessionWiseRate: {
-      type: DataTypes.VIRTUAL,
-      get() {
-        const val = this.getDataValue('sessionRate')
-        return val !== null && val !== undefined ? Number(val) : 0
-      },
-      set(val: unknown) {
-        this.setDataValue('sessionRate', Number(val) || 0)
-      },
-    },
-    careTaskPrice: {
-      type: DataTypes.VIRTUAL,
-      get() {
-        const m = Number(this.getDataValue('monthlyRate')) || 0
-        const d = Number(this.getDataValue('dailyRate')) || 0
-        const s = Number(this.getDataValue('sessionRate')) || 0
-        return m || d || s || 0
-      },
-    },
-    priceOption: {
-      type: DataTypes.VIRTUAL,
-      get() {
-        const m = Number(this.getDataValue('monthlyRate')) || 0
-        const d = Number(this.getDataValue('dailyRate')) || 0
-        const s = Number(this.getDataValue('sessionRate')) || 0
-        if (m > 0) return 'Monthly'
-        if (d > 0) return 'Daily'
-        if (s > 0) return 'Session Wise'
-        return null
       },
     },
     careTaskImage: {

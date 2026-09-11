@@ -2,6 +2,9 @@ import { DataTypes, Optional } from 'sequelize'
 import sequelize from '../config/db/index.js'
 import { BaseAttributes, BaseModel, baseModelColumns } from './base.model.js'
 import type { Property } from './property.model.js'
+import type { PackageSubscription } from './packageSubscription.model.js'
+import type { CareTask } from './careTasks.model.js'
+import type { CarePackageFeaturesMap } from './carePackageFeaturesMap.model.js'
 
 export type PackageDuration = 'Monthly' | 'Yearly'
 
@@ -10,12 +13,8 @@ export interface PackageTaskItem {
   careTaskName?: string
   taskName?: string
   taskType?: string
-  dailyRate?: number
-  monthlyRate?: number
-  sessionRate?: number
-  priceOption?: string
+  billingType?: string
   price?: number
-  careTaskPrice?: number
   careTaskImage?: string | null
   taskImage?: string | null
   complimentaryCount: number
@@ -25,7 +24,6 @@ export interface PackageAttributes extends BaseAttributes {
   packageName: string
   packageCost: number
   duration: PackageDuration | string
-  tasks: PackageTaskItem[]
   description?: string | null
   propertyId?: string | null
   isActive: boolean
@@ -34,29 +32,23 @@ export interface PackageAttributes extends BaseAttributes {
 
 export type PackageCreationAttributes = Optional<
   PackageAttributes,
-  | 'id'
-  | 'tasks'
-  | 'description'
-  | 'propertyId'
-  | 'isActive'
-  | 'isDeleted'
-  | 'createdBy'
-  | 'updatedBy'
-  | 'createdAt'
-  | 'updatedAt'
+  'id' | 'description' | 'propertyId' | 'isActive' | 'isDeleted' | 'createdBy' | 'updatedBy' | 'createdAt' | 'updatedAt'
 >
 
 export class Package extends BaseModel<PackageAttributes, PackageCreationAttributes> implements PackageAttributes {
   declare packageName: string
   declare packageCost: number
   declare duration: PackageDuration | string
-  declare tasks: PackageTaskItem[]
   declare description: string | null
   declare propertyId: string | null
   declare isActive: boolean
   declare isDeleted: boolean
 
   declare property?: Property
+  declare packageSubscriptions?: PackageSubscription[]
+  declare features?: (CareTask & { CarePackageFeaturesMap?: CarePackageFeaturesMap })[]
+  declare featureMaps?: CarePackageFeaturesMap[]
+  declare featureMappings?: CarePackageFeaturesMap[]
 }
 
 Package.init(
@@ -79,11 +71,6 @@ Package.init(
       type: DataTypes.STRING(50),
       allowNull: false,
       defaultValue: 'Monthly',
-    },
-    tasks: {
-      type: DataTypes.JSON,
-      allowNull: false,
-      defaultValue: [],
     },
     description: {
       type: DataTypes.TEXT,

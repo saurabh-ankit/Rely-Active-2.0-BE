@@ -59,7 +59,7 @@ import {
   CareTask,
   type CareTaskAttributes,
   type CareTaskCreationAttributes,
-  type PriceOption,
+  type BillingType,
 } from './careTasks.model.js'
 import {
   Package,
@@ -68,6 +68,40 @@ import {
   type PackageDuration,
   type PackageTaskItem,
 } from './package.model.js'
+import {
+  PackageSubscription,
+  type PackageSubscriptionAttributes,
+  type PackageSubscriptionCreationAttributes,
+  SubscriptionStatus,
+} from './packageSubscription.model.js'
+import {
+  PackageSubscriptionFeature,
+  type PackageSubscriptionFeatureAttributes,
+  type PackageSubscriptionFeatureCreationAttributes,
+} from './packageSubscriptionFeature.model.js'
+import {
+  AdditionalTaskCharge,
+  type AdditionalTaskChargeAttributes,
+  type AdditionalTaskChargeCreationAttributes,
+} from './additionalTaskCharge.model.js'
+import {
+  CarePackageFeaturesMap,
+  type CarePackageFeaturesMapAttributes,
+  type CarePackageFeaturesMapCreationAttributes,
+} from './carePackageFeaturesMap.model.js'
+import {
+  CareTaskAssignment,
+  type CareTaskAssignmentAttributes,
+  type CareTaskAssignmentCreationAttributes,
+  type AssignmentSource,
+  type AssignmentStatus,
+} from './careTaskAssignment.model.js'
+import {
+  ResidentCareTaskCompletion,
+  type ResidentCareTaskCompletionAttributes,
+  type ResidentCareTaskCompletionCreationAttributes,
+  type CompletionStatus,
+} from './residentCareTaskCompletion.model.js'
 
 // ── F&B Meal Slot associations ──────────────────────────────────────────────
 FnbGlobalMealSlot.hasMany(FnbPropertyMealSlot, { foreignKey: 'globalMealSlotId', as: 'propertyMealSlots' })
@@ -370,6 +404,137 @@ CareTask.belongsTo(Property, { foreignKey: 'propertyId', as: 'property' })
 Property.hasMany(Package, { foreignKey: 'propertyId', as: 'packages' })
 Package.belongsTo(Property, { foreignKey: 'propertyId', as: 'property' })
 
+// ── Care Package Features Map associations ──────────────────────────────────
+Package.belongsToMany(CareTask, {
+  through: CarePackageFeaturesMap,
+  as: 'features',
+  foreignKey: 'carePackageId',
+  otherKey: 'featureId',
+})
+CareTask.belongsToMany(Package, {
+  through: CarePackageFeaturesMap,
+  as: 'packages',
+  foreignKey: 'featureId',
+  otherKey: 'carePackageId',
+})
+
+Package.hasMany(CarePackageFeaturesMap, {
+  foreignKey: 'carePackageId',
+  as: 'featureMaps',
+})
+Package.hasMany(CarePackageFeaturesMap, {
+  foreignKey: 'carePackageId',
+  as: 'featureMappings',
+})
+CarePackageFeaturesMap.belongsTo(Package, {
+  foreignKey: 'carePackageId',
+  as: 'carePackage',
+})
+
+CareTask.hasMany(CarePackageFeaturesMap, {
+  foreignKey: 'featureId',
+  as: 'packageMaps',
+})
+CarePackageFeaturesMap.belongsTo(CareTask, {
+  foreignKey: 'featureId',
+  as: 'feature',
+})
+
+// ── Package Subscription associations ─────────────────────────────────────────
+Resident.belongsTo(Package, { foreignKey: 'carePackageId', as: 'carePackage' })
+Package.hasMany(Resident, { foreignKey: 'carePackageId', as: 'residents' })
+
+Resident.hasMany(PackageSubscription, { foreignKey: 'residentId', as: 'packageSubscriptions' })
+PackageSubscription.belongsTo(Resident, { foreignKey: 'residentId', as: 'resident' })
+
+Package.hasMany(PackageSubscription, { foreignKey: 'carePackageId', as: 'packageSubscriptions' })
+PackageSubscription.belongsTo(Package, { foreignKey: 'carePackageId', as: 'carePackage' })
+
+Property.hasMany(PackageSubscription, { foreignKey: 'propertyId', as: 'packageSubscriptions' })
+PackageSubscription.belongsTo(Property, { foreignKey: 'propertyId', as: 'property' })
+
+PackageSubscription.hasMany(PackageSubscriptionFeature, {
+  foreignKey: 'packageSubscriptionId',
+  as: 'packageSubscriptionFeatures',
+})
+PackageSubscription.hasMany(PackageSubscriptionFeature, {
+  foreignKey: 'packageSubscriptionId',
+  as: 'features',
+})
+PackageSubscriptionFeature.belongsTo(PackageSubscription, {
+  foreignKey: 'packageSubscriptionId',
+  as: 'subscription',
+})
+
+CareTask.hasMany(PackageSubscriptionFeature, {
+  foreignKey: 'featureId',
+  as: 'packageSubscriptionFeatures',
+})
+PackageSubscriptionFeature.belongsTo(CareTask, {
+  foreignKey: 'featureId',
+  as: 'feature',
+})
+
+// ── Additional Task Charges associations ──────────────────────────────────────
+Resident.hasMany(AdditionalTaskCharge, { foreignKey: 'residentId', as: 'additionalTaskCharges' })
+AdditionalTaskCharge.belongsTo(Resident, { foreignKey: 'residentId', as: 'resident' })
+
+CareTask.hasMany(AdditionalTaskCharge, { foreignKey: 'featureId', as: 'additionalTaskCharges' })
+AdditionalTaskCharge.belongsTo(CareTask, { foreignKey: 'featureId', as: 'feature' })
+
+User.hasMany(AdditionalTaskCharge, { foreignKey: 'nurseId', as: 'nurseAdditionalTaskCharges' })
+AdditionalTaskCharge.belongsTo(User, { foreignKey: 'nurseId', as: 'nurse' })
+
+// ── Care Task Assignments associations ─────────────────────────────────────────
+Resident.hasMany(CareTaskAssignment, { foreignKey: 'residentId', as: 'careTaskAssignments' })
+CareTaskAssignment.belongsTo(Resident, { foreignKey: 'residentId', as: 'resident' })
+
+CareTask.hasMany(CareTaskAssignment, { foreignKey: 'taskId', as: 'assignments' })
+CareTaskAssignment.belongsTo(CareTask, { foreignKey: 'taskId', as: 'task' })
+
+Property.hasMany(CareTaskAssignment, { foreignKey: 'propertyId', as: 'careTaskAssignments' })
+CareTaskAssignment.belongsTo(Property, { foreignKey: 'propertyId', as: 'property' })
+
+User.hasMany(CareTaskAssignment, { foreignKey: 'nurseId', as: 'assignedCareTasks' })
+CareTaskAssignment.belongsTo(User, { foreignKey: 'nurseId', as: 'nurse' })
+
+User.hasMany(CareTaskAssignment, { foreignKey: 'completedBy', as: 'completedCareTasks' })
+CareTaskAssignment.belongsTo(User, { foreignKey: 'completedBy', as: 'completedByUser' })
+
+User.hasMany(CareTaskAssignment, { foreignKey: 'stoppedBy', as: 'stoppedCareTasks' })
+CareTaskAssignment.belongsTo(User, { foreignKey: 'stoppedBy', as: 'stoppedByUser' })
+
+CareTaskAssignment.hasMany(AdditionalTaskCharge, { foreignKey: 'taskAssignmentId', as: 'charges' })
+AdditionalTaskCharge.belongsTo(CareTaskAssignment, { foreignKey: 'taskAssignmentId', as: 'taskAssignment' })
+
+PackageSubscription.hasMany(CareTaskAssignment, { foreignKey: 'packageSubscriptionId', as: 'careTaskAssignments' })
+CareTaskAssignment.belongsTo(PackageSubscription, { foreignKey: 'packageSubscriptionId', as: 'packageSubscription' })
+
+Package.hasMany(CareTaskAssignment, { foreignKey: 'carePackageId', as: 'careTaskAssignments' })
+CareTaskAssignment.belongsTo(Package, { foreignKey: 'carePackageId', as: 'carePackage' })
+
+// ── Resident Care Task Completion associations ─────────────────────────────────
+CareTaskAssignment.hasMany(ResidentCareTaskCompletion, {
+  foreignKey: 'residentCareTaskAssignmentId',
+  as: 'completions',
+})
+ResidentCareTaskCompletion.belongsTo(CareTaskAssignment, {
+  foreignKey: 'residentCareTaskAssignmentId',
+  as: 'assignment',
+})
+
+Resident.hasMany(ResidentCareTaskCompletion, { foreignKey: 'residentId', as: 'careTaskCompletions' })
+ResidentCareTaskCompletion.belongsTo(Resident, { foreignKey: 'residentId', as: 'resident' })
+
+CareTask.hasMany(ResidentCareTaskCompletion, { foreignKey: 'taskId', as: 'completions' })
+ResidentCareTaskCompletion.belongsTo(CareTask, { foreignKey: 'taskId', as: 'task' })
+
+Property.hasMany(ResidentCareTaskCompletion, { foreignKey: 'propertyId', as: 'careTaskCompletions' })
+ResidentCareTaskCompletion.belongsTo(Property, { foreignKey: 'propertyId', as: 'property' })
+
+User.hasMany(ResidentCareTaskCompletion, { foreignKey: 'completedBy', as: 'completedCareTaskRecords' })
+ResidentCareTaskCompletion.belongsTo(User, { foreignKey: 'completedBy', as: 'completedByUser' })
+
 export {
   BaseModel,
   baseModelColumns,
@@ -434,10 +599,32 @@ export {
   CareTask,
   type CareTaskAttributes,
   type CareTaskCreationAttributes,
-  type PriceOption,
+  type BillingType,
   Package,
   type PackageAttributes,
   type PackageCreationAttributes,
   type PackageDuration,
   type PackageTaskItem,
+  PackageSubscription,
+  type PackageSubscriptionAttributes,
+  type PackageSubscriptionCreationAttributes,
+  SubscriptionStatus,
+  PackageSubscriptionFeature,
+  type PackageSubscriptionFeatureAttributes,
+  type PackageSubscriptionFeatureCreationAttributes,
+  AdditionalTaskCharge,
+  type AdditionalTaskChargeAttributes,
+  type AdditionalTaskChargeCreationAttributes,
+  CarePackageFeaturesMap,
+  type CarePackageFeaturesMapAttributes,
+  type CarePackageFeaturesMapCreationAttributes,
+  CareTaskAssignment,
+  type CareTaskAssignmentAttributes,
+  type CareTaskAssignmentCreationAttributes,
+  type AssignmentSource,
+  type AssignmentStatus,
+  ResidentCareTaskCompletion,
+  type ResidentCareTaskCompletionAttributes,
+  type ResidentCareTaskCompletionCreationAttributes,
+  type CompletionStatus,
 }

@@ -1,7 +1,19 @@
 import type { Request, Response } from 'express'
 import { Op } from 'sequelize'
 import type { AuthenticatedRequest } from '../../middlewares/authenticate.js'
-import { CareTask, Property, Package } from '../../models/index.js'
+import sequelize from '../../config/db/index.js'
+import {
+  CareTask,
+  Property,
+  Package,
+  CarePackageFeaturesMap,
+  PackageSubscription,
+  PackageSubscriptionFeature,
+  Resident,
+  CareTaskAssignment,
+} from '../../models/index.js'
+import { SubscriptionStatus } from '../../enums/packageSubscription.enum.js'
+import { syncPackageTasksForResidents } from './careTaskAssignment.controller.js'
 import type { PackageTaskItem, PackageAttributes } from '../../models/package.model.js'
 import { uploadFileToS3, uploadBase64ToS3 } from '../../middlewares/s3/index.js'
 import type {
@@ -53,7 +65,8 @@ async function resolveTaskImage(
  */
 export async function getAllCareTasks(req: Request, res: Response): Promise<void> {
   try {
-    const { propertyId, priceOption, search, isActive } = req.query
+    const { priceOption, billingType: billingTypeQuery, search, isActive } = req.query
+    const propertyId = (req.params.locationId as string) || (req.query.propertyId as string)
 
     const pageNum = Math.max(1, parseInt(String(req.query.page || '1'), 10) || 1)
     const limitNum = Math.max(1, parseInt(String(req.query.limit || '50'), 10) || 50)
@@ -61,14 +74,13 @@ export async function getAllCareTasks(req: Request, res: Response): Promise<void
 
     const andConditions: Record<string, unknown>[] = [{ isDeleted: false }]
 
-    // Price Option filter (Daily, Monthly, Session Wise)
-    if (priceOption && typeof priceOption === 'string' && priceOption !== 'ALL') {
-      if (priceOption === 'Daily') {
-        andConditions.push({ dailyRate: { [Op.gt]: 0 } })
-      } else if (priceOption === 'Monthly') {
-        andConditions.push({ monthlyRate: { [Op.gt]: 0 } })
-      } else if (priceOption === 'Session Wise') {
-        andConditions.push({ sessionRate: { [Op.gt]: 0 } })
+    // Billing Type filter (MONTHLY or SESSION)
+    const typeFilter = String(billingTypeQuery || priceOption || '').toUpperCase()
+    if (typeFilter && typeFilter !== 'ALL') {
+      if (typeFilter.startsWith('MONTH')) {
+        andConditions.push({ billingType: 'MONTHLY' })
+      } else if (typeFilter.startsWith('SESS')) {
+        andConditions.push({ billingType: 'SESSION' })
       }
     }
 
@@ -127,6 +139,30 @@ export async function getAllCareTasks(req: Request, res: Response): Promise<void
 
     const totalPages = Math.ceil(count / limitNum)
 
+    // Check which tasks have active assignments in CareTaskAssignment
+    const taskIds = careTasks.map((t) => t.id)
+    const assignedTasks =
+      taskIds.length > 0
+        ? await CareTaskAssignment.findAll({
+            where: {
+              taskId: { [Op.in]: taskIds },
+              isDeleted: false,
+            },
+            attributes: ['taskId'],
+            raw: true,
+          })
+        : []
+
+    const assignedTaskSet = new Set(assignedTasks.map((a) => a.taskId))
+
+    const enrichedCareTasks = careTasks.map((t) => {
+      const json = typeof t.toJSON === 'function' ? t.toJSON() : t
+      return {
+        ...json,
+        isAssigned: assignedTaskSet.has(t.id),
+      }
+    })
+
     // Calculate matrix summary counts for the active property scope
     const matrixConditions: Record<string, unknown>[] = [{ isDeleted: false }]
     if (propertyId && typeof propertyId === 'string') {
@@ -145,28 +181,23 @@ export async function getAllCareTasks(req: Request, res: Response): Promise<void
 
     const baseMatrixWhere = { [Op.and]: matrixConditions }
 
-    const [totalCareTasks, dailyTasks, monthlyTasks, sessionWiseTasks] = await Promise.all([
+    const [totalCareTasks, monthlyTasks, sessionWiseTasks] = await Promise.all([
       CareTask.count({ where: baseMatrixWhere }),
       CareTask.count({
         where: {
-          [Op.and]: [...matrixConditions, { dailyRate: { [Op.gt]: 0 } }],
+          [Op.and]: [...matrixConditions, { billingType: 'MONTHLY' }],
         },
       }),
       CareTask.count({
         where: {
-          [Op.and]: [...matrixConditions, { monthlyRate: { [Op.gt]: 0 } }],
-        },
-      }),
-      CareTask.count({
-        where: {
-          [Op.and]: [...matrixConditions, { sessionRate: { [Op.gt]: 0 } }],
+          [Op.and]: [...matrixConditions, { billingType: 'SESSION' }],
         },
       }),
     ])
 
     res.status(200).json({
       success: true,
-      data: careTasks,
+      data: enrichedCareTasks,
       pagination: {
         total: count,
         page: pageNum,
@@ -175,7 +206,7 @@ export async function getAllCareTasks(req: Request, res: Response): Promise<void
       },
       matrix: {
         totalCareTasks,
-        dailyTasks,
+        dailyTasks: 0,
         monthlyTasks,
         sessionWiseTasks,
       },
@@ -209,9 +240,19 @@ export async function getCareTaskById(req: Request, res: Response): Promise<void
       return
     }
 
+    const hasAssignment = await CareTaskAssignment.findOne({
+      where: { taskId: id, isDeleted: false },
+      attributes: ['id'],
+      raw: true,
+    })
+
+    const json = typeof careTask.toJSON === 'function' ? careTask.toJSON() : careTask
     res.status(200).json({
       success: true,
-      data: careTask,
+      data: {
+        ...json,
+        isAssigned: Boolean(hasAssignment),
+      },
     })
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Failed to fetch care task'
@@ -234,9 +275,11 @@ export async function createCareTask(req: Request, res: Response): Promise<void>
       return
     }
 
+    const targetPropertyId = input.propertyId || (req.params.locationId as string) || null
+
     // Validate propertyId exists if provided
-    if (input.propertyId) {
-      const propExists = await Property.findByPk(input.propertyId)
+    if (targetPropertyId) {
+      const propExists = await Property.findByPk(targetPropertyId)
       if (!propExists) {
         res.status(400).json({ success: false, message: 'Specified property does not exist' })
         return
@@ -247,7 +290,7 @@ export async function createCareTask(req: Request, res: Response): Promise<void>
     const existingTask = await CareTask.findOne({
       where: {
         careTaskName: cleanCareTaskName,
-        propertyId: input.propertyId || null,
+        propertyId: targetPropertyId,
         isDeleted: false,
       },
     })
@@ -266,31 +309,27 @@ export async function createCareTask(req: Request, res: Response): Promise<void>
       return isNaN(n) || n < 0 ? 0 : n
     }
 
-    let dailyRate = parseRate(input.dailyRate)
-    let monthlyRate = parseRate(input.monthlyRate)
-    const rawSession =
-      input.sessionRate !== undefined ? input.sessionRate : (rawInput.sessionWiseRate as number | string | undefined)
-    let sessionRate = parseRate(rawSession)
+    const rawBillingType = String(
+      (input as { billingType?: string }).billingType ||
+        (rawInput.billingType as string) ||
+        (rawInput.priceOption as string) ||
+        '',
+    )
+      .trim()
+      .toUpperCase()
 
-    // Fallback for legacy single price input if provided
-    if (dailyRate === 0 && monthlyRate === 0 && sessionRate === 0) {
-      const legacyPrice = parseRate(input.careTaskPrice !== undefined ? input.careTaskPrice : rawInput.price)
-      if (legacyPrice > 0) {
-        if (input.priceOption === 'Monthly') monthlyRate = legacyPrice
-        else if (input.priceOption === 'Session Wise') sessionRate = legacyPrice
-        else dailyRate = legacyPrice
-      }
-    }
+    const billingType: 'MONTHLY' | 'SESSION' = rawBillingType.startsWith('SESS') ? 'SESSION' : 'MONTHLY'
+    const finalPrice = parseRate(
+      (input as { price?: number | string }).price ?? (rawInput.price as number | string | undefined),
+    )
 
     const newCareTask = await CareTask.create({
       careTaskName: cleanCareTaskName,
       careTaskDescription: input.careTaskDescription || (rawInput.taskDescription as string | undefined) || null,
-
-      dailyRate,
-      monthlyRate,
-      sessionRate,
+      billingType,
+      price: finalPrice,
       careTaskImage: finalImage,
-      propertyId: input.propertyId || null,
+      propertyId: targetPropertyId,
       isActive: input.isActive ?? true,
       isDeleted: false,
       createdBy: operatingUserId,
@@ -338,6 +377,18 @@ export async function updateCareTask(req: Request, res: Response): Promise<void>
       return
     }
 
+    // Check if care task is already included in any resident care task assignments
+    const existingAssignment = await CareTaskAssignment.findOne({
+      where: { taskId: careTask.id, isDeleted: false },
+    })
+    if (existingAssignment) {
+      res.status(400).json({
+        success: false,
+        message: 'Cannot edit this care task because it is already assigned to residents.',
+      })
+      return
+    }
+
     if (input.propertyId !== undefined && input.propertyId !== null) {
       const propExists = await Property.findByPk(input.propertyId)
       if (!propExists) {
@@ -371,21 +422,17 @@ export async function updateCareTask(req: Request, res: Response): Promise<void>
       return isNaN(n) || n < 0 ? 0 : n
     }
 
-    let updatedDailyRate = careTask.dailyRate
-    if (input.dailyRate !== undefined) {
-      updatedDailyRate = parseRate(input.dailyRate)
+    const rawBillingType = (input as { billingType?: string }).billingType
+    let updatedBillingType = careTask.billingType
+    if (rawBillingType !== undefined && rawBillingType.trim() !== '') {
+      const u = rawBillingType.trim().toUpperCase()
+      if (u.startsWith('SESS')) updatedBillingType = 'SESSION'
+      else if (u.startsWith('MONTH')) updatedBillingType = 'MONTHLY'
     }
 
-    let updatedMonthlyRate = careTask.monthlyRate
-    if (input.monthlyRate !== undefined) {
-      updatedMonthlyRate = parseRate(input.monthlyRate)
-    }
-
-    let updatedSessionRate = careTask.sessionRate
-    const rawSession =
-      input.sessionRate !== undefined ? input.sessionRate : (rawInput.sessionWiseRate as number | string | undefined)
-    if (rawSession !== undefined) {
-      updatedSessionRate = parseRate(rawSession)
+    let updatedPrice = careTask.price
+    if ((input as { price?: number | string }).price !== undefined) {
+      updatedPrice = parseRate((input as { price?: number | string }).price)
     }
 
     const finalImage = await resolveTaskImage(
@@ -403,10 +450,8 @@ export async function updateCareTask(req: Request, res: Response): Promise<void>
           : extraDesc !== undefined
             ? extraDesc
             : careTask.careTaskDescription,
-
-      dailyRate: updatedDailyRate,
-      monthlyRate: updatedMonthlyRate,
-      sessionRate: updatedSessionRate,
+      billingType: updatedBillingType,
+      price: updatedPrice,
       careTaskImage: finalImage,
       propertyId: input.propertyId !== undefined ? input.propertyId : careTask.propertyId,
       isActive: input.isActive !== undefined ? input.isActive : careTask.isActive,
@@ -452,6 +497,18 @@ export async function deleteCareTask(req: Request, res: Response): Promise<void>
       return
     }
 
+    // Check if care task is already included in any resident care task assignments
+    const existingAssignment = await CareTaskAssignment.findOne({
+      where: { taskId: careTask.id, isDeleted: false },
+    })
+    if (existingAssignment) {
+      res.status(400).json({
+        success: false,
+        message: 'Cannot delete this care task because it is already assigned to residents.',
+      })
+      return
+    }
+
     await careTask.update({
       isDeleted: true,
       isActive: false,
@@ -484,7 +541,8 @@ export const deleteTask = deleteCareTask
  */
 export async function getAllPackages(req: Request, res: Response): Promise<void> {
   try {
-    const { page, limit, search, duration, propertyId, isActive } = req.query
+    const { page, limit, search, duration, isActive } = req.query
+    const propertyId = (req.params.locationId as string) || (req.query.propertyId as string)
 
     const pageNum = Math.max(1, parseInt(String(page || '1'), 10) || 1)
     const limitNum = Math.max(1, parseInt(String(limit || '50'), 10) || 50)
@@ -537,6 +595,14 @@ export async function getAllPackages(req: Request, res: Response): Promise<void>
           attributes: ['id', 'property_name', 'city', 'state'],
           required: false,
         },
+        {
+          model: CareTask,
+          as: 'features',
+          attributes: ['id', 'careTaskName', 'careTaskDescription', 'billingType', 'price', 'careTaskImage'],
+          through: { attributes: ['complimentaryCount'] },
+          where: { isDeleted: false },
+          required: false,
+        },
       ],
       order: [
         ['createdAt', 'DESC'],
@@ -581,9 +647,68 @@ export async function getAllPackages(req: Request, res: Response): Promise<void>
       }),
     ])
 
+    const packageIds = packages.map((p) => p.id)
+
+    // Check subscriptions and residents for each package
+    const subMap = new Map<string, { total: number; active: number }>()
+
+    if (packageIds.length > 0) {
+      const [subRows, residentRows] = await Promise.all([
+        PackageSubscription.findAll({
+          where: {
+            carePackageId: packageIds,
+            isDeleted: false,
+          },
+          attributes: [
+            'carePackageId',
+            [sequelize.fn('COUNT', sequelize.col('id')), 'subCount'],
+            [sequelize.fn('SUM', sequelize.literal("CASE WHEN status = 'Active' THEN 1 ELSE 0 END")), 'activeSubCount'],
+          ],
+          group: ['carePackageId'],
+          raw: true,
+        }) as unknown as Promise<
+          Array<{
+            carePackageId: string
+            subCount: string | number
+            activeSubCount: string | number
+          }>
+        >,
+        Resident.findAll({
+          where: {
+            carePackageId: packageIds,
+            isDeleted: false,
+          },
+          attributes: ['carePackageId', [sequelize.fn('COUNT', sequelize.col('id')), 'residentCount']],
+          group: ['carePackageId'],
+          raw: true,
+        }) as unknown as Promise<
+          Array<{
+            carePackageId: string
+            residentCount: string | number
+          }>
+        >,
+      ])
+
+      for (const row of subRows) {
+        subMap.set(row.carePackageId, {
+          total: Number(row.subCount) || 0,
+          active: Number(row.activeSubCount) || 0,
+        })
+      }
+
+      for (const row of residentRows) {
+        const existing = subMap.get(row.carePackageId) || { total: 0, active: 0 }
+        const rCount = Number(row.residentCount) || 0
+        subMap.set(row.carePackageId, {
+          total: Math.max(existing.total, rCount),
+          active: Math.max(existing.active, rCount),
+        })
+      }
+    }
+
     res.status(200).json({
       success: true,
-      data: packages,
+      data: packages.map((pkg) => formatPackageWithTasks(pkg, subMap.get(pkg.id))),
       pagination: {
         total: count,
         page: pageNum,
@@ -603,6 +728,48 @@ export async function getAllPackages(req: Request, res: Response): Promise<void>
 }
 
 /**
+ * Formats a package record for responses, projecting relational features from CarePackageFeaturesMap
+ * into a backward-compatible tasks array alongside the features association.
+ */
+export function formatPackageWithTasks(pkg: Package, subInfo?: { total: number; active: number }) {
+  const plain = (pkg.toJSON ? pkg.toJSON() : { ...pkg }) as unknown as Record<string, unknown>
+  const features = (Array.isArray(pkg.features) ? pkg.features : []) as Array<
+    CareTask & { CarePackageFeaturesMap?: CarePackageFeaturesMap }
+  >
+  const tasks: PackageTaskItem[] = features.map((f) => {
+    const isFree = Number(f.price) <= 0
+    const complimentaryCount =
+      f.CarePackageFeaturesMap?.complimentaryCount !== undefined
+        ? Number(f.CarePackageFeaturesMap.complimentaryCount)
+        : isFree
+          ? 0
+          : 1
+    return {
+      taskId: f.id,
+      taskName: f.careTaskName || 'Care Task',
+      careTaskName: f.careTaskName || 'Care Task',
+      billingType: f.billingType || 'MONTHLY',
+      price: Number(f.price) || 0,
+      taskImage: f.careTaskImage || null,
+      careTaskImage: f.careTaskImage || null,
+      complimentaryCount,
+    }
+  })
+
+  const subscriptionCount = subInfo?.total ?? 0
+  const activeSubscriptionCount = subInfo?.active ?? 0
+  const isSubscribed = subscriptionCount > 0
+
+  return {
+    ...plain,
+    tasks,
+    isSubscribed,
+    subscriptionCount,
+    activeSubscriptionCount,
+  }
+}
+
+/**
  * Get a single package by ID.
  */
 export async function getPackageById(req: Request, res: Response): Promise<void> {
@@ -618,6 +785,14 @@ export async function getPackageById(req: Request, res: Response): Promise<void>
           attributes: ['id', 'property_name', 'city', 'state'],
           required: false,
         },
+        {
+          model: CareTask,
+          as: 'features',
+          attributes: ['id', 'careTaskName', 'careTaskDescription', 'billingType', 'price', 'careTaskImage'],
+          through: { attributes: ['complimentaryCount'] },
+          where: { isDeleted: false },
+          required: false,
+        },
       ],
     })
 
@@ -626,7 +801,16 @@ export async function getPackageById(req: Request, res: Response): Promise<void>
       return
     }
 
-    res.status(200).json({ success: true, data: pkg })
+    const [subCount, residentCount] = await Promise.all([
+      PackageSubscription.count({ where: { carePackageId: pkg.id, isDeleted: false } }),
+      Resident.count({ where: { carePackageId: pkg.id, isDeleted: false } }),
+    ])
+    const totalSubs = Math.max(subCount, residentCount)
+
+    res.status(200).json({
+      success: true,
+      data: formatPackageWithTasks(pkg, { total: totalSubs, active: totalSubs }),
+    })
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Failed to fetch package'
     res.status(500).json({ success: false, message })
@@ -634,65 +818,75 @@ export async function getPackageById(req: Request, res: Response): Promise<void>
 }
 
 interface RawPackageTaskItem {
-  taskId: string
+  taskId?: string
+  featureId?: string
   careTaskName?: string
   taskName?: string
-  dailyRate?: number | string
-  monthlyRate?: number | string
-  sessionRate?: number | string
-  priceOption?: string
-  careTaskPrice?: number | string | null
+  billingType?: string
   price?: number | string | null
   careTaskImage?: string | null
   taskImage?: string | null
   complimentaryCount?: number | string | null
 }
 
+interface EnrichedPackageTasksResult {
+  enrichedTasks: PackageTaskItem[]
+  validCareTaskIds: Set<string>
+}
+
 /**
  * Helper to enrich package tasks with database task details (name, type, price, image).
  */
-async function enrichPackageTasks(rawTasks: RawPackageTaskItem[]): Promise<PackageTaskItem[]> {
-  if (!Array.isArray(rawTasks) || rawTasks.length === 0) return []
+async function enrichPackageTasks(rawTasks: (RawPackageTaskItem | string)[]): Promise<EnrichedPackageTasksResult> {
+  if (!Array.isArray(rawTasks) || rawTasks.length === 0) {
+    return { enrichedTasks: [], validCareTaskIds: new Set() }
+  }
 
-  const taskIds = rawTasks.map((t) => t.taskId).filter(Boolean)
-  if (taskIds.length === 0) return []
+  const normalized: RawPackageTaskItem[] = rawTasks.map((item) => {
+    if (typeof item === 'string') {
+      return { taskId: item, featureId: item, complimentaryCount: 1 }
+    }
+    const id = item.taskId || item.featureId || ''
+    return {
+      ...item,
+      taskId: id,
+      featureId: id,
+    }
+  })
+
+  const taskIds = normalized.map((t) => t.taskId).filter((id): id is string => Boolean(id))
+  if (taskIds.length === 0) {
+    return { enrichedTasks: [], validCareTaskIds: new Set() }
+  }
 
   const dbTasks = await CareTask.findAll({
     where: { id: taskIds, isDeleted: false },
-    attributes: ['id', 'careTaskName', 'dailyRate', 'monthlyRate', 'sessionRate', 'careTaskImage'],
+    attributes: ['id', 'careTaskName', 'billingType', 'price', 'careTaskImage'],
   })
   const taskMap = new Map(dbTasks.map((t) => [t.id, t]))
+  const validCareTaskIds = new Set(dbTasks.map((t) => t.id))
 
-  return rawTasks.map((item): PackageTaskItem => {
-    const dbTask = taskMap.get(item.taskId)
+  const enrichedTasks = normalized.map((item): PackageTaskItem => {
+    const taskId = item.taskId || ''
+    const dbTask = taskMap.get(taskId)
     const taskName = dbTask?.careTaskName || item.careTaskName || item.taskName || 'Unknown Care Task'
-    const dailyRate = dbTask?.dailyRate ?? (Number(item.dailyRate) || 0)
-    const monthlyRate = dbTask?.monthlyRate ?? (Number(item.monthlyRate) || 0)
-    const sessionRate = dbTask?.sessionRate ?? (Number(item.sessionRate) || 0)
-    const priceOption = 'Monthly'
-    const careTaskPrice =
-      monthlyRate > 0
-        ? monthlyRate
-        : item.careTaskPrice !== undefined && item.careTaskPrice !== null
-          ? Number(item.careTaskPrice)
-          : Number(item.price) || 0
+    const billingType = dbTask?.billingType || (item as { billingType?: string }).billingType || 'MONTHLY'
+    const price = Number(dbTask?.price ?? item.price ?? 0)
     const careTaskImage = dbTask?.careTaskImage || item.careTaskImage || item.taskImage || null
 
     return {
-      taskId: item.taskId,
+      taskId,
       taskName,
       careTaskName: taskName,
-      dailyRate,
-      monthlyRate,
-      sessionRate,
-      priceOption,
-      price: careTaskPrice,
-      careTaskPrice,
+      billingType,
+      price,
       taskImage: careTaskImage,
       careTaskImage,
-      complimentaryCount: Math.max(1, Number(item.complimentaryCount) || 1),
+      complimentaryCount: price <= 0 ? 0 : Math.max(0, Number(item.complimentaryCount ?? 1)),
     }
   })
+
+  return { enrichedTasks, validCareTaskIds }
 }
 
 /**
@@ -706,7 +900,7 @@ export async function createPackage(req: Request, res: Response): Promise<void> 
     const packageName = String(body.packageName || '').trim()
     const packageCost = Number(body.packageCost) || 0
     const duration = body.duration === 'Yearly' ? 'Yearly' : 'Monthly'
-    const propertyId = body.propertyId || null
+    const propertyId = body.propertyId || (req.params.locationId as string) || null
     const description = body.description ? String(body.description).trim() : null
     const isActive = body.isActive !== undefined ? Boolean(body.isActive) : true
 
@@ -727,19 +921,47 @@ export async function createPackage(req: Request, res: Response): Promise<void> 
       return
     }
 
-    const enrichedTasks = await enrichPackageTasks(body.tasks || [])
+    const rawTasks = body.tasks || (body as { features?: (RawPackageTaskItem | string)[] }).features || []
+    const { enrichedTasks, validCareTaskIds } = await enrichPackageTasks(rawTasks)
 
     const newPackage = await Package.create({
       packageName,
       packageCost,
       duration,
-      tasks: enrichedTasks,
       description,
       propertyId,
       isActive,
       createdBy: operatingUserId,
       updatedBy: operatingUserId,
     })
+
+    // Write mapping rows to CarePackageFeaturesMap with complimentaryCount (mirroring Rely-Assist)
+    const mapRows: Array<{
+      carePackageId: string
+      featureId: string
+      complimentaryCount: number
+      createdBy: string | null
+      updatedBy: string | null
+    }> = []
+
+    const seenFeatureIds = new Set<string>()
+    for (const t of enrichedTasks) {
+      const fId = t.taskId
+      if (fId && validCareTaskIds.has(fId) && !seenFeatureIds.has(fId)) {
+        seenFeatureIds.add(fId)
+        mapRows.push({
+          carePackageId: newPackage.id,
+          featureId: fId,
+          complimentaryCount: t.complimentaryCount ?? 0,
+          createdBy: operatingUserId,
+          updatedBy: operatingUserId,
+        })
+      }
+    }
+
+    if (mapRows.length > 0) {
+      await CarePackageFeaturesMap.bulkCreate(mapRows)
+    }
 
     const createdPackage = await Package.findByPk(newPackage.id, {
       include: [
@@ -749,13 +971,21 @@ export async function createPackage(req: Request, res: Response): Promise<void> 
           attributes: ['id', 'property_name', 'city', 'state'],
           required: false,
         },
+        {
+          model: CareTask,
+          as: 'features',
+          attributes: ['id', 'careTaskName', 'careTaskDescription', 'billingType', 'price', 'careTaskImage'],
+          through: { attributes: ['complimentaryCount'] },
+          where: { isDeleted: false },
+          required: false,
+        },
       ],
     })
 
     res.status(201).json({
       success: true,
       message: 'Package created successfully',
-      data: createdPackage,
+      data: createdPackage ? formatPackageWithTasks(createdPackage) : null,
     })
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Failed to create package'
@@ -817,8 +1047,92 @@ export async function updatePackage(req: Request, res: Response): Promise<void> 
       updates.duration = body.duration === 'Yearly' ? 'Yearly' : 'Monthly'
     }
 
-    if (body.tasks !== undefined) {
-      updates.tasks = await enrichPackageTasks(body.tasks)
+    const incomingTasks =
+      body.tasks !== undefined ? body.tasks : (body as { features?: (RawPackageTaskItem | string)[] }).features
+
+    if (incomingTasks !== undefined) {
+      const { enrichedTasks, validCareTaskIds } = await enrichPackageTasks(incomingTasks)
+
+      // Sync CarePackageFeaturesMap (mirroring Rely-Assist)
+      await CarePackageFeaturesMap.destroy({
+        where: { carePackageId: pkg.id },
+      })
+
+      const mapRows: Array<{
+        carePackageId: string
+        featureId: string
+        complimentaryCount: number
+        createdBy: string | null
+        updatedBy: string | null
+      }> = []
+
+      const seenFeatureIds = new Set<string>()
+      for (const t of enrichedTasks) {
+        const fId = t.taskId
+        if (fId && validCareTaskIds.has(fId) && !seenFeatureIds.has(fId)) {
+          seenFeatureIds.add(fId)
+          mapRows.push({
+            carePackageId: pkg.id,
+            featureId: fId,
+            complimentaryCount: t.complimentaryCount ?? 0,
+            createdBy: operatingUserId,
+            updatedBy: operatingUserId,
+          })
+        }
+      }
+
+      if (mapRows.length > 0) {
+        await CarePackageFeaturesMap.bulkCreate(mapRows)
+      }
+
+      // When package features are updated, cancel previous package care task assignments for all active subscriptions
+      const activeSubs = await PackageSubscription.findAll({
+        where: { carePackageId: pkg.id, status: SubscriptionStatus.ACTIVE, isDeleted: false },
+      })
+      for (const sub of activeSubs) {
+        // Cancel & soft delete all previous package care task assignments
+        await CareTaskAssignment.update(
+          {
+            status: 'CANCELLED',
+            isStopped: true,
+            stoppedAt: new Date(),
+            stoppedBy: operatingUserId,
+            isActive: false,
+            isDeleted: true,
+            updatedBy: operatingUserId,
+          },
+          {
+            where: {
+              packageSubscriptionId: sub.id,
+              source: 'PACKAGE',
+              isDeleted: false,
+            },
+          },
+        )
+
+        // Soft delete previous subscription features
+        await PackageSubscriptionFeature.update(
+          { isDeleted: true, updatedBy: operatingUserId },
+          { where: { packageSubscriptionId: sub.id, isDeleted: false } },
+        )
+
+        // Re-seed updated features
+        if (mapRows.length > 0) {
+          await PackageSubscriptionFeature.bulkCreate(
+            mapRows.map((m) => ({
+              packageSubscriptionId: sub.id,
+              featureId: m.featureId,
+              complimentaryCount: m.complimentaryCount,
+              remainingCount: m.complimentaryCount,
+              createdBy: operatingUserId,
+              updatedBy: operatingUserId,
+            })),
+          )
+        }
+
+        // Re-sync new package tasks for this resident
+        await syncPackageTasksForResidents(sub.residentId, sub.propertyId)
+      }
     }
 
     if (body.description !== undefined) {
@@ -843,13 +1157,21 @@ export async function updatePackage(req: Request, res: Response): Promise<void> 
           attributes: ['id', 'property_name', 'city', 'state'],
           required: false,
         },
+        {
+          model: CareTask,
+          as: 'features',
+          attributes: ['id', 'careTaskName', 'careTaskDescription', 'billingType', 'price', 'careTaskImage'],
+          through: { attributes: ['complimentaryCount'] },
+          where: { isDeleted: false },
+          required: false,
+        },
       ],
     })
 
     res.status(200).json({
       success: true,
       message: 'Package updated successfully',
-      data: updatedPackage,
+      data: updatedPackage ? formatPackageWithTasks(updatedPackage) : null,
     })
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Failed to update package'
@@ -874,11 +1196,30 @@ export async function deletePackage(req: Request, res: Response): Promise<void> 
       return
     }
 
+    // Check if this package is already subscribed by residents
+    const [subCount, residentCount] = await Promise.all([
+      PackageSubscription.count({ where: { carePackageId: pkg.id, isDeleted: false } }),
+      Resident.count({ where: { carePackageId: pkg.id, isDeleted: false } }),
+    ])
+
+    if (subCount > 0 || residentCount > 0) {
+      res.status(400).json({
+        success: false,
+        message: 'Cannot delete this care package because it is already subscribed by residents.',
+      })
+      return
+    }
+
     await pkg.update({
       isDeleted: true,
       isActive: false,
       updatedBy: operatingUserId,
     })
+
+    await CarePackageFeaturesMap.update(
+      { isDeleted: true, isActive: false, updatedBy: operatingUserId },
+      { where: { carePackageId: pkg.id } },
+    )
 
     res.status(200).json({
       success: true,
