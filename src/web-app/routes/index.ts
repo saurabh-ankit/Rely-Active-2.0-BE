@@ -1,3 +1,4 @@
+import inventoryRouter from './inventory.routes.js'
 import { Router } from 'express'
 import authRouter from './auth.routes.js'
 import companyRouter from './company.routes.js'
@@ -37,6 +38,7 @@ apiRouter.use('/company', companyRouter)
 apiRouter.use('/property', propertyRouter)
 apiRouter.use('/properties', propertyRouter)
 apiRouter.use('/residents', residentRouter)
+apiRouter.use('/inventory', inventoryRouter)
 apiRouter.use('/assets', assetRouter)
 apiRouter.use('/location/:locationId/assets', assetRouter)
 apiRouter.use('/tickets', ticketRouter)

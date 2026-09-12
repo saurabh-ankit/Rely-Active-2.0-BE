@@ -1,3 +1,12 @@
+import { InventoryCategory } from './inventoryCategory.model.js'
+import { InventoryVendor } from './inventoryVendor.model.js'
+import { InventoryItem } from './inventoryItem.model.js'
+import { InventoryCategoryLocation } from './inventoryCategoryLocation.model.js'
+import { InventoryVendorLocation } from './inventoryVendorLocation.model.js'
+import { InventoryItemLocation } from './inventoryItemLocation.model.js'
+import { InventoryItemVendor } from './inventoryItemVendor.model.js'
+import { InventoryFieldDefinition } from './inventoryFieldDefinition.model.js'
+import { InventoryFieldValue } from './inventoryFieldValue.model.js'
 import { GuestMaster } from './guestMaster.model.js'
 import { BaseModel, baseModelColumns, type BaseAttributes, type BaseCreationAttributes } from './base.model.js'
 import { Company } from './company.model.js'
@@ -530,4 +539,29 @@ export {
   ShiftArea,
   RosterArea,
   FnbFoodAttendance,
+}
+
+InventoryItem.belongsTo(InventoryCategory, { foreignKey: 'categoryId', as: 'category' })
+InventoryCategoryLocation.belongsTo(InventoryCategory, { foreignKey: 'categoryId', as: 'category' })
+InventoryCategoryLocation.belongsTo(Property, { foreignKey: 'locationId', as: 'location' })
+InventoryVendorLocation.belongsTo(InventoryVendor, { foreignKey: 'vendorId', as: 'vendor' })
+InventoryVendorLocation.belongsTo(Property, { foreignKey: 'locationId', as: 'location' })
+InventoryItemLocation.belongsTo(InventoryItem, { foreignKey: 'itemId', as: 'item' })
+InventoryItemLocation.belongsTo(Property, { foreignKey: 'locationId', as: 'location' })
+InventoryItemVendor.belongsTo(InventoryItem, { foreignKey: 'itemId', as: 'item' })
+InventoryItemVendor.belongsTo(InventoryVendor, { foreignKey: 'vendorId', as: 'vendor' })
+InventoryItemVendor.belongsTo(Property, { foreignKey: 'locationId', as: 'location' })
+InventoryFieldDefinition.belongsTo(InventoryCategory, { foreignKey: 'categoryId', as: 'category' })
+InventoryFieldValue.belongsTo(InventoryItem, { foreignKey: 'itemId', as: 'item' })
+InventoryFieldValue.belongsTo(InventoryFieldDefinition, { foreignKey: 'fieldDefinitionId', as: 'definition' })
+export {
+  InventoryCategory,
+  InventoryVendor,
+  InventoryItem,
+  InventoryCategoryLocation,
+  InventoryVendorLocation,
+  InventoryItemLocation,
+  InventoryItemVendor,
+  InventoryFieldDefinition,
+  InventoryFieldValue,
 }
