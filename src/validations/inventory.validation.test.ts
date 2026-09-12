@@ -23,12 +23,29 @@ describe('inventory validation', () => {
       packType: 'bottle',
       packUnit: 'ml',
       packQuantity: 500,
-      locationIds: [],
+      locationIds: [randomUUID()],
       customFields: [],
     }
     expect(itemSchema.safeParse(base).success).toBe(true)
     expect(itemSchema.safeParse({ ...base, packQuantity: 0.5 }).success).toBe(false)
     expect(itemSchema.safeParse({ ...base, packUnit: 'tablet', packType: 'sack' }).success).toBe(false)
+  })
+  it('validates base-unit thresholds without defaulting omitted update fields', () => {
+    const base = {
+      name: 'Tablets',
+      categoryId: randomUUID(),
+      packType: 'strip',
+      packUnit: 'tablet',
+      packQuantity: 10,
+      locationIds: [randomUUID()],
+      customFields: [],
+    }
+    expect(itemSchema.parse(base)).not.toHaveProperty('minQuantity')
+    expect(itemSchema.safeParse({ ...base, minQuantity: 0, maxQuantity: 0, threshold: 2147483647 }).success).toBe(true)
+    for (const field of ['minQuantity', 'maxQuantity', 'threshold']) {
+      for (const value of [-1, 0.5, NaN, Infinity, 2147483648, null])
+        expect(itemSchema.safeParse({ ...base, [field]: value }).success).toBe(false)
+    }
   })
   it('validates definitions, reserved keys and defaults', () => {
     const base = {

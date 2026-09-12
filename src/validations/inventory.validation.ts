@@ -17,6 +17,7 @@ export const inventoryListSchema = z
     search: z.string().trim().max(255).default(''),
     categoryId: z.uuid().optional(),
     locationId: z.uuid().optional(),
+    vendorId: z.uuid().optional(),
     isActive: z.enum(['true', 'false']).optional(),
     sortBy: z.enum(['name', 'createdAt', 'updatedAt']).default('name'),
     sortOrder: z.enum(['ASC', 'DESC']).default('ASC'),
@@ -51,7 +52,7 @@ export const definitionSchema = z
   })
 export const categorySchema = z
   .object({
-    name,
+    name: name.min(2, 'Category name must be at least 2 characters'),
     description: optionalText(10000),
     image: z
       .union([
@@ -73,16 +74,13 @@ export const categorySchema = z
 export const vendorSchema = z
   .object({
     name,
-    contactPerson: optionalText(255),
+    contactPerson: name,
     email: z
       .union([z.email().max(255), z.literal('')])
       .nullable()
       .optional(),
-    phone: z
-      .union([z.string().trim().regex(PHONE_REGEX, 'Enter a valid 10-digit mobile number'), z.literal('')])
-      .nullable()
-      .optional(),
-    address: optionalText(10000),
+    phone: z.string().trim().regex(PHONE_REGEX, 'Enter a valid 10-digit mobile number'),
+    address: z.string().trim().min(1).max(10000),
     locationIds: ids.optional(),
     isActive: z.boolean().default(true),
   })
@@ -107,7 +105,10 @@ export const itemSchema = z
     packType: z.enum(PACKAGE_TYPES),
     packUnit: z.enum(STOCK_UNITS),
     packQuantity: z.number().int().positive().max(2147483647),
-    locationIds: ids,
+    minQuantity: z.number().int().min(0).max(2147483647).optional(),
+    maxQuantity: z.number().int().min(0).max(2147483647).optional(),
+    threshold: z.number().int().min(0).max(2147483647).optional(),
+    locationIds: ids.refine((v) => v.length > 0, 'At least one location is required'),
     customFields: z
       .array(z.object({ fieldDefinitionId: z.uuid(), value: fieldValueSchema }).strict())
       .max(100)
@@ -149,3 +150,22 @@ export function validateFieldValue(field: FieldRule, value: unknown): string | n
       return 'Unsupported field type'
   }
 }
+
+export const categoryNameQuerySchema = z.object({ name: name.min(2), excludeCategoryId: z.uuid().optional() }).strict()
+export const thresholdValuesSchema = z
+  .object({
+    minQuantity: z.number().int().min(0).max(2147483647),
+    maxQuantity: z.number().int().min(0).max(2147483647),
+    threshold: z.number().int().min(0).max(2147483647),
+  })
+  .strict()
+  .refine((v) => v.maxQuantity >= v.minQuantity, { message: 'Maximum must be at least minimum', path: ['maxQuantity'] })
+export const locationThresholdsSchema = z
+  .object({
+    locations: z
+      .array(thresholdValuesSchema.safeExtend({ locationId: z.uuid() }))
+      .max(1000)
+      .refine((v) => new Set(v.map((x) => x.locationId)).size === v.length, 'Duplicate locations'),
+  })
+  .strict()
+export const templateQuerySchema = z.object({ rowCount: z.coerce.number().int().min(1).max(500) }).strict()

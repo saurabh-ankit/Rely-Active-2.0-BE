@@ -1,5 +1,6 @@
 import 'dotenv/config'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
+import ExcelJS from 'exceljs'
 import express from 'express'
 import request from 'supertest'
 import { randomUUID } from 'node:crypto'
@@ -67,15 +68,18 @@ describe.skipIf(!database)('inventory isolated MySQL integration', () => {
     qi = db.getQueryInterface()
     await qi.createTable('properties', {
       id: { type: DataTypes.UUID, primaryKey: true },
+      property_name: { type: DataTypes.STRING(255) },
       isActive: { type: DataTypes.BOOLEAN, defaultValue: true },
       isDeleted: { type: DataTypes.BOOLEAN, defaultValue: false },
     })
     await qi.bulkInsert('properties', [
-      { id: locationId, isActive: true, isDeleted: false },
-      { id: otherLocationId, isActive: true, isDeleted: false },
+      { id: locationId, property_name: 'Alpha', isActive: true, isDeleted: false },
+      { id: otherLocationId, property_name: 'Beta', isActive: true, isDeleted: false },
     ])
     migration = await import('../migrations/20260911120000-create-inventory-master-tables.js')
     await migration.up({ context: qi })
+    await (await import('../migrations/20260912150000-add-inventory-item-thresholds.js')).up({ context: qi })
+    await (await import('../migrations/20260912170000-add-inventory-location-thresholds.js')).up({ context: qi })
     models = await import('../models/index.js')
     app = express()
     app.use(express.json())
@@ -107,7 +111,15 @@ describe.skipIf(!database)('inventory isolated MySQL integration', () => {
       .put(`/inventory/categories/${categoryId}/locations`)
       .send({ locationIds: [locationId] })
     expect(response.status, response.text).toBe(200)
-    response = await request(app).post('/inventory/vendors').send({ name: 'Supplies Ltd', phone: '9876543210' })
+    response = await request(app)
+      .post('/inventory/vendors')
+      .send({
+        name: 'Supplies Ltd',
+        phone: '9876543210',
+        contactPerson: 'Supply Contact',
+        address: 'Supply Street',
+        locationIds: [locationId],
+      })
     expect(response.status, response.text).toBe(201)
     vendorId = response.body.data.id
     expect(
@@ -262,9 +274,7 @@ describe.skipIf(!database)('inventory isolated MySQL integration', () => {
     }
   })
   it('supports deactivation and safely removing unused definitions and assignments', async () => {
-    let response = await request(app)
-      .put(`/inventory/vendors/${vendorId}`)
-      .send({ name: 'Supplies Ltd', isActive: false })
+    let response = await request(app).put(`/inventory/vendors/${vendorId}/status`).send({ isActive: false })
     expect(response.status, response.text).toBe(200)
     expect(
       (
@@ -274,10 +284,10 @@ describe.skipIf(!database)('inventory isolated MySQL integration', () => {
       ).status,
     ).toBe(400)
     expect((await request(app).put(`/inventory/items/${itemId}/vendors`).send({ assignments: [] })).status).toBe(200)
-    expect((await request(app).put(`/inventory/items/${itemId}/locations`).send({ locationIds: [] })).status).toBe(200)
+    expect((await request(app).put(`/inventory/items/${itemId}/locations`).send({ locationIds: [] })).status).toBe(400)
     expect(
       (await request(app).put(`/inventory/categories/${categoryId}/locations`).send({ locationIds: [] })).status,
-    ).toBe(200)
+    ).toBe(409)
     response = await request(app)
       .post(`/inventory/categories/${categoryId}/fields`)
       .send({ fieldName: 'notes', fieldLabel: 'Notes', fieldType: 'text', isRequired: false })
@@ -307,15 +317,20 @@ describe.skipIf(!database)('inventory isolated MySQL integration', () => {
     const savedFieldId = created.body.data.fieldDefinitions.find(
       (f: { fieldName: string }) => f.fieldName === 'size',
     ).id
-    const item = await request(app).post('/inventory/items').send({
-      name: 'Atomic item',
-      categoryId: id,
-      packType: 'piece',
-      packUnit: 'piece',
-      packQuantity: 1,
-      locationIds: [],
-      customFields: [],
-    })
+    await request(app)
+      .put(`/inventory/categories/${id}/locations`)
+      .send({ locationIds: [locationId] })
+    const item = await request(app)
+      .post('/inventory/items')
+      .send({
+        name: 'Atomic item',
+        categoryId: id,
+        packType: 'piece',
+        packUnit: 'piece',
+        packQuantity: 1,
+        locationIds: [locationId],
+        customFields: [],
+      })
     expect(item.status, item.text).toBe(201)
     const updatedField = { ...field, id: savedFieldId, fieldLabel: 'Size label' }
     const response = await request(app)
@@ -357,7 +372,13 @@ describe.skipIf(!database)('inventory isolated MySQL integration', () => {
   it('saves vendor locations with contact details in one transaction', async () => {
     const response = await request(app)
       .post('/inventory/vendors')
-      .send({ name: 'Atomic vendor', locationIds: [locationId] })
+      .send({
+        name: 'Atomic vendor',
+        contactPerson: 'Atomic Contact',
+        phone: '9876543210',
+        address: 'Atomic Street',
+        locationIds: [locationId],
+      })
     expect(response.status, response.text).toBe(201)
     expect(response.body.data.locationIds).toEqual([locationId])
     expect(
@@ -420,6 +441,362 @@ describe.skipIf(!database)('inventory isolated MySQL integration', () => {
       .send({ fieldName: 'tooMany', fieldLabel: 'Too many', fieldType: 'text', isRequired: false })
     expect(response.status).toBe(409)
     expect(await models.InventoryFieldDefinition.count({ where: { categoryId } })).toBe(100)
+  })
+  it('persists shared thresholds, preserves omitted fields, and validates the merged range', async () => {
+    const categoryResponse = await request(app).post('/inventory/categories').send({ name: 'Threshold category' })
+    const thresholdCategoryId = categoryResponse.body.data.id
+    await request(app)
+      .put(`/inventory/categories/${thresholdCategoryId}/locations`)
+      .send({ locationIds: [locationId, otherLocationId] })
+    const payload = {
+      name: 'Threshold item',
+      categoryId: thresholdCategoryId,
+      packType: 'strip',
+      packUnit: 'tablet',
+      packQuantity: 10,
+      locationIds: [locationId],
+      customFields: [],
+    }
+    let response = await request(app).post('/inventory/items').send(payload)
+    expect(response.status, response.text).toBe(201)
+    const id = response.body.data.id
+    expect(response.body.data).toMatchObject({ minQuantity: 0, maxQuantity: 0, threshold: 0 })
+    response = await request(app)
+      .put(`/inventory/items/${id}`)
+      .send({ ...payload, minQuantity: 30, maxQuantity: 100, threshold: 150 })
+    expect(response.status, response.text).toBe(200)
+    expect((await request(app).get(`/inventory/items/${id}`)).body.data).toMatchObject({
+      minQuantity: 30,
+      maxQuantity: 100,
+      threshold: 150,
+    })
+    response = await request(app)
+      .put(`/inventory/items/${id}`)
+      .send({ ...payload, name: 'Renamed' })
+    expect(response.body.data).toMatchObject({ minQuantity: 30, maxQuantity: 100, threshold: 150 })
+    response = await request(app)
+      .put(`/inventory/items/${id}`)
+      .send({ ...payload, maxQuantity: 20 })
+    expect(response.status).toBe(400)
+    response = await request(app)
+      .put(`/inventory/items/${id}/locations`)
+      .send({ locationIds: [otherLocationId] })
+    expect(response.status).toBe(200)
+    expect(response.body.data).toMatchObject({
+      locationIds: [otherLocationId],
+      minQuantity: 30,
+      maxQuantity: 100,
+      threshold: 150,
+    })
+    response = await request(app).get(
+      `/inventory/items?locationId=${otherLocationId}&categoryId=${thresholdCategoryId}`,
+    )
+    expect(response.body.data.records[0]).toMatchObject({ minQuantity: 30, maxQuantity: 100, threshold: 150 })
+    response = await request(app)
+      .put(`/inventory/items/${id}`)
+      .send({ ...payload, minQuantity: 0, maxQuantity: 0, threshold: 0 })
+    expect(response.status).toBe(200)
+    expect(response.body.data).toMatchObject({ minQuantity: 0, maxQuantity: 0, threshold: 0 })
+    response = await request(app)
+      .post('/inventory/items')
+      .send({ ...payload, minQuantity: 1 })
+    expect(response.status).toBe(400)
+    response = await request(app)
+      .post('/inventory/items')
+      .send({ ...payload, minQuantity: 30, maxQuantity: 100, threshold: 50 })
+    expect(response.status, response.text).toBe(201)
+    expect(response.body.data).toMatchObject({ minQuantity: 30, maxQuantity: 100, threshold: 50 })
+  })
+  async function setupParity() {
+    const category = await request(app)
+      .post('/inventory/categories')
+      .send({
+        name: `Parity ${randomUUID()}`,
+        fieldDefinitions: [
+          {
+            fieldName: 'type',
+            fieldLabel: 'Type',
+            fieldType: 'select',
+            enumValues: ['Medical', 'Other'],
+            isRequired: true,
+            defaultValue: 'Medical',
+          },
+        ],
+      })
+    expect(category.status, category.text).toBe(201)
+    const id = category.body.data.id as string
+    expect(
+      (
+        await request(app)
+          .put(`/inventory/categories/${id}/locations`)
+          .send({ locationIds: [locationId, otherLocationId] })
+      ).status,
+    ).toBe(200)
+    const vendor = await request(app)
+      .post('/inventory/vendors')
+      .send({
+        name: `Vendor ${randomUUID()}`,
+        contactPerson: 'Parity Contact',
+        phone: '9876543210',
+        address: 'Parity Street',
+        email: 'parity@example.com',
+        locationIds: [locationId, otherLocationId],
+      })
+    expect(vendor.status, vendor.text).toBe(201)
+    return { category: category.body.data, vendor: vendor.body.data, id }
+  }
+  it('enforces category names, supplier fields and location requirements with searchable supplier contacts', async () => {
+    expect((await request(app).post('/inventory/categories').send({ name: 'X' })).status).toBe(400)
+    const { category, vendor } = await setupParity()
+    expect(
+      (
+        await request(app)
+          .post('/inventory/categories')
+          .send({ name: `  ${category.name.toUpperCase()} ` })
+      ).status,
+    ).toBe(409)
+    const availability = await request(app)
+      .get('/inventory/categories/name-availability')
+      .query({ name: category.name })
+    expect(availability.body.data.available).toBe(false)
+    expect(
+      (
+        await request(app)
+          .get('/inventory/categories/name-availability')
+          .query({ name: category.name, excludeCategoryId: category.id })
+      ).body.data.available,
+    ).toBe(true)
+    expect(
+      (await request(app).put(`/inventory/categories/${category.id}`).send({ name: category.name.toUpperCase() }))
+        .status,
+    ).toBe(200)
+    const another = await request(app)
+      .post('/inventory/categories')
+      .send({ name: `Other ${randomUUID()}` })
+    expect(
+      (await request(app).put(`/inventory/categories/${another.body.data.id}`).send({ name: category.name })).status,
+    ).toBe(409)
+    expect((await request(app).post('/inventory/vendors').send({ name: 'Missing details' })).status).toBe(400)
+    expect(
+      (
+        await request(app)
+          .post('/inventory/vendors')
+          .send({
+            name: 'No location',
+            phone: '9876543210',
+            contactPerson: 'Contact',
+            address: 'Address',
+            locationIds: [],
+          })
+      ).status,
+    ).toBe(400)
+    for (const search of ['Parity Contact', 'parity@example.com']) {
+      const response = await request(app).get('/inventory/vendors').query({ search })
+      expect(response.body.data.records.some((v: { id: string }) => v.id === vendor.id)).toBe(true)
+    }
+    const assignments = await models.InventoryVendorLocation.count({ where: { vendorId: vendor.id } })
+    for (const isActive of [false, true]) {
+      expect(
+        (await request(app).put(`/inventory/vendors/${vendor.id}/status`).send({ isActive })).body.data.isActive,
+      ).toBe(isActive)
+      expect(await models.InventoryVendorLocation.count({ where: { vendorId: vendor.id } })).toBe(assignments)
+    }
+  })
+  it('preserves per-location overrides, applies global changes, and filters suppliers before pagination', async () => {
+    const { id, vendor } = await setupParity()
+    const payload = {
+      name: 'Threshold medicine',
+      categoryId: id,
+      packType: 'strip',
+      packQuantity: 10,
+      packUnit: 'tablet',
+      locationIds: [locationId, otherLocationId],
+      customFields: [],
+    }
+    expect(
+      (
+        await request(app)
+          .post('/inventory/items')
+          .send({ ...payload, locationIds: [] })
+      ).status,
+    ).toBe(400)
+    const created = await request(app)
+      .post('/inventory/items')
+      .send({ ...payload, minQuantity: 30, maxQuantity: 100, threshold: 50 })
+    expect(created.status, created.text).toBe(201)
+    const itemId = created.body.data.id as string
+    const values = { minQuantity: 40, maxQuantity: 200, threshold: 70 }
+    let response = await request(app)
+      .put(`/inventory/items/${itemId}/thresholds`)
+      .send({ locations: [{ locationId: otherLocationId, ...values }] })
+    expect(response.status, response.text).toBe(200)
+    expect(
+      response.body.data.locationThresholds.find((x: { locationId: string }) => x.locationId === locationId),
+    ).toMatchObject({ minQuantity: 30, maxQuantity: 100, threshold: 50 })
+    response = await request(app).put(`/inventory/items/${itemId}`).send(payload)
+    expect(
+      response.body.data.locationThresholds.find((x: { locationId: string }) => x.locationId === otherLocationId),
+    ).toMatchObject(values)
+    response = await request(app)
+      .put(`/inventory/items/${itemId}/thresholds`)
+      .send({
+        locations: [
+          { locationId, minQuantity: 10, maxQuantity: 50, threshold: 20 },
+          { locationId: randomUUID(), ...values },
+        ],
+      })
+    expect(response.status).toBe(400)
+    expect((await models.InventoryItemLocation.findOne({ where: { itemId, locationId } }))?.minQuantity).toBe(30)
+    expect(
+      (
+        await request(app)
+          .put(`/inventory/items/${itemId}/thresholds`)
+          .send({ locations: [{ locationId, minQuantity: 2, maxQuantity: 1, threshold: 0 }] })
+      ).status,
+    ).toBe(400)
+    response = await request(app)
+      .put(`/inventory/items/${itemId}`)
+      .send({ ...payload, minQuantity: 0, maxQuantity: 0, threshold: 0 })
+    expect(
+      response.body.data.locationThresholds.every(
+        (x: { threshold: number; minQuantity: number; maxQuantity: number }) =>
+          x.threshold === 0 && x.minQuantity === 0 && x.maxQuantity === 0,
+      ),
+    ).toBe(true)
+    await request(app)
+      .put(`/inventory/items/${itemId}/locations`)
+      .send({ locationIds: [locationId] })
+    await request(app)
+      .put(`/inventory/items/${itemId}`)
+      .send({ ...payload, locationIds: [locationId], minQuantity: 20, maxQuantity: 100, threshold: 30 })
+    response = await request(app)
+      .put(`/inventory/items/${itemId}/locations`)
+      .send({ locationIds: [locationId, otherLocationId] })
+    expect(
+      response.body.data.locationThresholds.find((x: { locationId: string }) => x.locationId === otherLocationId),
+    ).toMatchObject({ minQuantity: 20, maxQuantity: 100, threshold: 30 })
+    await request(app)
+      .put(`/inventory/items/${itemId}/vendors`)
+      .send({ assignments: [{ vendorId: vendor.id, locationId }] })
+    await request(app)
+      .post('/inventory/items')
+      .send({ ...payload, name: 'AAA unrelated' })
+    response = await request(app)
+      .get('/inventory/items')
+      .query({ categoryId: id, vendorId: vendor.id, page: 1, limit: 1, search: 'medicine' })
+    expect(response.body.data.pagination.totalItems).toBe(1)
+    expect(response.body.data.records[0].id).toBe(itemId)
+    response = await request(app)
+      .get('/inventory/items')
+      .query({ categoryId: id, vendorId: vendor.id, locationId: otherLocationId })
+    expect(response.body.data.pagination.totalItems).toBe(0)
+  })
+  it('imports templates atomically, reuses items, and preserves unrelated assignments', async () => {
+    const { id, category, vendor } = await setupParity()
+    const { inventoryTemplate } = await import('./inventory-import.service.js')
+    const template = await inventoryTemplate(id, 3)
+    const workbook = new ExcelJS.Workbook()
+    await workbook.xlsx.load(template)
+    const sheet = workbook.getWorksheet('Items')!
+    expect(sheet.getRow(1).values).toContain('Package Type*')
+    expect(sheet.getRow(1).values).toContain(`Type* [${category.fieldDefinitions[0].id}]`)
+    expect(sheet.getCell(2, 2).dataValidation.type).toBe('list')
+    expect((await request(app).get(`/inventory/categories/${id}/template`).query({ rowCount: 501 })).status).toBe(400)
+    const row = (location: string, locationName: string, minimum: number) => [
+      `${category.name} [${id}]`,
+      `${locationName} [${location}]`,
+      `${vendor.name} [${vendor.id}]`,
+      'Sample Medicine',
+      'strip',
+      10,
+      'tablet',
+      minimum,
+      10,
+      5,
+      'Medical',
+    ]
+    sheet.getRow(2).values = row(locationId, 'Alpha', 3)
+    sheet.getRow(3).values = row(otherLocationId, 'Beta', 4)
+    const upload = async () =>
+      request(app)
+        .post(`/inventory/categories/${id}/import`)
+        .attach('file', Buffer.from(await workbook.xlsx.writeBuffer()), 'items.xlsx')
+    let response = await upload()
+    expect(response.status, response.text).toBe(201)
+    expect(response.body.data).toMatchObject({ importedCount: 2, createdCount: 1 })
+    const items = await models.InventoryItem.findAll({ where: { categoryId: id } })
+    expect(items).toHaveLength(1)
+    const itemId = items[0]!.id
+    expect((await models.InventoryItemLocation.findOne({ where: { itemId, locationId } }))?.minQuantity).toBe(30)
+    expect(
+      (await models.InventoryItemLocation.findOne({ where: { itemId, locationId: otherLocationId } }))?.minQuantity,
+    ).toBe(40)
+    expect(await models.InventoryItemVendor.count({ where: { itemId } })).toBe(2)
+    sheet.getRow(3).values = []
+    sheet.getCell(2, 8).value = 2
+    response = await upload()
+    expect(response.status, response.text).toBe(201)
+    expect(response.body.data.createdCount).toBe(0)
+    expect(await models.InventoryItem.count({ where: { categoryId: id } })).toBe(1)
+    expect(
+      (await models.InventoryItemLocation.findOne({ where: { itemId, locationId: otherLocationId } }))?.minQuantity,
+    ).toBe(40)
+    sheet.getRow(3).values = row(otherLocationId, 'Beta', 4)
+    sheet.getCell(3, 4).value = 'New item'
+    sheet.getCell(2, 3).value = 'Invalid supplier'
+    response = await upload()
+    expect(response.status).toBe(400)
+    expect(response.body.errors[0]).toContain('Row 2:')
+    expect(await models.InventoryItem.count({ where: { categoryId: id } })).toBe(1)
+    sheet.getRow(2).values = row(locationId, 'Alpha', 3)
+    sheet.getCell(2, 6).value = 20
+    response = await upload()
+    expect(response.status).toBe(400)
+    expect(response.body.errors[0]).toContain('Shared details differ')
+    sheet.getRow(2).values = row(locationId, 'Alpha', 3)
+    sheet.getCell(2, 11).value = 'Invalid type'
+    expect((await upload()).status).toBe(400)
+    expect(
+      (await request(app).post(`/inventory/categories/${id}/import`).attach('file', Buffer.from('bad'), 'bad.xlsx'))
+        .status,
+    ).toBe(400)
+  })
+  it('backfills location thresholds and does not overwrite overrides when rerun', async () => {
+    const { id } = await setupParity()
+    const item = await request(app)
+      .post('/inventory/items')
+      .send({
+        name: 'Migration item',
+        categoryId: id,
+        packType: 'strip',
+        packQuantity: 10,
+        packUnit: 'tablet',
+        minQuantity: 30,
+        maxQuantity: 100,
+        threshold: 50,
+        locationIds: [locationId],
+        customFields: [],
+      })
+    const migration = await import('../migrations/20260912170000-add-inventory-location-thresholds.js')
+    await migration.down({ context: qi })
+    const [before] = await db.query('SELECT id, itemId, locationId FROM inventory_item_locations ORDER BY id')
+    await migration.up({ context: qi })
+    const [after] = await db.query('SELECT id, itemId, locationId FROM inventory_item_locations ORDER BY id')
+    expect(after).toEqual(before)
+    const record = await models.InventoryItemLocation.findOne({ where: { itemId: item.body.data.id, locationId } })
+    expect(record?.minQuantity).toBe(30)
+    await record!.update({ minQuantity: 40 })
+    await migration.up({ context: qi })
+    expect((await record!.reload()).minQuantity).toBe(40)
+  })
+  it('adds zero thresholds to existing items without changing their other data', async () => {
+    const thresholds = await import('../migrations/20260912150000-add-inventory-item-thresholds.js')
+    await thresholds.down({ context: qi })
+    const [before] = await db.query('SELECT * FROM inventory_items ORDER BY id')
+    await thresholds.up({ context: qi })
+    await thresholds.up({ context: qi })
+    const [after] = await db.query('SELECT * FROM inventory_items ORDER BY id')
+    expect(after).toEqual(before.map((row) => ({ ...row, minQuantity: 0, maxQuantity: 0, threshold: 0 })))
   })
   it('reverses and reapplies its isolated migration', async () => {
     await migration.down({ context: qi })

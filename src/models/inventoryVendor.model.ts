@@ -8,6 +8,7 @@ export interface InventoryVendorAttributes extends BaseAttributes {
   phone: string | null
   address: string | null
   isActive: boolean
+  isDeleted: boolean
 }
 export type InventoryVendorCreationAttributes = Optional<
   InventoryVendorAttributes,
@@ -21,6 +22,7 @@ export type InventoryVendorCreationAttributes = Optional<
   | 'phone'
   | 'address'
   | 'isActive'
+  | 'isDeleted'
 >
 export class InventoryVendor
   extends BaseModel<InventoryVendorAttributes, InventoryVendorCreationAttributes>
@@ -31,6 +33,7 @@ export class InventoryVendor
   declare email: string | null
   declare phone: string | null
   declare address: string | null
+  declare isDeleted: boolean
   declare isActive: boolean
 }
 InventoryVendor.init(
@@ -41,6 +44,7 @@ InventoryVendor.init(
     email: { type: DataTypes.STRING(255), allowNull: true },
     phone: { type: DataTypes.STRING(20), allowNull: true },
     address: { type: DataTypes.TEXT, allowNull: true },
+    isDeleted: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: false },
     isActive: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: true },
   },
   { sequelize, tableName: 'inventory_vendors', timestamps: true },

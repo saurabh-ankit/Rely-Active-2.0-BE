@@ -1,3 +1,4 @@
+import { InventoryImportError } from '../../services/inventory-import.service.js'
 import type { Response, NextFunction } from 'express'
 import { ForeignKeyConstraintError, UniqueConstraintError } from 'sequelize'
 import type { AuthenticatedRequest } from '../../middlewares/authenticate.js'
@@ -10,6 +11,10 @@ export const inventoryHandler =
     try {
       res.status(status).json(successResponse('Inventory request completed', await action(req)))
     } catch (error) {
+      if (error instanceof InventoryImportError) {
+        res.status(400).json({ success: false, message: error.message, errors: error.rows })
+        return
+      }
       if (error instanceof InventoryError) {
         res.status(error.status).json({
           success: false,

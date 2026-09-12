@@ -8,10 +8,21 @@ export interface InventoryItemAttributes extends BaseAttributes {
   packType: string
   packQuantity: number
   packUnit: string
+  minQuantity: number
+  maxQuantity: number
+  threshold: number
 }
 export type InventoryItemCreationAttributes = Optional<
   InventoryItemAttributes,
-  'id' | 'createdBy' | 'updatedBy' | 'createdAt' | 'updatedAt' | 'isActive'
+  | 'id'
+  | 'createdBy'
+  | 'updatedBy'
+  | 'createdAt'
+  | 'updatedAt'
+  | 'isActive'
+  | 'minQuantity'
+  | 'maxQuantity'
+  | 'threshold'
 >
 export class InventoryItem
   extends BaseModel<InventoryItemAttributes, InventoryItemCreationAttributes>
@@ -22,6 +33,9 @@ export class InventoryItem
   declare isActive: boolean
   declare packType: string
   declare packQuantity: number
+  declare minQuantity: number
+  declare maxQuantity: number
+  declare threshold: number
   declare packUnit: string
 }
 InventoryItem.init(
@@ -34,6 +48,9 @@ InventoryItem.init(
       onDelete: 'RESTRICT',
       onUpdate: 'CASCADE',
     },
+    minQuantity: { type: DataTypes.INTEGER.UNSIGNED, allowNull: false, defaultValue: 0 },
+    maxQuantity: { type: DataTypes.INTEGER.UNSIGNED, allowNull: false, defaultValue: 0 },
+    threshold: { type: DataTypes.INTEGER.UNSIGNED, allowNull: false, defaultValue: 0 },
     name: { type: DataTypes.STRING(255), allowNull: false },
     isActive: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: true },
     packType: { type: DataTypes.STRING(30), allowNull: false },

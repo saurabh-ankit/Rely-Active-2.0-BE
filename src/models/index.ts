@@ -565,3 +565,11 @@ export {
   InventoryFieldDefinition,
   InventoryFieldValue,
 }
+
+export {
+  InventoryStock,
+  InventoryPurchaseOrder,
+  InventoryPurchaseOrderLine,
+  InventoryStockTransaction,
+  InventoryStockTransactionLine,
+} from './inventoryStock.model.js'

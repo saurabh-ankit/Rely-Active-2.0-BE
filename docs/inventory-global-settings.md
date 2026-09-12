@@ -49,3 +49,13 @@ Category POST/PUT accepts optional `fieldDefinitions`. For edits, entries with `
 `POST /inventory/category-image` accepts one multipart `image` file (JPG, PNG, GIF; at most 10 MB). It uses Active's S3 upload infrastructure and returns `{ image: string }` inside the response envelope. File size, MIME type, signature, and super-admin access are validated. Upload tests mock S3; no live cloud upload is performed during verification.
 
 The shared DataTable's optional controlled pagination and sorting support server inventory lists. Existing callers retain client pagination/sorting. Its toolbar remains mounted during loading and errors, preserving search focus.
+
+## Shared item stock thresholds
+
+Item create/update accepts `minQuantity`, `maxQuantity`, and `threshold` as nonnegative integer **base units**, up to 2,147,483,647. Detail and list responses return these fields. Maximum must be at least minimum; threshold is independent of this range. Omitted values default to zero on creation and retain their saved values on update.
+
+The global form edits whole package counts: three strips with `packQuantity: 10` submit 30 base units. Editing divides stored values by the saved pack quantity. Changing packaging retains the entered counts and uses the new pack quantity on save. The API does not convert quantities again. API values representing partial packages display exactly in the form; users must enter whole package counts before saving. The form never silently rounds stored values.
+
+These values belong to the global item and apply to every assigned location, including later assignments. This configuration does not create stock or trigger alerts or ordering automation.
+
+Apply migration `20260912150000-add-inventory-item-thresholds` before deploying the backend, then deploy the web frontend. Existing items receive zero values without changing other data. Rolling back this migration removes only the three new columns and their threshold values.

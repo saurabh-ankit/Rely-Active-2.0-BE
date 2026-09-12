@@ -1,5 +1,10 @@
-import { Op, fn, col, Transaction, type Model, type ModelStatic, type WhereOptions } from 'sequelize'
+import { Op, fn, col, where as sqlWhere, Transaction, type Model, type ModelStatic, type WhereOptions } from 'sequelize'
 import { z } from 'zod'
+import {
+  InventoryStock,
+  InventoryPurchaseOrderLine,
+  InventoryStockTransactionLine,
+} from '../models/inventoryStock.model.js'
 import sequelize from '../config/db/index.js'
 import {
   InventoryCategory,
@@ -18,6 +23,7 @@ import {
   itemSchema,
   inventoryListSchema,
   validateFieldValue,
+  locationThresholdsSchema,
 } from '../validations/inventory.validation.js'
 
 export class InventoryError extends Error {
@@ -72,6 +78,12 @@ export async function getInventoryDetail(kind: InventoryKind, id: string, transa
         }
       : kind === 'items'
         ? {
+            locationThresholds: locations.map((x) => ({
+              locationId: x.get('locationId'),
+              minQuantity: x.get('minQuantity'),
+              maxQuantity: x.get('maxQuantity'),
+              threshold: x.get('threshold'),
+            })),
             customFields: await InventoryFieldValue.findAll({ where: { itemId: id }, transaction }),
             vendorAssignments: await InventoryItemVendor.findAll({ where: { itemId: id }, transaction }),
           }
@@ -79,16 +91,33 @@ export async function getInventoryDetail(kind: InventoryKind, id: string, transa
   return { ...row.toJSON(), locationIds: locations.map((x) => x.get('locationId') as string), ...extra }
 }
 export async function listInventory(kind: InventoryKind, query: z.infer<typeof inventoryListSchema>) {
-  const { page, limit, search, sortBy, sortOrder, categoryId, locationId, isActive } = query
+  const { page, limit, search, sortBy, sortOrder, categoryId, locationId, isActive, vendorId } = query
   const where: WhereOptions = {
-    ...(search ? { name: { [Op.like]: `%${search.replace(/[\\%_]/g, '\\$&')}%` } } : {}),
+    ...(kind === 'vendors' ? { isDeleted: false } : {}),
+    ...(search
+      ? {
+          [Op.or]: (kind === 'vendors' ? ['name', 'contactPerson', 'email'] : ['name']).map((field) => ({
+            [field]: { [Op.like]: `%${search.replace(/[\\%_]/g, '\\$&')}%` },
+          })),
+        }
+      : {}),
     ...(isActive ? { isActive: isActive === 'true' } : {}),
     ...(kind === 'items' && categoryId ? { categoryId } : {}),
+  }
+  if (kind === 'items' && vendorId) {
+    const assignments = await InventoryItemVendor.findAll({
+      where: { vendorId, ...(locationId ? { locationId } : {}) },
+    })
+    Object.assign(where, { id: { [Op.in]: assignments.map((a) => a.itemId) } })
   }
   if (locationId) {
     const link = links[kind]
     const rows = await link.model.findAll({ where: { locationId } })
-    Object.assign(where, { id: { [Op.in]: rows.map((x) => x.get(link.key)) } })
+    const locationItemIds = rows.map((x) => x.get(link.key))
+    const vendorItemIds = (where as { id?: { [Op.in]: unknown[] } }).id?.[Op.in]
+    Object.assign(where, {
+      id: { [Op.in]: vendorItemIds ? locationItemIds.filter((id) => vendorItemIds.includes(id)) : locationItemIds },
+    })
   }
   const { rows, count } = await masters[kind].findAndCountAll({
     where,
@@ -135,6 +164,14 @@ export async function listInventory(kind: InventoryKind, query: z.infer<typeof i
         : {}),
       ...(kind === 'items'
         ? {
+            locationThresholds: locations
+              .filter((x) => x.get(link.key) === id)
+              .map((x) => ({
+                locationId: x.get('locationId'),
+                minQuantity: x.get('minQuantity'),
+                maxQuantity: x.get('maxQuantity'),
+                threshold: x.get('threshold'),
+              })),
             customFields: values.filter((x) => x.itemId === id),
             vendorAssignments: assignments.filter((x) => x.itemId === id),
           }
@@ -154,6 +191,10 @@ export async function saveMaster(
     locationIds?: string[]
   }
   return inventoryWrite(async (transaction) => {
+    if (kind === 'categories' && !(await categoryNameAvailable(String(attributes.name), id, transaction)).available)
+      throw new InventoryError(409, 'Category with this name already exists', 'name')
+    if (kind === 'vendors' && !id && !locationIds?.length)
+      throw new InventoryError(400, 'At least one location is required', 'locationIds')
     const row = id
       ? await (
           await requireRow(masters[kind], id, transaction)
@@ -235,51 +276,112 @@ async function replaceLocations(
   }
   if (removed.length)
     await link.model.destroy({ where: { [link.key]: id, locationId: { [Op.in]: removed } }, transaction })
+  const defaultItem = kind === 'items' ? await InventoryItem.findByPk(id, { transaction }) : null
   const existing = current.map((x) => x.get('locationId'))
   await link.model.bulkCreate(
     locationIds
       .filter((x) => !existing.includes(x))
-      .map((locationId) => ({ [link.key]: id, locationId, createdBy: userId, updatedBy: userId })),
+      .map((locationId) => ({
+        [link.key]: id,
+        locationId,
+        ...(defaultItem
+          ? {
+              minQuantity: defaultItem.minQuantity,
+              maxQuantity: defaultItem.maxQuantity,
+              threshold: defaultItem.threshold,
+            }
+          : {}),
+        createdBy: userId,
+        updatedBy: userId,
+      })),
     { transaction },
   )
 }
 export async function assignLocations(kind: InventoryKind, id: string, locationIds: string[], userId: string) {
   return inventoryWrite(async (transaction) => {
     await requireRow(masters[kind], id, transaction)
+    if (kind === 'items' && !locationIds.length)
+      throw new InventoryError(400, 'At least one location is required', 'locationIds')
     await replaceLocations(kind, id, locationIds, userId, transaction)
     return getInventoryDetail(kind, id, transaction)
   })
 }
 export async function saveItem(id: string | undefined, data: z.infer<typeof itemSchema>, userId: string) {
-  return inventoryWrite(async (transaction) => {
-    const { locationIds, customFields, ...attributes } = data
-    const existing = id ? await InventoryItem.findByPk(id, { transaction }) : null
-    if (id && !existing) throw new InventoryError(404, 'Item not found')
-    if (existing && existing.categoryId !== data.categoryId)
-      throw new InventoryError(409, 'An existing item cannot change category', 'categoryId')
-    if (data.isActive) await activeRow(InventoryCategory, data.categoryId, transaction)
-    else await requireRow(InventoryCategory, data.categoryId, transaction)
-    const definitions = await InventoryFieldDefinition.findAll({ where: { categoryId: data.categoryId }, transaction })
-    if (customFields.some((f) => !definitions.some((d) => d.id === f.fieldDefinitionId)))
-      throw new InventoryError(400, 'Custom fields must belong to the item category', 'customFields')
-    const values = definitions.map((definition) => {
-      const supplied = customFields.find((f) => f.fieldDefinitionId === definition.id)
-      const value = supplied ? supplied.value : definition.defaultValue
-      const error = validateFieldValue(definition, value)
-      if (error) throw new InventoryError(400, `${definition.fieldLabel}: ${error}`, `customFields.${definition.id}`)
-      return { fieldDefinitionId: definition.id, value }
-    })
-    const item = existing
-      ? await existing.update({ ...attributes, updatedBy: userId }, { transaction })
-      : await InventoryItem.create({ ...attributes, createdBy: userId, updatedBy: userId }, { transaction })
-    await replaceLocations('items', item.id, locationIds, userId, transaction)
-    await InventoryFieldValue.destroy({ where: { itemId: item.id }, transaction })
-    await InventoryFieldValue.bulkCreate(
-      values.map((v) => ({ ...v, itemId: item.id, createdBy: userId, updatedBy: userId })),
-      { transaction },
-    )
-    return getInventoryDetail('items', item.id, transaction)
+  return inventoryWrite((transaction) => saveItemInTransaction(id, data, userId, transaction))
+}
+export async function saveItemInTransaction(
+  id: string | undefined,
+  data: z.infer<typeof itemSchema>,
+  userId: string,
+  transaction: Transaction,
+) {
+  const { locationIds, customFields, ...attributes } = data
+  const existing = id ? await InventoryItem.findByPk(id, { transaction, lock: transaction.LOCK.UPDATE }) : null
+  if (id && !existing) throw new InventoryError(404, 'Item not found')
+  if (
+    existing &&
+    (existing.packType !== data.packType ||
+      existing.packUnit !== data.packUnit ||
+      existing.packQuantity !== data.packQuantity)
+  ) {
+    const activity = await Promise.all([
+      InventoryStock.count({ where: { itemId: existing.id }, transaction }),
+      InventoryPurchaseOrderLine.count({ where: { itemId: existing.id }, transaction }),
+      InventoryStockTransactionLine.count({ where: { itemId: existing.id }, transaction }),
+    ])
+    if (activity.some((count) => count > 0))
+      throw new InventoryError(
+        409,
+        'Packaging cannot change after stock or purchase orders exist. Create a separate catalogue item for the new packaging.',
+        'packQuantity',
+      )
+  }
+  const minQuantity = data.minQuantity ?? existing?.minQuantity ?? 0
+  const maxQuantity = data.maxQuantity ?? existing?.maxQuantity ?? 0
+  if (maxQuantity < minQuantity) throw new InventoryError(400, 'Maximum must be at least minimum', 'maxQuantity')
+  if (existing && existing.categoryId !== data.categoryId)
+    throw new InventoryError(409, 'An existing item cannot change category', 'categoryId')
+  if (data.isActive) await activeRow(InventoryCategory, data.categoryId, transaction)
+  else await requireRow(InventoryCategory, data.categoryId, transaction)
+  const definitions = await InventoryFieldDefinition.findAll({ where: { categoryId: data.categoryId }, transaction })
+  if (customFields.some((f) => !definitions.some((d) => d.id === f.fieldDefinitionId)))
+    throw new InventoryError(400, 'Custom fields must belong to the item category', 'customFields')
+  const values = definitions.map((definition) => {
+    const supplied = customFields.find((f) => f.fieldDefinitionId === definition.id)
+    const value = supplied ? supplied.value : definition.defaultValue
+    const error = validateFieldValue(definition, value)
+    if (error) throw new InventoryError(400, `${definition.fieldLabel}: ${error}`, `customFields.${definition.id}`)
+    return { fieldDefinitionId: definition.id, value }
   })
+  const itemAttributes = {
+    ...attributes,
+    minQuantity,
+    maxQuantity,
+    threshold: data.threshold ?? existing?.threshold ?? 0,
+    updatedBy: userId,
+  }
+  const item = existing
+    ? await existing.update(itemAttributes, { transaction })
+    : await InventoryItem.create({ ...itemAttributes, createdBy: userId }, { transaction })
+  await replaceLocations('items', item.id, locationIds, userId, transaction)
+  const locationRows = await InventoryItemLocation.findAll({ where: { itemId: item.id }, transaction })
+  for (const location of locationRows) {
+    const values = {
+      minQuantity: data.minQuantity ?? location.minQuantity,
+      maxQuantity: data.maxQuantity ?? location.maxQuantity,
+      threshold: data.threshold ?? location.threshold,
+    }
+    if (values.maxQuantity < values.minQuantity)
+      throw new InventoryError(400, 'Maximum must be at least minimum at every location', 'maxQuantity')
+    if (data.minQuantity !== undefined || data.maxQuantity !== undefined || data.threshold !== undefined)
+      await location.update({ ...values, updatedBy: userId }, { transaction })
+  }
+  await InventoryFieldValue.destroy({ where: { itemId: item.id }, transaction })
+  await InventoryFieldValue.bulkCreate(
+    values.map((v) => ({ ...v, itemId: item.id, createdBy: userId, updatedBy: userId })),
+    { transaction },
+  )
+  return getInventoryDetail('items', item.id, transaction)
 }
 export async function saveItemVendors(
   id: string,
@@ -396,4 +498,52 @@ async function deleteDefinitionInTransaction(categoryId: string, id: string, tra
   await InventoryFieldValue.destroy({ where: { fieldDefinitionId: id }, transaction })
   await definition.destroy({ transaction })
   return null
+}
+
+export async function categoryNameAvailable(
+  name: string,
+  excludeCategoryId?: string,
+  transaction: Transaction | null = null,
+) {
+  const existing = await InventoryCategory.findOne({
+    where: {
+      [Op.and]: [
+        sqlWhere(fn('LOWER', fn('TRIM', col('name'))), name.trim().toLowerCase()),
+        ...(excludeCategoryId ? [{ id: { [Op.ne]: excludeCategoryId } }] : []),
+      ],
+    },
+    transaction,
+  })
+  return { available: !existing }
+}
+export async function saveLocationThresholds(
+  id: string,
+  data: z.infer<typeof locationThresholdsSchema>,
+  userId: string,
+) {
+  return inventoryWrite(async (transaction) => {
+    await requireRow(InventoryItem, id, transaction)
+    const locations = await InventoryItemLocation.findAll({ where: { itemId: id }, transaction })
+    for (const [index, update] of data.locations.entries()) {
+      const row = locations.find((x) => x.locationId === update.locationId)
+      if (!row) throw new InventoryError(400, 'Item is not assigned to this location', `locations.${index}.locationId`)
+      await row.update(
+        {
+          minQuantity: update.minQuantity,
+          maxQuantity: update.maxQuantity,
+          threshold: update.threshold,
+          updatedBy: userId,
+        },
+        { transaction },
+      )
+    }
+    return getInventoryDetail('items', id, transaction)
+  })
+}
+export async function setVendorStatus(id: string, isActive: boolean, userId: string) {
+  return inventoryWrite(async (transaction) => {
+    const vendor = await requireRow(InventoryVendor, id, transaction)
+    await vendor.update({ isActive, updatedBy: userId }, { transaction })
+    return getInventoryDetail('vendors', id, transaction)
+  })
 }

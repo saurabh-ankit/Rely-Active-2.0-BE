@@ -1,3 +1,10 @@
+import multer from 'multer'
+import { z } from 'zod'
+import {
+  inventoryTemplate,
+  importInventoryItems,
+  InventoryImportError,
+} from '../../services/inventory-import.service.js'
 import { receiveInventoryImage, uploadInventoryImage } from '../controllers/inventory-image.controller.js'
 import { Router } from 'express'
 import { authenticate, type AuthenticatedRequest } from '../../middlewares/authenticate.js'
@@ -5,6 +12,9 @@ import { validateBody, validateParams, validateQuery } from '../../middlewares/v
 import { AuthorizationService } from '../../services/authorization.service.js'
 import { ALLOWED_UNITS_BY_PACKAGE_TYPE, PACKAGE_TYPES, STOCK_UNITS } from '../../enums/inventory.enum.js'
 import {
+  categoryNameQuerySchema,
+  locationThresholdsSchema,
+  templateQuerySchema,
   categorySchema,
   vendorSchema,
   itemSchema,
@@ -16,6 +26,9 @@ import {
   inventoryListSchema,
 } from '../../validations/inventory.validation.js'
 import {
+  categoryNameAvailable,
+  saveLocationThresholds,
+  setVendorStatus,
   assignLocations,
   deleteDefinition,
   getInventoryDetail,
@@ -51,6 +64,71 @@ router.get(
     stockUnits: STOCK_UNITS,
     allowedUnitsByPackageType: ALLOWED_UNITS_BY_PACKAGE_TYPE,
   })),
+)
+router.get(
+  '/categories/name-availability',
+  validateQuery(categoryNameQuerySchema),
+  handle((req) => {
+    const query = categoryNameQuerySchema.parse(req.query)
+    return categoryNameAvailable(query.name, query.excludeCategoryId)
+  }),
+)
+router.get(
+  '/categories/:id/template',
+  validateParams(inventoryIdSchema),
+  validateQuery(templateQuerySchema),
+  async (req, res, next) => {
+    try {
+      const buffer = await inventoryTemplate(String(req.params.id), templateQuerySchema.parse(req.query).rowCount)
+      res
+        .type('application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+        .attachment('inventory-items.xlsx')
+        .send(Buffer.from(buffer))
+    } catch (error) {
+      next(error)
+    }
+  },
+)
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024, files: 1 } }).single(
+  'file',
+)
+router.post(
+  '/categories/:id/import',
+  validateParams(inventoryIdSchema),
+  (req, res, next) => {
+    upload(req, res, (error) => {
+      if (error) {
+        res.status(400).json({ success: false, message: 'Upload one .xlsx file up to 10 MB' })
+        return
+      }
+      next()
+    })
+  },
+  handle(async (req) => {
+    if (!req.file || !req.file.originalname.toLowerCase().endsWith('.xlsx'))
+      throw new InventoryImportError(['Upload an .xlsx file'])
+    return importInventoryItems(String(req.params.id), req.file.buffer, req.user!.id)
+  }, 201),
+)
+router.get(
+  '/items/:id/thresholds',
+  validateParams(inventoryIdSchema),
+  handle(async (req) => {
+    const item = await getInventoryDetail('items', String(req.params.id))
+    return { locations: 'locationThresholds' in item ? item.locationThresholds : [] }
+  }),
+)
+router.put(
+  '/items/:id/thresholds',
+  validateParams(inventoryIdSchema),
+  validateBody(locationThresholdsSchema),
+  handle((req) => saveLocationThresholds(String(req.params.id), req.body, req.user!.id)),
+)
+router.put(
+  '/vendors/:id/status',
+  validateParams(inventoryIdSchema),
+  validateBody(z.object({ isActive: z.boolean() }).strict()),
+  handle((req) => setVendorStatus(String(req.params.id), req.body.isActive, req.user!.id)),
 )
 for (const kind of ['categories', 'vendors', 'items'] as const) {
   router.get(
