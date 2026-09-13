@@ -5,7 +5,7 @@
   "packageManager": "pnpm@10.18.3",
   "type": "module",
   "engines": {
-    "node": ">=24.19.0 <25",
+    "node": ">=23.0.0 <24",
     "pnpm": ">=10"
   },
   "scripts": {
@@ -26,6 +26,8 @@
     "migrate:executed": "tsx src/scripts/migrate.ts executed",
     "migrate:create": "tsx src/scripts/migrate.ts create",
     "seed": "tsx src/scripts/seed.ts",
+    "demo:billing": "tsx src/scripts/billingDemo.ts",
+    "demo:billing:reset": "tsx src/scripts/billingDemo.ts reset",
     "prepare": "husky"
   },
   "lint-staged": {

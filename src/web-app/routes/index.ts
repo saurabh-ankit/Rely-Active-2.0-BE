@@ -20,6 +20,7 @@ import {
   shiftResidentPoolRouter,
   shiftRosterRouter,
 } from './roster.routes.js'
+import billingRouter from './billing.routes.js'
 
 export const apiRouter = Router()
 
@@ -60,5 +61,8 @@ apiRouter.use('/location/:locationId/employee-shifts', employeeShiftRouter)
 apiRouter.use('/location/:locationId/shift-employee-dates', shiftEmployeeDateRouter)
 apiRouter.use('/location/:locationId/shift-resident-pools', shiftResidentPoolRouter)
 apiRouter.use('/location/:locationId/shift-roster', shiftRosterRouter)
+
+apiRouter.use('/billing', billingRouter)
+apiRouter.use('/location/:locationId/billing', billingRouter)
 
 export default apiRouter

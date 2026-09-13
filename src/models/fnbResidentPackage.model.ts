@@ -74,7 +74,7 @@ FnbResidentPackage.init(
       allowNull: true,
     },
     dietaryPreference: {
-      type: DataTypes.ENUM('veg', 'non_veg', 'egg', 'jain', 'vegan'),
+      type: DataTypes.ENUM('veg', 'non_veg', 'egg', 'jain', 'mixed', 'vegan'),
       allowNull: true,
       defaultValue: FnbDietaryType.VEG,
     },

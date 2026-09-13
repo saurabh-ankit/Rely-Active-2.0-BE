@@ -2,7 +2,7 @@
 
 Express and TypeScript foundation for the Rely Active 2.0 API.
 
-Requires Node.js 24.19.0 LTS and pnpm 10.18.3. Run `nvm use` from this directory to select the pinned runtime.
+Requires Node.js 23 LTS and pnpm 10.18.3. Run `nvm use` from this directory to select the pinned runtime.
 
 ## Setup
 
