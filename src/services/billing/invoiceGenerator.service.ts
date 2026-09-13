@@ -7,6 +7,8 @@ import {
   BillingParty,
   BillingProduct,
   BillingSubscription,
+  Company,
+  CompanyCustomField,
   Invoice,
   InvoiceLine,
   Property,
@@ -174,6 +176,20 @@ export async function generateInvoiceForAccount(
     throw new Error(`Billing Account ${billingAccountId} not found`)
   }
 
+  // 1b. Fetch Global Tax / GST Settings
+  let globalGstEnabled = true
+  let globalDefaultTaxRate = 18
+  const company = await Company.findOne({ where: { isDeleted: false } })
+  if (company) {
+    const customFields = await CompanyCustomField.findAll({
+      where: { companyId: company.id, isDeleted: false },
+    })
+    for (const cf of customFields) {
+      if (cf.fieldName === 'gst_enabled') globalGstEnabled = cf.fieldValue !== 'false'
+      if (cf.fieldName === 'gst_rate') globalDefaultTaxRate = Number(cf.fieldValue) || 18
+    }
+  }
+
   // 2. Determine Bill-To Party (Payer Decoupling)
   const parties = account.parties || []
   const primaryPayer =
@@ -206,10 +222,40 @@ export async function generateInvoiceForAccount(
       })
     : []
 
+  // A recurring subscription can only be billed once for an overlapping invoice period.
+  // Usage events are protected by their PENDING status; subscriptions need this explicit guard.
+  const billedSubscriptionIds = new Set<string>()
+  if (subscriptions.length > 0) {
+    const billedLines = await InvoiceLine.findAll({
+      attributes: ['subscriptionId'],
+      where: {
+        subscriptionId: { [Op.in]: subscriptions.map((subscription) => subscription.id) },
+      },
+      include: [
+        {
+          model: Invoice,
+          as: 'invoice',
+          required: true,
+          attributes: [],
+          where: {
+            billingAccountId,
+            status: { [Op.ne]: InvoiceStatus.CANCELLED },
+            periodStart: { [Op.lte]: periodEnd },
+            periodEnd: { [Op.gte]: periodStart },
+          },
+        },
+      ],
+    })
+    billedLines.forEach((line) => {
+      if (line.subscriptionId) billedSubscriptionIds.add(line.subscriptionId)
+    })
+  }
+
   const draftLines: InvoiceLineItemDraft[] = []
   let sortOrder = 0
 
   for (const sub of subscriptions) {
+    if (billedSubscriptionIds.has(sub.id)) continue
     const proration = calculateProration({
       periodStart,
       periodEnd,
@@ -224,10 +270,10 @@ export async function generateInvoiceForAccount(
 
     if (proration.subtotal > 0) {
       sortOrder += 1
-      const isTaxable = sub.product?.isTaxable ?? false
-      const taxRate = isTaxable ? Number(sub.product?.defaultTaxRate || 0) : 0
+      const isTaxable = globalGstEnabled && (sub.product?.isTaxable ?? false)
+      const taxRate = isTaxable ? Number(sub.product?.defaultTaxRate ?? globalDefaultTaxRate) : 0
       const taxableAmount = isTaxable ? proration.subtotal : 0
-      const taxAmount = Number(((taxableAmount * taxRate) / 100).toFixed(2))
+      const taxAmount = isTaxable ? Number(((taxableAmount * taxRate) / 100).toFixed(2)) : 0
       const totalAmount = Number((proration.subtotal + taxAmount).toFixed(2))
 
       draftLines.push({
@@ -269,10 +315,10 @@ export async function generateInvoiceForAccount(
     const price = Number(ev.unitPrice)
     const lineSubtotal = Number(ev.amount) > 0 ? Number(ev.amount) : Number((qty * price).toFixed(2))
 
-    const isTaxable = ev.product?.isTaxable ?? false
-    const taxRate = isTaxable ? Number(ev.product?.defaultTaxRate || 0) : 0
+    const isTaxable = globalGstEnabled && (ev.product?.isTaxable ?? false)
+    const taxRate = isTaxable ? Number(ev.product?.defaultTaxRate ?? globalDefaultTaxRate) : 0
     const taxableAmount = isTaxable ? lineSubtotal : 0
-    const taxAmount = Number(((taxableAmount * taxRate) / 100).toFixed(2))
+    const taxAmount = isTaxable ? Number(((taxableAmount * taxRate) / 100).toFixed(2)) : 0
     const totalAmount = Number((lineSubtotal + taxAmount).toFixed(2))
 
     draftLines.push({
@@ -310,12 +356,16 @@ export async function generateInvoiceForAccount(
     }
   }
 
-  const rawTaxableAmount = Number(draftLines.reduce((sum, l) => sum + l.taxableAmount, 0).toFixed(2))
+  const rawTaxableAmount = globalGstEnabled
+    ? Number(draftLines.reduce((sum, l) => sum + l.taxableAmount, 0).toFixed(2))
+    : 0
   const taxableAmount = Math.max(0, Number((rawTaxableAmount - discountTotal).toFixed(2)))
 
   const effectiveTaxFactor = rawTaxableAmount > 0 ? taxableAmount / rawTaxableAmount : 1
-  const rawTaxTotal = Number(draftLines.reduce((sum, l) => sum + l.taxAmount, 0).toFixed(2))
-  const taxTotal = Number((rawTaxTotal * effectiveTaxFactor).toFixed(2))
+  const rawTaxTotal = globalGstEnabled
+    ? Number(draftLines.reduce((sum, l) => sum + l.taxAmount, 0).toFixed(2))
+    : 0
+  const taxTotal = globalGstEnabled ? Number((rawTaxTotal * effectiveTaxFactor).toFixed(2)) : 0
 
   const rawTotal = subtotal - discountTotal + taxTotal
   const grandTotal = Math.round(rawTotal)
