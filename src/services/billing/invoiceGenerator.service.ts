@@ -33,6 +33,8 @@ export interface GenerateInvoiceParams {
   dueDate?: string | undefined
   isPreview?: boolean | undefined
   includePendingEvents?: boolean | undefined
+  billingMode?: 'MONTHLY' | 'SUPPLEMENTARY' | 'FINAL_DISCHARGE' | undefined
+  includeSubscriptions?: boolean | undefined
   performedBy?: string | undefined
 }
 
@@ -181,19 +183,24 @@ export async function generateInvoiceForAccount(
   const billToAddress = primaryPayer?.partyAddress || null
   const billToGstin = primaryPayer?.partyGstin || null
 
-  // 3. Collect Active Subscriptions for the Account
-  const subscriptions = await BillingSubscription.findAll({
-    where: {
-      billingAccountId,
-      isActive: true,
-      status: {
-        [Op.in]: [SubscriptionStatus.ACTIVE, SubscriptionStatus.PAUSED],
-      },
-      startDate: { [Op.lte]: periodEnd },
-      [Op.or]: [{ endDate: null }, { endDate: { [Op.gte]: periodStart } }],
-    },
-    include: [{ model: BillingProduct, as: 'product' }],
-  })
+  // 3. Collect Active Subscriptions for the Account (excluded in SUPPLEMENTARY mode)
+  const shouldIncludeSubscriptions =
+    params.includeSubscriptions !== false && params.billingMode !== 'SUPPLEMENTARY'
+
+  const subscriptions = shouldIncludeSubscriptions
+    ? await BillingSubscription.findAll({
+        where: {
+          billingAccountId,
+          isActive: true,
+          status: {
+            [Op.in]: [SubscriptionStatus.ACTIVE, SubscriptionStatus.PAUSED],
+          },
+          startDate: { [Op.lte]: periodEnd },
+          [Op.or]: [{ endDate: null }, { endDate: { [Op.gte]: periodStart } }],
+        },
+        include: [{ model: BillingProduct, as: 'product' }],
+      })
+    : []
 
   const draftLines: InvoiceLineItemDraft[] = []
   let sortOrder = 0

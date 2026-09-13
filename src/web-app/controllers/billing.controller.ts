@@ -605,6 +605,8 @@ export async function previewInvoice(req: AuthenticatedRequest, res: Response): 
       dueDate: parseResult.data.dueDate,
       isPreview: true,
       includePendingEvents: parseResult.data.includePendingEvents,
+      billingMode: parseResult.data.billingMode,
+      includeSubscriptions: parseResult.data.includeSubscriptions,
       performedBy: req.user?.id,
     })
 
@@ -632,6 +634,8 @@ export async function generateInvoice(req: AuthenticatedRequest, res: Response):
       dueDate: parseResult.data.dueDate,
       isPreview: false,
       includePendingEvents: parseResult.data.includePendingEvents,
+      billingMode: parseResult.data.billingMode,
+      includeSubscriptions: parseResult.data.includeSubscriptions,
       performedBy: req.user?.id,
     })
 
