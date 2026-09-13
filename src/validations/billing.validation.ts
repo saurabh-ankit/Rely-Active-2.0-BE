@@ -162,6 +162,7 @@ export const generateInvoiceSchema = z
     includeSubscriptions: z.boolean().default(true).optional(),
     discountType: z.enum(['FIXED', 'PERCENTAGE']).optional(),
     discountValue: z.number().min(0).optional(),
+    discountNote: z.string().trim().max(500).optional().nullable(),
   })
   .passthrough()
 

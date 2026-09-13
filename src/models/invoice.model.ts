@@ -33,6 +33,7 @@ export interface InvoiceAttributes {
 
   subtotal: number
   discountTotal: number
+  discountNote?: string | null
   taxableAmount: number
   taxTotal: number
   roundingAdjustment: number
@@ -63,6 +64,7 @@ export type InvoiceCreationAttributes = Optional<
   | 'billToGstin'
   | 'subtotal'
   | 'discountTotal'
+  | 'discountNote'
   | 'taxableAmount'
   | 'taxTotal'
   | 'roundingAdjustment'
@@ -103,6 +105,7 @@ export class Invoice
   declare dueDate: Date | string
   declare subtotal: number
   declare discountTotal: number
+  declare discountNote: string | null
   declare taxableAmount: number
   declare taxTotal: number
   declare roundingAdjustment: number
@@ -160,6 +163,7 @@ Invoice.init(
     dueDate: { type: DataTypes.DATEONLY, allowNull: false },
     subtotal: { type: DataTypes.DECIMAL(14, 2), allowNull: false, defaultValue: 0.0 },
     discountTotal: { type: DataTypes.DECIMAL(14, 2), allowNull: false, defaultValue: 0.0 },
+    discountNote: { type: DataTypes.STRING(500), allowNull: true },
     taxableAmount: { type: DataTypes.DECIMAL(14, 2), allowNull: false, defaultValue: 0.0 },
     taxTotal: { type: DataTypes.DECIMAL(14, 2), allowNull: false, defaultValue: 0.0 },
     roundingAdjustment: { type: DataTypes.DECIMAL(6, 2), allowNull: false, defaultValue: 0.0 },

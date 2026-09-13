@@ -37,6 +37,7 @@ export interface GenerateInvoiceParams {
   includeSubscriptions?: boolean | undefined
   discountType?: 'FIXED' | 'PERCENTAGE' | undefined
   discountValue?: number | undefined
+  discountNote?: string | undefined
   performedBy?: string | undefined
 }
 
@@ -79,6 +80,7 @@ export interface InvoiceDraftResult {
   dueDate: string
   subtotal: number
   discountTotal: number
+  discountNote?: string | null
   taxableAmount: number
   taxTotal: number
   roundingAdjustment: number
@@ -339,6 +341,7 @@ export async function generateInvoiceForAccount(
     dueDate,
     subtotal,
     discountTotal,
+    discountNote: params.discountNote || null,
     taxableAmount,
     taxTotal,
     roundingAdjustment,
@@ -378,6 +381,7 @@ export async function generateInvoiceForAccount(
         dueDate,
         subtotal,
         discountTotal,
+        discountNote: params.discountNote || null,
         taxableAmount,
         taxTotal,
         roundingAdjustment,

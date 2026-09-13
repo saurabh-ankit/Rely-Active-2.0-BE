@@ -612,6 +612,7 @@ export async function previewInvoice(req: AuthenticatedRequest, res: Response): 
       includeSubscriptions: parseResult.data.includeSubscriptions,
       discountType: parseResult.data.discountType,
       discountValue: parseResult.data.discountValue,
+      discountNote: parseResult.data.discountNote ?? undefined,
       performedBy: req.user?.id,
     })
 
@@ -643,6 +644,7 @@ export async function generateInvoice(req: AuthenticatedRequest, res: Response):
       includeSubscriptions: parseResult.data.includeSubscriptions,
       discountType: parseResult.data.discountType,
       discountValue: parseResult.data.discountValue,
+      discountNote: parseResult.data.discountNote ?? undefined,
       performedBy: req.user?.id,
     })
 
