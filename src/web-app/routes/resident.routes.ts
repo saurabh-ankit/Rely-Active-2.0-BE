@@ -3,6 +3,7 @@ import {
   createResident,
   deleteResident,
   getAllResidents,
+  getResidentBillingData,
   getResidentById,
   getResidentsByUnit,
   updateResident,
@@ -16,6 +17,11 @@ const uploadResidentPhoto = upload.fields([
   { name: 'avatar', maxCount: 1 },
   { name: 'image', maxCount: 1 },
 ])
+
+// Resident Billing
+router.get('/billing', getResidentBillingData)
+router.get('/billing/:id', getResidentBillingData)
+router.get('/:id/billing', getResidentBillingData)
 
 // Resident Onboarding & Operations
 router.post('/', uploadResidentPhoto, createResident)
