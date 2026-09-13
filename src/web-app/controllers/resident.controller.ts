@@ -15,6 +15,8 @@ import {
   CareTaskAssignment,
   AdditionalTaskCharge,
   CareTask,
+  InventoryStockTransaction,
+  InventoryStockTransactionLine,
   User,
   UserDetail,
 } from '../../models/index.js'
@@ -1285,6 +1287,44 @@ export async function getResidentBillingData(req: Request, res: Response): Promi
       })
     }
 
+    // 3. Inventory Stock Issues (Consumables / Items Assigned to Resident)
+    const inventoryIssues = await InventoryStockTransaction.findAll({
+      where: {
+        residentId: resident.id,
+        transactionType: 'issue',
+        date: {
+          [Op.between]: [monthStartStr, monthEndStr],
+        },
+      },
+      include: [{ model: InventoryStockTransactionLine, as: 'lines' }],
+      order: [['date', 'DESC']],
+    })
+
+    for (const tx of inventoryIssues) {
+      const lines = (tx as any).lines || []
+      const txDateStr = tx.date ? new Date(tx.date).toISOString().slice(0, 10) : monthStartStr
+      const formattedDate = tx.date
+        ? new Date(tx.date).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })
+        : txDateStr
+
+      for (const line of lines) {
+        const lineTotal = Math.round(Number(line.quantity) * Number(line.mrpPrice) * 100) / 100
+        services.push({
+          id: `inventory-issue-${line.id}`,
+          name: line.itemName || 'Inventory Item',
+          category: 'Inventory',
+          description: `Assigned Item (${line.itemName}) · Batch: ${line.batchNumber || 'N/A'} · Tx: ${tx.transactionNumber}`,
+          quantity: Number(line.quantity),
+          price: Number(line.mrpPrice),
+          total: lineTotal,
+          type: 'INVENTORY_ISSUE',
+          isEditable: false,
+          date: txDateStr,
+          formattedDate,
+        })
+      }
+    }
+
     const refundTotal = services
       .filter((s) => s.category === 'Refund' || s.type === 'REFUND' || (Number(s.total) || 0) < 0)
       .reduce((sum, s) => sum + Math.abs(Number(s.total) || 0), 0)
@@ -1327,6 +1367,10 @@ export async function getResidentBillingData(req: Request, res: Response): Promi
           services,
           additionalTasksCount: additionalCharges.length,
           additionalTasksTotal: additionalCharges.reduce((s, c) => s + (Number(c.price) || 0), 0),
+          inventoryItemsCount: services.filter((s) => s.category === 'Inventory').length,
+          inventoryItemsTotal: services
+            .filter((s) => s.category === 'Inventory')
+            .reduce((s, c) => s + (Number(c.total) || 0), 0),
           grossTotal: Math.round(grossTotal * 100) / 100,
           refundTotal: Math.round(refundTotal * 100) / 100,
           subtotal: Math.round(subtotal * 100) / 100,

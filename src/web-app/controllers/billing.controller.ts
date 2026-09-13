@@ -2,6 +2,7 @@ import type { Response } from 'express'
 import type { AuthenticatedRequest } from '../../middlewares/authenticate.js'
 import { Op } from 'sequelize'
 import {
+  AdditionalTaskCharge,
   BillingAccount,
   BillingEvent,
   BillingParty,
@@ -9,11 +10,16 @@ import {
   BillingProduct,
   BillingRun,
   BillingSubscription,
+  CareTask,
   FnbGlobalPackage,
   FnbPropertyPackage,
   FnbResidentPackage,
+  InventoryStockTransaction,
+  InventoryStockTransactionLine,
   Invoice,
   InvoiceLine,
+  Package,
+  PackageSubscription,
   Property,
   PropertyBlock,
   PropertyFloor,
@@ -22,10 +28,13 @@ import {
   UnitResident,
 } from '../../models/index.js'
 import {
+  BillingEventSourceModule,
   BillingEventStatus,
   BillingPartyRole,
   BillingPartyType,
+  BillingProductCategory,
   BillingRunType,
+  ChargeType,
   SubscriptionStatus,
 } from '../../enums/billing.enum.js'
 import {
@@ -1144,6 +1153,219 @@ export async function syncUnitFolioAndSubscriptions(unit: any, primaryResident: 
             }
           } else if (fnbPkg.status === 'paused' && bs.status !== SubscriptionStatus.PAUSED) {
             await bs.update({ status: SubscriptionStatus.PAUSED })
+          }
+        }
+      }
+
+      // 2. Sync Care Packages into BillingSubscription
+      const activeCarePackages = await PackageSubscription.findAll({
+        where: {
+          residentId: residentIds,
+          status: SubscriptionStatus.ACTIVE,
+          isDeleted: false,
+        },
+        include: [{ model: Package, as: 'carePackage' }],
+      })
+
+      if (activeCarePackages.length > 0) {
+        let careProduct = await BillingProduct.findOne({
+          where: { category: BillingProductCategory.CARE, chargeType: ChargeType.SUBSCRIPTION, isActive: true },
+        })
+        if (!careProduct) {
+          careProduct = await BillingProduct.findOne({ where: { category: BillingProductCategory.CARE } })
+        }
+        if (!careProduct && folio.companyId) {
+          careProduct = await BillingProduct.create({
+            companyId: folio.companyId,
+            category: BillingProductCategory.CARE,
+            chargeType: ChargeType.SUBSCRIPTION,
+            productCode: 'PROD-CARE-PKG',
+            productName: 'Care Package Subscription',
+            description: 'Monthly Care Package Subscription',
+            isTaxable: false,
+            defaultTaxRate: 0,
+            isActive: true,
+          })
+        }
+
+        if (careProduct) {
+          for (const careSub of activeCarePackages) {
+            const pkg = (careSub as any).carePackage
+            const pkgName = pkg?.packageName || 'Care Package'
+            const price = Number(pkg?.packageCost || careSub.totalCost || 0)
+
+            const existingCareSub = await BillingSubscription.findOne({
+              where: {
+                billingAccountId: folio.id,
+                productId: careProduct.id,
+                description: { [Op.like]: `%${pkgName}%` },
+              },
+            })
+
+            if (!existingCareSub) {
+              await BillingSubscription.create({
+                billingAccountId: folio.id,
+                unitId: unit.id,
+                productId: careProduct.id,
+                description: `Care Package (${pkgName})`,
+                quantity: 1,
+                unitPrice: price,
+                billingFrequency: 'MONTHLY' as any,
+                prorationPolicy: 'DAILY' as any,
+                startDate: careSub.startDate,
+                endDate: careSub.endDate || null,
+                status: SubscriptionStatus.ACTIVE,
+                isActive: true,
+              })
+            } else if (existingCareSub) {
+              if (
+                existingCareSub.status !== SubscriptionStatus.ACTIVE ||
+                Number(existingCareSub.unitPrice) !== price
+              ) {
+                await existingCareSub.update({
+                  status: SubscriptionStatus.ACTIVE,
+                  unitPrice: price,
+                  description: `Care Package (${pkgName})`,
+                })
+              }
+            }
+          }
+        }
+      }
+
+      // 3. Sync Care Tasks (AdditionalTaskCharge) as unbilled BillingEvents
+      const additionalTaskCharges = await AdditionalTaskCharge.findAll({
+        where: {
+          residentId: residentIds,
+          isDeleted: false,
+        },
+        include: [{ model: CareTask, as: 'feature' }],
+      })
+
+      if (additionalTaskCharges.length > 0) {
+        let careTaskProduct = await BillingProduct.findOne({
+          where: { category: BillingProductCategory.CARE, chargeType: ChargeType.USAGE, isActive: true },
+        })
+        if (!careTaskProduct && folio.companyId) {
+          careTaskProduct = await BillingProduct.create({
+            companyId: folio.companyId,
+            category: BillingProductCategory.CARE,
+            chargeType: ChargeType.USAGE,
+            productCode: 'PROD-CARE-TASK',
+            productName: 'Additional Care Task',
+            description: 'Additional Care Task Session',
+            isTaxable: false,
+            defaultTaxRate: 0,
+            isActive: true,
+          })
+        }
+
+        if (careTaskProduct) {
+          for (const charge of additionalTaskCharges) {
+            const existingEvent = await BillingEvent.findOne({
+              where: {
+                sourceModule: BillingEventSourceModule.CARE,
+                sourceId: charge.id,
+              },
+            })
+
+            if (!existingEvent) {
+              const unitPrice =
+                charge.unitPrice && Number(charge.unitPrice) > 0
+                  ? Number(charge.unitPrice)
+                  : Number(charge.price)
+              const qty = unitPrice > 0 ? Math.round(Number(charge.price) / unitPrice) || 1 : 1
+              const taskName = charge.taskName || charge.feature?.careTaskName || 'Additional Care Task'
+              const serviceDate = charge.completedAt
+                ? new Date(charge.completedAt).toISOString().slice(0, 10)
+                : new Date(charge.createdAt).toISOString().slice(0, 10)
+
+              await BillingEvent.create({
+                billingAccountId: folio.id,
+                unitId: unit.id,
+                residentId: charge.residentId,
+                propertyId: folio.propertyId,
+                sourceModule: BillingEventSourceModule.CARE,
+                sourceType: 'ADDITIONAL_TASK',
+                sourceId: charge.id,
+                productId: careTaskProduct.id,
+                chargeType: 'USAGE',
+                description: taskName,
+                quantity: qty,
+                unitPrice,
+                amount: Number(charge.price),
+                serviceDate,
+                status: BillingEventStatus.PENDING,
+              })
+            }
+          }
+        }
+      }
+
+      // 4. Sync Inventory items assigned to residents as unbilled BillingEvents
+      const inventoryTransactions = await InventoryStockTransaction.findAll({
+        where: {
+          residentId: residentIds,
+          transactionType: 'issue',
+        },
+        include: [{ model: InventoryStockTransactionLine, as: 'lines' }],
+      })
+
+      if (inventoryTransactions.length > 0) {
+        let consumableProduct = await BillingProduct.findOne({
+          where: { category: BillingProductCategory.CONSUMABLE, chargeType: ChargeType.USAGE, isActive: true },
+        })
+        if (!consumableProduct && folio.companyId) {
+          consumableProduct = await BillingProduct.create({
+            companyId: folio.companyId,
+            category: BillingProductCategory.CONSUMABLE,
+            chargeType: ChargeType.USAGE,
+            productCode: 'PROD-CONSUMABLE',
+            productName: 'Inventory Consumable',
+            description: 'Inventory Consumable Item',
+            isTaxable: false,
+            defaultTaxRate: 0,
+            isActive: true,
+          })
+        }
+
+        if (consumableProduct) {
+          for (const tx of inventoryTransactions) {
+            const lines = (tx as any).lines || []
+            for (const line of lines) {
+              const existingEvent = await BillingEvent.findOne({
+                where: {
+                  sourceModule: BillingEventSourceModule.INVENTORY,
+                  sourceId: line.id,
+                },
+              })
+
+              if (!existingEvent) {
+                const lineAmount = Number(line.quantity) * Number(line.mrpPrice)
+                const desc = `${line.itemName || 'Inventory Item'}${line.batchNumber ? ` (Batch: ${line.batchNumber})` : ''}`
+                const serviceDate = tx.date
+                  ? new Date(tx.date).toISOString().slice(0, 10)
+                  : new Date().toISOString().slice(0, 10)
+
+                await BillingEvent.create({
+                  billingAccountId: folio.id,
+                  unitId: unit.id,
+                  residentId: tx.residentId!,
+                  propertyId: folio.propertyId,
+                  sourceModule: BillingEventSourceModule.INVENTORY,
+                  sourceType: 'INVENTORY_ISSUE',
+                  sourceId: line.id,
+                  productId: consumableProduct.id,
+                  chargeType: 'USAGE',
+                  description: desc,
+                  quantity: Number(line.quantity),
+                  unitPrice: Number(line.mrpPrice),
+                  amount: lineAmount,
+                  serviceDate,
+                  status: BillingEventStatus.PENDING,
+                })
+              }
+            }
           }
         }
       }

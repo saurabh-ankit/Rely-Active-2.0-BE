@@ -139,6 +139,13 @@ import { Payment } from './payment.model.js'
 import { PaymentAllocation } from './paymentAllocation.model.js'
 import { BillingRun } from './billingRun.model.js'
 import { BillingLedgerEntry } from './billingLedgerEntry.model.js'
+import {
+  InventoryStock,
+  InventoryPurchaseOrder,
+  InventoryPurchaseOrderLine,
+  InventoryStockTransaction,
+  InventoryStockTransactionLine,
+} from './inventoryStock.model.js'
 
 // ── F&B Meal Slot associations ──────────────────────────────────────────────
 FnbGlobalMealSlot.hasMany(FnbPropertyMealSlot, { foreignKey: 'globalMealSlotId', as: 'propertyMealSlots' })
@@ -802,6 +809,25 @@ ResidentCareTaskCompletion.belongsTo(Property, { foreignKey: 'propertyId', as: '
 User.hasMany(ResidentCareTaskCompletion, { foreignKey: 'completedBy', as: 'completedCareTaskRecords' })
 ResidentCareTaskCompletion.belongsTo(User, { foreignKey: 'completedBy', as: 'completedByUser' })
 
+// ── Inventory Stock Transactions & Billing ─────────────────────────────────────
+InventoryStockTransaction.hasMany(InventoryStockTransactionLine, {
+  foreignKey: 'transactionId',
+  as: 'lines',
+})
+InventoryStockTransactionLine.belongsTo(InventoryStockTransaction, {
+  foreignKey: 'transactionId',
+  as: 'transaction',
+})
+
+Resident.hasMany(InventoryStockTransaction, {
+  foreignKey: 'residentId',
+  as: 'inventoryTransactions',
+})
+InventoryStockTransaction.belongsTo(Resident, {
+  foreignKey: 'residentId',
+  as: 'resident',
+})
+
 export {
   GuestMaster,
   BaseModel,
@@ -961,4 +987,4 @@ export {
   InventoryPurchaseOrderLine,
   InventoryStockTransaction,
   InventoryStockTransactionLine,
-} from './inventoryStock.model.js'
+}
