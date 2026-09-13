@@ -496,16 +496,32 @@ export async function ingestEvent(req: AuthenticatedRequest, res: Response): Pro
 
     // If billingAccountId not provided, resolve account from unitId and residentId
     let accountId = data.billingAccountId
-    if (!accountId) {
-      const resolved = await resolveBillingAccount(data.unitId, data.residentId)
-      if (!resolved) {
-        res.status(400).json({
-          success: false,
-          message: `No active billing account found for unit ${data.unitId}. Please create a folio first.`,
-        })
-        return
+    let account: BillingAccount | null = null
+    if (accountId) {
+      account = await BillingAccount.findByPk(accountId)
+    } else {
+      account = await resolveBillingAccount(data.unitId, data.residentId ?? undefined)
+      if (account) {
+        accountId = account.id
       }
-      accountId = resolved.id
+    }
+
+    if (!accountId || !account) {
+      res.status(400).json({
+        success: false,
+        message: `No active billing account found for unit ${data.unitId}. Please create a folio first.`,
+      })
+      return
+    }
+
+    const propertyId = data.propertyId || account.propertyId
+    const residentId = data.residentId || account.primaryResidentId
+    if (!residentId) {
+      res.status(400).json({
+        success: false,
+        message: 'A resident must be assigned to this charge or billing account.',
+      })
+      return
     }
 
     const amount =
@@ -516,8 +532,8 @@ export async function ingestEvent(req: AuthenticatedRequest, res: Response): Pro
     const event = await BillingEvent.create({
       billingAccountId: accountId,
       unitId: data.unitId,
-      residentId: data.residentId,
-      propertyId: data.propertyId,
+      residentId,
+      propertyId,
       sourceModule: data.sourceModule,
       sourceType: data.sourceType,
       sourceId: data.sourceId || null,
