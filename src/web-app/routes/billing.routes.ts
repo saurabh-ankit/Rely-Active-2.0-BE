@@ -15,6 +15,7 @@ import {
   getLedgerStatement,
   getPendingEvents,
   getSubscriptions,
+  getTaxSettings,
   getUnitBilling360,
   getUnitsBillingSummary,
   ingestEvent,
@@ -24,6 +25,7 @@ import {
   triggerBatchRun,
   updateBillingAccount,
   updateBillingParty,
+  updateTaxSettings,
 } from '../controllers/billing.controller.js'
 
 const router = express.Router()
@@ -67,6 +69,10 @@ router.get('/invoices/:id', getInvoiceById)
 // ── 6. Batch Billing Runs ───────────────────────────────────────────────────
 router.post('/runs', triggerBatchRun)
 router.get('/runs', getBillingRuns)
+
+// ── 7. Global GST / Tax Settings ────────────────────────────────────────────
+router.get('/settings/tax', getTaxSettings)
+router.put('/settings/tax', updateTaxSettings)
 
 export default router
 

@@ -11,6 +11,8 @@ import {
   BillingRun,
   BillingSubscription,
   CareTask,
+  Company,
+  CompanyCustomField,
   FnbGlobalPackage,
   FnbPropertyPackage,
   FnbResidentPackage,
@@ -45,6 +47,7 @@ import {
   generateInvoiceSchema,
   ingestBillingEventSchema,
   pauseSubscriptionSchema,
+  taxSettingsSchema,
   triggerBillingRunSchema,
   updateBillingAccountSchema,
   updateBillingPartySchema,
@@ -607,6 +610,8 @@ export async function previewInvoice(req: AuthenticatedRequest, res: Response): 
       includePendingEvents: parseResult.data.includePendingEvents,
       billingMode: parseResult.data.billingMode,
       includeSubscriptions: parseResult.data.includeSubscriptions,
+      discountType: parseResult.data.discountType,
+      discountValue: parseResult.data.discountValue,
       performedBy: req.user?.id,
     })
 
@@ -636,6 +641,8 @@ export async function generateInvoice(req: AuthenticatedRequest, res: Response):
       includePendingEvents: parseResult.data.includePendingEvents,
       billingMode: parseResult.data.billingMode,
       includeSubscriptions: parseResult.data.includeSubscriptions,
+      discountType: parseResult.data.discountType,
+      discountValue: parseResult.data.discountValue,
       performedBy: req.user?.id,
     })
 
@@ -1521,5 +1528,119 @@ export async function getUnitBilling360(req: AuthenticatedRequest, res: Response
   } catch (error) {
     logger.error({ error }, 'Failed to get unit 360 billing details')
     res.status(500).json({ success: false, message: error instanceof Error ? error.message : 'Internal server error' })
+  }
+}
+
+// ── 7. GLOBAL GST / TAX SETTINGS ────────────────────────────────────────────
+
+export async function getTaxSettings(req: AuthenticatedRequest, res: Response): Promise<void> {
+  try {
+    const company = await Company.findOne({ where: { isDeleted: false } })
+    const companyId = company?.id
+
+    let gstEnabled = true
+    let defaultTaxRate = 18
+    let cgstRate = 9
+    let sgstRate = 9
+    let igstRate = 18
+
+    if (companyId) {
+      const customFields = await CompanyCustomField.findAll({
+        where: { companyId, isDeleted: false },
+      })
+      for (const cf of customFields) {
+        if (cf.fieldName === 'gst_enabled') gstEnabled = cf.fieldValue !== 'false'
+        if (cf.fieldName === 'gst_rate') defaultTaxRate = Number(cf.fieldValue) || 18
+        if (cf.fieldName === 'cgst_rate') cgstRate = Number(cf.fieldValue) || 9
+        if (cf.fieldName === 'sgst_rate') sgstRate = Number(cf.fieldValue) || 9
+        if (cf.fieldName === 'igst_rate') igstRate = Number(cf.fieldValue) || 18
+      }
+    }
+
+    res.json({
+      success: true,
+      data: {
+        gstEnabled,
+        defaultTaxRate,
+        cgstRate,
+        sgstRate,
+        igstRate,
+        companyGstNumber: company?.company_gst_number || '',
+      },
+    })
+  } catch (error: unknown) {
+    const msg = error instanceof Error ? error.message : 'Internal error'
+    logger.error({ error }, 'Failed to get tax settings')
+    res.status(500).json({ success: false, message: msg })
+  }
+}
+
+export async function updateTaxSettings(req: AuthenticatedRequest, res: Response): Promise<void> {
+  try {
+    const parseResult = taxSettingsSchema.safeParse(req.body)
+    if (!parseResult.success) {
+      res.status(400).json({ success: false, errors: parseResult.error.flatten().fieldErrors })
+      return
+    }
+
+    const { gstEnabled, defaultTaxRate, cgstRate, sgstRate, companyGstNumber } = parseResult.data
+
+    const company = await Company.findOne({ where: { isDeleted: false } })
+    if (!company) {
+      res.status(404).json({ success: false, message: 'No active company profile found' })
+      return
+    }
+
+    if (companyGstNumber !== undefined && companyGstNumber !== null) {
+      company.company_gst_number = companyGstNumber
+      await company.save()
+    }
+
+    const fieldsToUpsert: Array<{ fieldName: string; fieldLabel: string; fieldValue: string }> = [
+      { fieldName: 'gst_enabled', fieldLabel: 'GST Enabled', fieldValue: String(gstEnabled) },
+      { fieldName: 'gst_rate', fieldLabel: 'Default GST Rate (%)', fieldValue: String(defaultTaxRate) },
+      { fieldName: 'cgst_rate', fieldLabel: 'CGST Rate (%)', fieldValue: String(cgstRate) },
+      { fieldName: 'sgst_rate', fieldLabel: 'SGST Rate (%)', fieldValue: String(sgstRate) },
+      { fieldName: 'igst_rate', fieldLabel: 'IGST Rate (%)', fieldValue: String(cgstRate + sgstRate) },
+    ]
+
+    for (const f of fieldsToUpsert) {
+      const existing = await CompanyCustomField.findOne({
+        where: { companyId: company.id, fieldName: f.fieldName, isDeleted: false },
+      })
+      if (existing) {
+        existing.fieldValue = f.fieldValue
+        await existing.save()
+      } else {
+        await CompanyCustomField.create({
+          companyId: company.id,
+          fieldName: f.fieldName,
+          fieldLabel: f.fieldLabel,
+          fieldType: 'number',
+          fieldValue: f.fieldValue,
+          isActive: true,
+          isDeleted: false,
+          createdBy: req.user?.id || null,
+          updatedBy: req.user?.id || null,
+        })
+      }
+    }
+
+    res.json({
+      success: true,
+      message: 'Global GST tax settings updated successfully',
+      data: {
+        gstEnabled,
+        defaultTaxRate,
+        cgstRate,
+        sgstRate,
+        igstRate: cgstRate + sgstRate,
+        companyGstNumber: company.company_gst_number || '',
+      },
+    })
+  } catch (error: unknown) {
+    const msg = error instanceof Error ? error.message : 'Internal error'
+    logger.error({ error }, 'Failed to update tax settings')
+    res.status(500).json({ success: false, message: msg })
   }
 }

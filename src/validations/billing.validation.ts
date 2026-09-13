@@ -160,6 +160,18 @@ export const generateInvoiceSchema = z
     includePendingEvents: z.boolean().default(true).optional(),
     billingMode: z.enum(['MONTHLY', 'SUPPLEMENTARY', 'FINAL_DISCHARGE']).optional(),
     includeSubscriptions: z.boolean().default(true).optional(),
+    discountType: z.enum(['FIXED', 'PERCENTAGE']).optional(),
+    discountValue: z.number().min(0).optional(),
+  })
+  .passthrough()
+
+export const taxSettingsSchema = z
+  .object({
+    gstEnabled: z.boolean().default(true),
+    defaultTaxRate: z.number().min(0).max(100).default(18),
+    cgstRate: z.number().min(0).max(100).default(9),
+    sgstRate: z.number().min(0).max(100).default(9),
+    companyGstNumber: z.string().optional().nullable(),
   })
   .passthrough()
 

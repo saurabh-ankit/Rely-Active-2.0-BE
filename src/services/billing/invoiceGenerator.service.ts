@@ -35,6 +35,8 @@ export interface GenerateInvoiceParams {
   includePendingEvents?: boolean | undefined
   billingMode?: 'MONTHLY' | 'SUPPLEMENTARY' | 'FINAL_DISCHARGE' | undefined
   includeSubscriptions?: boolean | undefined
+  discountType?: 'FIXED' | 'PERCENTAGE' | undefined
+  discountValue?: number | undefined
   performedBy?: string | undefined
 }
 
@@ -291,12 +293,29 @@ export async function generateInvoiceForAccount(
     })
   }
 
-  // 5. Aggregate Totals
+  // 5. Aggregate Totals & Discount Calculation
   const subtotal = Number(draftLines.reduce((sum, l) => sum + l.subtotal, 0).toFixed(2))
-  const discountTotal = 0
-  const taxableAmount = Number(draftLines.reduce((sum, l) => sum + l.taxableAmount, 0).toFixed(2))
-  const taxTotal = Number(draftLines.reduce((sum, l) => sum + l.taxAmount, 0).toFixed(2))
-  const rawTotal = subtotal + taxTotal
+
+  let discountTotal = 0
+  if (params.discountValue && params.discountValue > 0) {
+    if (params.discountType === 'PERCENTAGE') {
+      discountTotal = Number(((subtotal * params.discountValue) / 100).toFixed(2))
+    } else {
+      discountTotal = Number(Number(params.discountValue).toFixed(2))
+    }
+    if (discountTotal > subtotal) {
+      discountTotal = subtotal
+    }
+  }
+
+  const rawTaxableAmount = Number(draftLines.reduce((sum, l) => sum + l.taxableAmount, 0).toFixed(2))
+  const taxableAmount = Math.max(0, Number((rawTaxableAmount - discountTotal).toFixed(2)))
+
+  const effectiveTaxFactor = rawTaxableAmount > 0 ? taxableAmount / rawTaxableAmount : 1
+  const rawTaxTotal = Number(draftLines.reduce((sum, l) => sum + l.taxAmount, 0).toFixed(2))
+  const taxTotal = Number((rawTaxTotal * effectiveTaxFactor).toFixed(2))
+
+  const rawTotal = subtotal - discountTotal + taxTotal
   const grandTotal = Math.round(rawTotal)
   const roundingAdjustment = Number((grandTotal - rawTotal).toFixed(2))
   const amountPaid = 0
