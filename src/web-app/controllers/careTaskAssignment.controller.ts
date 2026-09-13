@@ -16,7 +16,16 @@ import {
   CarePackageFeaturesMap,
   SubscriptionStatus,
   ResidentCareTaskCompletion,
+  BillingAccount,
+  BillingEvent,
+  BillingProduct,
 } from '../../models/index.js'
+import {
+  BillingProductCategory,
+  BillingEventStatus,
+  BillingEventSourceModule,
+  ChargeType,
+} from '../../enums/billing.enum.js'
 import type {
   CreateCareTaskAssignmentInput,
   UpdateCareTaskAssignmentInput,
@@ -1571,6 +1580,67 @@ export async function completeCareTask(req: Request, res: Response): Promise<voi
             charged = false
           }
         }
+      }
+    }
+
+    // ── Emit real-time unbilled BillingEvent if charge was incurred ──
+    if (charged && chargeRecord) {
+      try {
+        const resObj = await Resident.findByPk(assignment.residentId)
+        if (resObj && resObj.unitId) {
+          const billingAccount = await BillingAccount.findOne({
+            where: { unitId: resObj.unitId, isActive: true },
+          })
+          if (billingAccount) {
+            let careTaskProduct = await BillingProduct.findOne({
+              where: { category: BillingProductCategory.CARE, chargeType: ChargeType.USAGE, isActive: true },
+            })
+            if (!careTaskProduct && billingAccount.companyId) {
+              careTaskProduct = await BillingProduct.create({
+                companyId: billingAccount.companyId,
+                category: BillingProductCategory.CARE,
+                chargeType: ChargeType.USAGE,
+                productCode: 'PROD-CARE-TASK',
+                productName: 'Additional Care Task',
+                description: 'Additional Care Task Session',
+                isTaxable: false,
+                defaultTaxRate: 0,
+                isActive: true,
+              })
+            }
+            if (careTaskProduct) {
+              const unitPrice =
+                chargeRecord.unitPrice && Number(chargeRecord.unitPrice) > 0
+                  ? Number(chargeRecord.unitPrice)
+                  : Number(chargeRecord.price)
+              const qty = unitPrice > 0 ? Math.round(Number(chargeRecord.price) / unitPrice) || 1 : 1
+              const taskName = chargeRecord.taskName || assignment.task?.careTaskName || 'Additional Care Task'
+              const serviceDate = chargeRecord.completedAt
+                ? new Date(chargeRecord.completedAt).toISOString().slice(0, 10)
+                : new Date().toISOString().slice(0, 10)
+
+              await BillingEvent.create({
+                billingAccountId: billingAccount.id,
+                unitId: resObj.unitId,
+                residentId: chargeRecord.residentId,
+                propertyId: billingAccount.propertyId,
+                sourceModule: BillingEventSourceModule.CARE,
+                sourceType: 'ADDITIONAL_TASK',
+                sourceId: chargeRecord.id,
+                productId: careTaskProduct.id,
+                chargeType: 'USAGE',
+                description: taskName,
+                quantity: qty,
+                unitPrice,
+                amount: Number(chargeRecord.price),
+                serviceDate,
+                status: BillingEventStatus.PENDING,
+              })
+            }
+          }
+        }
+      } catch (billingErr) {
+        console.error('Failed to ingest real-time billing event for care task completion:', billingErr)
       }
     }
 

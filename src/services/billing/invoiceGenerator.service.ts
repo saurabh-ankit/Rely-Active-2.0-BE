@@ -32,6 +32,7 @@ export interface GenerateInvoiceParams {
   issueDate?: string | undefined
   dueDate?: string | undefined
   isPreview?: boolean | undefined
+  includePendingEvents?: boolean | undefined
   performedBy?: string | undefined
 }
 
@@ -238,15 +239,18 @@ export async function generateInvoiceForAccount(
   }
 
   // 4. Collect Pending Usage Events for the Account
-  const events = await BillingEvent.findAll({
-    where: {
-      billingAccountId,
-      status: BillingEventStatus.PENDING,
-      serviceDate: { [Op.lte]: periodEnd },
-    },
-    include: [{ model: BillingProduct, as: 'product' }],
-    order: [['serviceDate', 'ASC']],
-  })
+  const events =
+    params.includePendingEvents !== false
+      ? await BillingEvent.findAll({
+          where: {
+            billingAccountId,
+            status: BillingEventStatus.PENDING,
+            serviceDate: { [Op.lte]: periodEnd },
+          },
+          include: [{ model: BillingProduct, as: 'product' }],
+          order: [['serviceDate', 'ASC']],
+        })
+      : []
 
   for (const ev of events) {
     sortOrder += 1

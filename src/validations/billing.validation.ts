@@ -157,6 +157,7 @@ export const generateInvoiceSchema = z
     issueDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Issue date must be YYYY-MM-DD').optional(),
     dueDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Due date must be YYYY-MM-DD').optional(),
     isPreview: z.boolean().default(false),
+    includePendingEvents: z.boolean().default(true).optional(),
   })
   .passthrough()
 
