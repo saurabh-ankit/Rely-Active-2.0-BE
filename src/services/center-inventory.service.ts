@@ -934,6 +934,12 @@ export async function assignItems(locationId: string, input: AssignmentInput, us
                   )
                 }
                 if (consumableProduct) {
+                  const packQty =
+                    Number(receipt.packQuantity) && Number(receipt.packQuantity) > 0
+                      ? Number(receipt.packQuantity)
+                      : 1
+                  const baseUnitPrice = Math.round((Number(receipt.mrpPrice) / packQty) * 100) / 100
+
                   await BillingEvent.create(
                     {
                       billingAccountId: billingAccount.id,
@@ -947,7 +953,7 @@ export async function assignItems(locationId: string, input: AssignmentInput, us
                       chargeType: 'USAGE',
                       description: `${receipt.itemName || 'Inventory Item'}${receipt.batchNumber ? ` (Batch: ${receipt.batchNumber})` : ''}`,
                       quantity,
-                      unitPrice: receipt.mrpPrice,
+                      unitPrice: baseUnitPrice,
                       amount: mrpAmount,
                       serviceDate: input.date,
                       status: BillingEventStatus.PENDING,

@@ -1308,14 +1308,18 @@ export async function getResidentBillingData(req: Request, res: Response): Promi
         : txDateStr
 
       for (const line of lines) {
-        const lineTotal = Math.round(Number(line.quantity) * Number(line.mrpPrice) * 100) / 100
+        const packQty = Number(line.packQuantity) && Number(line.packQuantity) > 0 ? Number(line.packQuantity) : 1
+        const baseUnitPrice = Math.round((Number(line.mrpPrice) / packQty) * 100) / 100
+        const lineTotal = Math.round(((Number(line.quantity) / packQty) * Number(line.mrpPrice)) * 100) / 100
+        const unitLabel = line.packUnit ? ` ${line.packUnit}` : ''
+
         services.push({
           id: `inventory-issue-${line.id}`,
           name: line.itemName || 'Inventory Item',
           category: 'Inventory',
           description: `Assigned Item (${line.itemName}) · Batch: ${line.batchNumber || 'N/A'} · Tx: ${tx.transactionNumber}`,
-          quantity: Number(line.quantity),
-          price: Number(line.mrpPrice),
+          quantity: `${line.quantity}${unitLabel}`,
+          price: baseUnitPrice,
           total: lineTotal,
           type: 'INVENTORY_ISSUE',
           isEditable: false,

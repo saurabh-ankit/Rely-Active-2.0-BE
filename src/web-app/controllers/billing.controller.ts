@@ -1333,6 +1333,15 @@ export async function syncUnitFolioAndSubscriptions(unit: any, primaryResident: 
           for (const tx of inventoryTransactions) {
             const lines = (tx as any).lines || []
             for (const line of lines) {
+              const packQty = Number(line.packQuantity) && Number(line.packQuantity) > 0 ? Number(line.packQuantity) : 1
+              const baseUnitPrice = Math.round((Number(line.mrpPrice) / packQty) * 100) / 100
+              const lineAmount = Math.round(((Number(line.quantity) / packQty) * Number(line.mrpPrice)) * 100) / 100
+              const unitLabel = line.packUnit ? ` ${line.packUnit}` : ''
+              const desc = `${line.itemName || 'Inventory Item'}${line.batchNumber ? ` (Batch: ${line.batchNumber})` : ''}`
+              const serviceDate = tx.date
+                ? new Date(tx.date).toISOString().slice(0, 10)
+                : new Date().toISOString().slice(0, 10)
+
               const existingEvent = await BillingEvent.findOne({
                 where: {
                   sourceModule: BillingEventSourceModule.INVENTORY,
@@ -1341,12 +1350,6 @@ export async function syncUnitFolioAndSubscriptions(unit: any, primaryResident: 
               })
 
               if (!existingEvent) {
-                const lineAmount = Number(line.quantity) * Number(line.mrpPrice)
-                const desc = `${line.itemName || 'Inventory Item'}${line.batchNumber ? ` (Batch: ${line.batchNumber})` : ''}`
-                const serviceDate = tx.date
-                  ? new Date(tx.date).toISOString().slice(0, 10)
-                  : new Date().toISOString().slice(0, 10)
-
                 await BillingEvent.create({
                   billingAccountId: folio.id,
                   unitId: unit.id,
@@ -1359,10 +1362,16 @@ export async function syncUnitFolioAndSubscriptions(unit: any, primaryResident: 
                   chargeType: 'USAGE',
                   description: desc,
                   quantity: Number(line.quantity),
-                  unitPrice: Number(line.mrpPrice),
+                  unitPrice: baseUnitPrice,
                   amount: lineAmount,
                   serviceDate,
                   status: BillingEventStatus.PENDING,
+                })
+              } else if (existingEvent.status === BillingEventStatus.PENDING) {
+                await existingEvent.update({
+                  quantity: Number(line.quantity),
+                  unitPrice: baseUnitPrice,
+                  amount: lineAmount,
                 })
               }
             }
