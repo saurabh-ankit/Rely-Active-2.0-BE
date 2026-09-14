@@ -34,6 +34,7 @@ export interface BillingEventAttributes {
   invoiceLineId?: string | null
   cancellationReason?: string | null
   cancelledAt?: Date | null
+  attachments?: Array<{ name: string; url: string; contentType?: string; size?: number }> | null
   createdAt?: Date
 }
 
@@ -51,6 +52,7 @@ export type BillingEventCreationAttributes = Optional<
   | 'invoiceLineId'
   | 'cancellationReason'
   | 'cancelledAt'
+  | 'attachments'
   | 'createdAt'
 >
 
@@ -79,6 +81,7 @@ export class BillingEvent
   declare invoiceLineId: string | null
   declare cancellationReason: string | null
   declare cancelledAt: Date | null
+  declare attachments: Array<{ name: string; url: string; contentType?: string; size?: number }> | null
   declare readonly createdAt: Date
 
   // Associations
@@ -180,6 +183,10 @@ BillingEvent.init(
       type: DataTypes.DATE,
       allowNull: true,
     },
+    attachments: {
+      type: DataTypes.JSON,
+      allowNull: true,
+    },
     createdAt: {
       type: DataTypes.DATE,
       allowNull: false,
@@ -194,4 +201,3 @@ BillingEvent.init(
 )
 
 export default BillingEvent
-

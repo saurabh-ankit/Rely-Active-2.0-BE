@@ -147,6 +147,20 @@ export const cancelBillingEventSchema = z
   })
   .passthrough()
 
+export const updateBillingEventSchema = z
+  .object({
+    residentId: z.string().uuid('Valid resident ID is required').optional().nullable(),
+    sourceModule: z.nativeEnum(BillingEventSourceModule).optional(),
+    sourceType: z.string().trim().min(1).optional(),
+    chargeType: z.string().trim().min(1).optional(),
+    description: z.string().trim().min(1, 'Description is required').optional(),
+    quantity: z.number().positive().optional(),
+    unitPrice: z.number().min(0).optional(),
+    amount: z.number().min(0).optional(),
+    serviceDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Service date must be YYYY-MM-DD').optional(),
+  })
+  .passthrough()
+
 // ── Invoicing Validations ──────────────────────────────────────────────────
 
 export const generateInvoiceSchema = z
@@ -185,4 +199,3 @@ export const triggerBillingRunSchema = z
     runType: z.nativeEnum(BillingRunType).default(BillingRunType.MANUAL),
   })
   .passthrough()
-

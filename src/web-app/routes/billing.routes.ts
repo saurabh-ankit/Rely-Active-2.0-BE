@@ -1,4 +1,5 @@
 import express from 'express'
+import multer from 'multer'
 import { authenticate } from '../../middlewares/authenticate.js'
 import {
   addBillingParty,
@@ -26,9 +27,15 @@ import {
   updateBillingAccount,
   updateBillingParty,
   updateTaxSettings,
+  updateEvent,
+  uploadEventAttachment,
 } from '../controllers/billing.controller.js'
 
 const router = express.Router()
+const eventBillUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 10 * 1024 * 1024, files: 1 },
+}).single('file')
 
 // Authenticate all billing routes
 router.use(authenticate)
@@ -57,6 +64,8 @@ router.delete('/subscriptions/:id', cancelSubscription)
 
 // ── 4. Usage Events (Consumption Facts) ──────────────────────────────────────
 router.post('/events', ingestEvent)
+router.put('/events/:eventId', updateEvent)
+router.post('/events/:eventId/attachments', eventBillUpload, uploadEventAttachment)
 router.get('/accounts/:accountId/events/pending', getPendingEvents)
 router.put('/events/:eventId/cancel', cancelEvent)
 
@@ -75,4 +84,3 @@ router.get('/settings/tax', getTaxSettings)
 router.put('/settings/tax', updateTaxSettings)
 
 export default router
-

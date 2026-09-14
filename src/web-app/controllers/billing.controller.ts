@@ -46,6 +46,7 @@ import {
   createSubscriptionSchema,
   generateInvoiceSchema,
   ingestBillingEventSchema,
+  updateBillingEventSchema,
   pauseSubscriptionSchema,
   taxSettingsSchema,
   triggerBillingRunSchema,
@@ -62,6 +63,7 @@ import {
   processBatchBilling,
 } from '../../queues/billing.queue.js'
 import { logger } from '../../config/logger.js'
+import { uploadFileToS3 } from '../../middlewares/s3/index.js'
 
 // ── 1. BILLING ACCOUNTS ──────────────────────────────────────────────────────
 
@@ -551,6 +553,71 @@ export async function ingestEvent(req: AuthenticatedRequest, res: Response): Pro
   } catch (error) {
     logger.error({ error }, 'Failed to ingest billing event')
     res.status(500).json({ success: false, message: 'Internal server error' })
+  }
+}
+
+export async function updateEvent(req: AuthenticatedRequest, res: Response): Promise<void> {
+  try {
+    const parseResult = updateBillingEventSchema.safeParse(req.body)
+    if (!parseResult.success) {
+      res.status(400).json({ success: false, errors: parseResult.error.flatten().fieldErrors })
+      return
+    }
+
+    const event = await BillingEvent.findByPk(String(req.params.eventId || ''))
+    if (!event) {
+      res.status(404).json({ success: false, message: 'Billing event not found' })
+      return
+    }
+    if (event.status !== BillingEventStatus.PENDING || event.sourceModule !== BillingEventSourceModule.MANUAL) {
+      res.status(409).json({ success: false, message: 'Only pending manual charges can be edited' })
+      return
+    }
+
+    const data = parseResult.data
+    const quantity = data.quantity ?? Number(event.quantity)
+    const unitPrice = data.unitPrice ?? Number(event.unitPrice)
+    const updates: Record<string, unknown> = { amount: data.amount ?? Number((quantity * unitPrice).toFixed(2)) }
+    if (data.residentId !== undefined) updates.residentId = data.residentId
+    if (data.sourceModule !== undefined) updates.sourceModule = data.sourceModule
+    if (data.sourceType !== undefined) updates.sourceType = data.sourceType
+    if (data.chargeType !== undefined) updates.chargeType = data.chargeType
+    if (data.description !== undefined) updates.description = data.description
+    if (data.quantity !== undefined) updates.quantity = data.quantity
+    if (data.unitPrice !== undefined) updates.unitPrice = data.unitPrice
+    if (data.serviceDate !== undefined) updates.serviceDate = data.serviceDate
+    await event.update(updates)
+    res.json({ success: true, data: event })
+  } catch (error) {
+    logger.error({ error }, 'Failed to update billing event')
+    res.status(500).json({ success: false, message: 'Internal server error' })
+  }
+}
+
+export async function uploadEventAttachment(req: AuthenticatedRequest, res: Response): Promise<void> {
+  try {
+    const event = await BillingEvent.findByPk(String(req.params.eventId || ''))
+    if (!event) {
+      res.status(404).json({ success: false, message: 'Billing event not found' })
+      return
+    }
+    if (event.status !== BillingEventStatus.PENDING || event.sourceModule !== BillingEventSourceModule.MANUAL) {
+      res.status(409).json({ success: false, message: 'Bills can only be added to pending manual charges' })
+      return
+    }
+    if (!req.file) {
+      res.status(400).json({ success: false, message: 'A bill or receipt file is required' })
+      return
+    }
+
+    const upload = await uploadFileToS3(req.file, 'billing/event-bills')
+    const attachments = Array.isArray(event.attachments) ? event.attachments : []
+    attachments.push({ name: req.file.originalname, url: upload.location, contentType: upload.contentType, size: upload.size })
+    await event.update({ attachments })
+    res.status(201).json({ success: true, data: event })
+  } catch (error) {
+    logger.error({ error }, 'Failed to upload billing event attachment')
+    res.status(500).json({ success: false, message: error instanceof Error ? error.message : 'Failed to upload bill' })
   }
 }
 
