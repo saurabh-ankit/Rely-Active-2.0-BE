@@ -31,6 +31,11 @@ export interface TicketAttributes extends BaseAttributes {
   closedAt?: Date | null
   resolutionNotes?: string | null
   attachments?: string[] | Record<string, unknown> | null
+  workStartedAt?: Date | null
+  workStartedByUserId?: string | null
+  completedAt?: Date | null
+  completedByUserId?: string | null
+  invoiceAmount?: string | number | null
 }
 
 export type TicketCreationAttributes = Optional<
@@ -57,6 +62,11 @@ export type TicketCreationAttributes = Optional<
   | 'closedAt'
   | 'resolutionNotes'
   | 'attachments'
+  | 'workStartedAt'
+  | 'workStartedByUserId'
+  | 'completedAt'
+  | 'completedByUserId'
+  | 'invoiceAmount'
   | 'createdBy'
   | 'updatedBy'
   | 'createdAt'
@@ -91,6 +101,12 @@ export class Ticket extends BaseModel<TicketAttributes, TicketCreationAttributes
   declare closedAt: Date | null
   declare resolutionNotes: string | null
   declare attachments: string[] | Record<string, unknown> | null
+  declare workStartedAt: Date | null
+  declare workStartedByUserId: string | null
+  declare completedAt: Date | null
+  declare completedByUserId: string | null
+  // DECIMAL columns are returned as strings by the MySQL driver
+  declare invoiceAmount: string | number | null
 }
 
 Ticket.init(
@@ -207,6 +223,26 @@ Ticket.init(
     },
     attachments: {
       type: DataTypes.JSON,
+      allowNull: true,
+    },
+    workStartedAt: {
+      type: DataTypes.DATE,
+      allowNull: true,
+    },
+    workStartedByUserId: {
+      type: DataTypes.UUID,
+      allowNull: true,
+    },
+    completedAt: {
+      type: DataTypes.DATE,
+      allowNull: true,
+    },
+    completedByUserId: {
+      type: DataTypes.UUID,
+      allowNull: true,
+    },
+    invoiceAmount: {
+      type: DataTypes.DECIMAL(12, 2),
       allowNull: true,
     },
   },
