@@ -56,7 +56,7 @@ export const validateQuery = (schema: ZodSchema) => {
         })),
       })
     }
-    req.query = result.data as Request['query']
+    Object.defineProperty(req, 'query', { value: result.data, writable: true, configurable: true, enumerable: true })
     return next()
   }
 }
