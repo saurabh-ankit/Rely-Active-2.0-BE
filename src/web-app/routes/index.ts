@@ -25,6 +25,7 @@ import billingRouter from './billing.routes.js'
 import { eventRouter, venueRouter, globalServiceRouter, eventRequestRouter } from './event.routes.js'
 import globalSettingsRouter from './globalSettings.js'
 import medicalRouter from './medical.routes.js'
+import dashboardRouter from './dashboard.routes.js'
 
 export const apiRouter = Router()
 
@@ -75,5 +76,8 @@ apiRouter.use('/location/:locationId/shift-roster', shiftRosterRouter)
 
 apiRouter.use('/billing', billingRouter)
 apiRouter.use('/location/:locationId/billing', billingRouter)
+
+apiRouter.use('/dashboard', dashboardRouter)
+apiRouter.use('/location/:locationId/dashboard', dashboardRouter)
 
 export default apiRouter
