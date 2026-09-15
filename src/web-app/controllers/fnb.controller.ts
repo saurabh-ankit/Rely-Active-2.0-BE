@@ -2104,11 +2104,14 @@ interface SubscriptionInput {
   familyMemberId?: string | null
   propertyPackageId?: string | null
   startDate?: string | null
+  diningType?: string | null
+  deliveryCharge?: number | string | null
+  totalPrice?: number | string | null
 }
 
 export async function assignResidentPackage(req: AuthenticatedRequest, res: Response): Promise<void> {
   try {
-    const { residentId, propertyPackageId, startDate, endDate, subscriptions } = req.body
+    const { residentId, propertyPackageId, startDate, endDate, subscriptions, diningType, deliveryCharge } = req.body
 
     // 1. Verify resident exists & is currently residing!
     const resident = await Resident.findByPk(residentId)
@@ -2130,7 +2133,7 @@ export async function assignResidentPackage(req: AuthenticatedRequest, res: Resp
     if (Array.isArray(subscriptions) && subscriptions.length > 0) {
       subList = subscriptions
     } else if (propertyPackageId) {
-      subList = [{ familyMemberId: null, propertyPackageId, startDate }]
+      subList = [{ familyMemberId: null, propertyPackageId, startDate, diningType, deliveryCharge }]
     }
 
     if (subList.length === 0) {
@@ -2146,6 +2149,12 @@ export async function assignResidentPackage(req: AuthenticatedRequest, res: Resp
       const propPkgId = sub.propertyPackageId || (sub as unknown as Record<string, string>).property_package_id || null
       const itemStartDate =
         sub.startDate || (sub as unknown as Record<string, string>).start_date || startDate || todayStr
+      const rawDiningType =
+        sub.diningType || (sub as unknown as Record<string, string>).dining_type || diningType || 'dine_in'
+      const itemDiningType = rawDiningType === 'home_delivery' ? 'home_delivery' : 'dine_in'
+      const rawDeliveryCharge =
+        sub.deliveryCharge ?? (sub as unknown as Record<string, string>).delivery_charge ?? deliveryCharge ?? 0
+      const itemDeliveryCharge = itemDiningType === 'home_delivery' ? Math.max(0, Number(rawDeliveryCharge) || 0) : 0
 
       // Check existing active or paused subscription for this person
       const whereCondition: Record<string, unknown> = {
@@ -2161,8 +2170,16 @@ export async function assignResidentPackage(req: AuthenticatedRequest, res: Resp
 
       const existingActive = await FnbResidentPackage.findOne({ where: whereCondition })
 
-      // If existing subscription already matches the target package, DO NOT re-insert or cancel!
+      // If existing subscription already matches the target package, update diningType and deliveryCharge if changed
       if (existingActive && propPkgId && existingActive.propertyPackageId === propPkgId) {
+        const propPkg = await FnbPropertyPackage.findByPk(propPkgId)
+        const computedTotalPrice = Number(propPkg?.price || 0) + itemDeliveryCharge
+        await existingActive.update({
+          diningType: itemDiningType,
+          deliveryCharge: itemDeliveryCharge,
+          totalPrice: computedTotalPrice,
+          updatedBy: req.user?.id || null,
+        })
         createdSubscriptions.push(existingActive)
         continue
       }
@@ -2184,6 +2201,7 @@ export async function assignResidentPackage(req: AuthenticatedRequest, res: Resp
 
         if (propertyPackage && propertyPackage.isActive) {
           const dietaryPref = (propertyPackage.globalPackage?.dietaryType as FnbDietaryType) || FnbDietaryType.VEG
+          const computedTotalPrice = Number(propertyPackage.price || 0) + itemDeliveryCharge
 
           const newSubscription = await FnbResidentPackage.create({
             residentId: famId ? null : residentId,
@@ -2194,6 +2212,9 @@ export async function assignResidentPackage(req: AuthenticatedRequest, res: Resp
             dietaryPreference: dietaryPref,
             allergiesNotes: null,
             status: FnbSubscriptionStatus.ACTIVE,
+            diningType: itemDiningType,
+            deliveryCharge: itemDeliveryCharge,
+            totalPrice: computedTotalPrice,
             createdBy: req.user?.id || null,
           })
 
@@ -2224,52 +2245,32 @@ export async function assignResidentPackage(req: AuthenticatedRequest, res: Resp
         {
           model: ResidentFamilyMember,
           as: 'familyMember',
-          include: [
-            {
-              model: Resident,
-              as: 'resident',
-              attributes: ['id', 'firstName', 'lastName', 'phone', 'email', 'residentType', 'isResiding'],
-              include: [
-                {
-                  model: PropertyUnit,
-                  as: 'unit',
-                  attributes: ['id', 'unit_number'],
-                  include: [
-                    {
-                      model: PropertyFloor,
-                      as: 'floor',
-                      attributes: ['id', 'floor_number', 'floor_name'],
-                      include: [
-                        {
-                          model: PropertyBlock,
-                          as: 'block',
-                          attributes: ['id', 'block_name'],
-                        },
-                      ],
-                    },
-                  ],
-                },
-              ],
-            },
-          ],
         },
       ],
     })
 
-    res.status(201).json({
+    res.status(200).json({
       success: true,
-      message: 'Food package subscription updated successfully',
-      data: allActive,
+      message: 'Resident food package(s) assigned successfully',
+      data: {
+        created: createdSubscriptions,
+        activeSubscriptions: allActive,
+      },
     })
   } catch (error) {
     console.error('Error assigning resident package:', error)
-    res.status(500).json({ success: false, message: 'Failed to assign food package to resident' })
+    res.status(500).json({ success: false, message: 'Failed to assign resident package' })
   }
 }
 
 export async function togglePauseResidentPackage(req: AuthenticatedRequest, res: Response): Promise<void> {
   try {
     const id = req.params.id as string
+    if (!id) {
+      res.status(400).json({ success: false, message: 'Subscription ID is required' })
+      return
+    }
+
     const subscription = await FnbResidentPackage.findByPk(id)
     if (!subscription) {
       res.status(404).json({ success: false, message: 'Subscription not found' })
@@ -2286,18 +2287,18 @@ export async function togglePauseResidentPackage(req: AuthenticatedRequest, res:
 
     res.status(200).json({
       success: true,
-      message: `Subscription ${newStatus === FnbSubscriptionStatus.PAUSED ? 'paused' : 'resumed'} successfully`,
+      message: `Package subscription ${newStatus === FnbSubscriptionStatus.PAUSED ? 'paused' : 'resumed'} successfully`,
       data: subscription,
     })
   } catch (error) {
-    console.error('Error toggling pause for resident package:', error)
+    console.error('Error toggling package pause:', error)
     res.status(500).json({ success: false, message: 'Failed to update subscription status' })
   }
 }
 
 export async function changeResidentPackage(req: AuthenticatedRequest, res: Response): Promise<void> {
   try {
-    const { subscriptionId, newPropertyPackageId, startDate, allergiesNotes } = req.body
+    const { subscriptionId, newPropertyPackageId, startDate, allergiesNotes, diningType, deliveryCharge } = req.body
     if (!subscriptionId || !newPropertyPackageId) {
       res.status(400).json({ success: false, message: 'subscriptionId and newPropertyPackageId are required' })
       return
@@ -2345,6 +2346,12 @@ export async function changeResidentPackage(req: AuthenticatedRequest, res: Resp
     }
 
     const dietaryPref = (newPropPkg.globalPackage?.dietaryType as FnbDietaryType) || FnbDietaryType.VEG
+    const effectiveDiningType = diningType || existingSub.diningType || 'dine_in'
+    const effectiveDeliveryCharge =
+      effectiveDiningType === 'home_delivery'
+        ? Math.max(0, Number(deliveryCharge !== undefined ? deliveryCharge : existingSub.deliveryCharge) || 0)
+        : 0
+    const computedTotalPrice = Number(newPropPkg.price || 0) + effectiveDeliveryCharge
 
     const newSub = await FnbResidentPackage.create({
       residentId: existingSub.residentId,
@@ -2355,6 +2362,9 @@ export async function changeResidentPackage(req: AuthenticatedRequest, res: Resp
       dietaryPreference: dietaryPref,
       allergiesNotes: allergiesNotes !== undefined ? allergiesNotes : existingSub.allergiesNotes,
       status: FnbSubscriptionStatus.ACTIVE,
+      diningType: effectiveDiningType,
+      deliveryCharge: effectiveDeliveryCharge,
+      totalPrice: computedTotalPrice,
       createdBy: req.user?.id || null,
     })
 

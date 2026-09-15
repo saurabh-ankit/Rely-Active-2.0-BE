@@ -1,7 +1,7 @@
 import { DataTypes, Optional } from 'sequelize'
 import sequelize from '../config/db/index.js'
 import { BaseAttributes, BaseModel, baseModelColumns } from './base.model.js'
-import { FnbDietaryType, FnbSubscriptionStatus } from '../enums/fnb.enum.js'
+import { FnbDietaryType, FnbSubscriptionStatus, FnbDiningType } from '../enums/fnb.enum.js'
 import type { FnbPropertyPackage } from './fnbPropertyPackage.model.js'
 import type { Resident } from './resident.model.js'
 import type { ResidentFamilyMember } from './residentFamilyMember.model.js'
@@ -15,6 +15,9 @@ export interface FnbResidentPackageAttributes extends BaseAttributes {
   dietaryPreference?: FnbDietaryType
   allergiesNotes?: string | null
   status: FnbSubscriptionStatus
+  diningType?: FnbDiningType | string | null
+  deliveryCharge?: number | null
+  totalPrice?: number | null
 }
 
 export type FnbResidentPackageCreationAttributes = Optional<
@@ -26,6 +29,9 @@ export type FnbResidentPackageCreationAttributes = Optional<
   | 'dietaryPreference'
   | 'allergiesNotes'
   | 'status'
+  | 'diningType'
+  | 'deliveryCharge'
+  | 'totalPrice'
   | 'createdBy'
   | 'updatedBy'
   | 'createdAt'
@@ -44,6 +50,9 @@ export class FnbResidentPackage
   declare dietaryPreference: FnbDietaryType
   declare allergiesNotes: string | null
   declare status: FnbSubscriptionStatus
+  declare diningType: FnbDiningType | string | null
+  declare deliveryCharge: number | null
+  declare totalPrice: number | null
 
   declare resident?: Resident
   declare familyMember?: ResidentFamilyMember
@@ -86,6 +95,20 @@ FnbResidentPackage.init(
       type: DataTypes.ENUM('active', 'paused', 'cancelled', 'completed'),
       allowNull: false,
       defaultValue: FnbSubscriptionStatus.ACTIVE,
+    },
+    diningType: {
+      type: DataTypes.STRING(32),
+      allowNull: true,
+      defaultValue: 'dine_in',
+    },
+    deliveryCharge: {
+      type: DataTypes.DECIMAL(10, 2),
+      allowNull: true,
+      defaultValue: 0.0,
+    },
+    totalPrice: {
+      type: DataTypes.DECIMAL(10, 2),
+      allowNull: true,
     },
   },
   {

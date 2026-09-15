@@ -1,5 +1,5 @@
 import { Request, Response } from 'express'
-import { GatePreapproved, GateEntry, Resident, GuestMaster } from '../../../models/index.js'
+import { GatePreapproved, GateEntry, Resident, GuestMaster, PropertyUnit } from '../../../models/index.js'
 import { Op } from 'sequelize'
 import QRCode from 'qrcode'
 import { uploadBase64ToS3 } from '../../../middlewares/s3/index.js'
@@ -442,5 +442,82 @@ export const deleteGuestMaster = async (req: Request, res: Response) => {
   } catch (error) {
     console.error('Error deleting guest master:', error)
     return res.status(500).json({ success: false, message: 'Failed to delete guest master' })
+  }
+}
+
+export const getResidentEntries = async (req: Request, res: Response) => {
+  try {
+    const residentId = (req as Request & { user?: { id: string } }).user?.id
+    const resident = await Resident.findByPk(residentId)
+    const unitId = resident?.unitId
+    const locId = resident?.locId || (req.query.locId as string)
+
+    const pageNum = parseInt((req.query.page as string) || '1', 10)
+    const limitNum = parseInt((req.query.limit as string) || '10', 10)
+    const offset = (pageNum - 1) * limitNum
+
+    const status = (req.query.status as string) || ''
+    const visitorType = (req.query.visitorType as string) || ''
+    const date = (req.query.date as string) || ''
+
+    const whereClause: Record<string, unknown> = {}
+
+    if (unitId) {
+      whereClause.unitId = unitId
+    } else if (locId) {
+      whereClause.locId = locId
+    }
+
+    if (status) {
+      whereClause.status = status
+    }
+
+    if (visitorType) {
+      whereClause.visitorType = visitorType
+    }
+
+    if (date) {
+      const startDate = new Date(date)
+      startDate.setHours(0, 0, 0, 0)
+      const endDate = new Date(startDate)
+      endDate.setDate(endDate.getDate() + 1)
+
+      whereClause.createdAt = {
+        [Op.gte]: startDate,
+        [Op.lt]: endDate,
+      }
+    }
+
+    const { rows, count } = await GateEntry.findAndCountAll({
+      where: whereClause,
+      include: [{ model: PropertyUnit, as: 'unit', attributes: ['id', 'unit_number'] }],
+      order: [['createdAt', 'DESC']],
+      limit: limitNum,
+      offset,
+    })
+
+    const formattedRows = rows.map((e) => {
+      const data = e.toJSON() as unknown as Record<string, unknown>
+      return {
+        ...data,
+        isWalkin: data.entrySource === 'Walkin',
+        checkInTime: data.clockedInAt,
+        checkOutTime: data.clockedOutAt,
+      }
+    })
+
+    return res.status(200).json({
+      success: true,
+      data: formattedRows,
+      pagination: {
+        page: pageNum,
+        limit: limitNum,
+        total: count,
+        totalPages: Math.ceil(count / limitNum) || 1,
+      },
+    })
+  } catch (error) {
+    console.error('Error fetching resident entries:', error)
+    return res.status(500).json({ success: false, message: 'Error fetching entries', error })
   }
 }

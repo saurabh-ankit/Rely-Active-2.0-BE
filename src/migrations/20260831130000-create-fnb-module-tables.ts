@@ -145,6 +145,20 @@ export async function up({ context: queryInterface }: { context: QueryInterface 
         type: DataTypes.TEXT,
         allowNull: true,
       },
+      diningType: {
+        type: DataTypes.STRING(32),
+        allowNull: false,
+        defaultValue: 'dine_in',
+      },
+      deliveryCharge: {
+        type: DataTypes.DECIMAL(10, 2),
+        allowNull: false,
+        defaultValue: 0.0,
+      },
+      totalPrice: {
+        type: DataTypes.DECIMAL(10, 2),
+        allowNull: true,
+      },
       status: {
         type: DataTypes.ENUM('active', 'paused', 'cancelled', 'completed'),
         allowNull: false,
@@ -152,6 +166,28 @@ export async function up({ context: queryInterface }: { context: QueryInterface 
       },
     })
     await queryInterface.addIndex('fnb_resident_packages', ['residentId', 'status'])
+  } else {
+    const tableCols = await queryInterface.describeTable('fnb_resident_packages')
+    if (!tableCols.diningType) {
+      await queryInterface.addColumn('fnb_resident_packages', 'diningType', {
+        type: DataTypes.STRING(32),
+        allowNull: false,
+        defaultValue: 'dine_in',
+      })
+    }
+    if (!tableCols.deliveryCharge) {
+      await queryInterface.addColumn('fnb_resident_packages', 'deliveryCharge', {
+        type: DataTypes.DECIMAL(10, 2),
+        allowNull: false,
+        defaultValue: 0.0,
+      })
+    }
+    if (!tableCols.totalPrice) {
+      await queryInterface.addColumn('fnb_resident_packages', 'totalPrice', {
+        type: DataTypes.DECIMAL(10, 2),
+        allowNull: true,
+      })
+    }
   }
 
   // 4. Dishes Catalogue (Global / Master)

@@ -53,6 +53,7 @@ import { TicketCategory } from './ticketCategory.model.js'
 import { TicketSubCategory } from './ticketSubCategory.model.js'
 import { Ticket } from './ticket.model.js'
 import { TicketActivityLog } from './ticketActivityLog.model.js'
+import { TicketTatHistory } from './ticketTatHistory.model.js'
 import { GatePreapproved } from './gatePreapproved.model.js'
 import { GateEntry } from './gateEntry.model.js'
 import { FnbGlobalMealSlot } from './fnbGlobalMealSlot.model.js'
@@ -415,6 +416,13 @@ Ticket.belongsTo(Asset, { foreignKey: 'assetId', as: 'asset' })
 Ticket.hasMany(TicketActivityLog, { foreignKey: 'ticketId', as: 'activityLogs' })
 TicketActivityLog.belongsTo(Ticket, { foreignKey: 'ticketId', as: 'ticket' })
 TicketActivityLog.belongsTo(User, { foreignKey: 'performedByUserId', as: 'performedByUser' })
+
+Ticket.hasMany(TicketTatHistory, { foreignKey: 'ticketId', as: 'tatHistories' })
+TicketTatHistory.belongsTo(Ticket, { foreignKey: 'ticketId', as: 'ticket' })
+TicketTatHistory.belongsTo(User, { foreignKey: 'changedByUserId', as: 'changedByUser' })
+
+Ticket.belongsTo(User, { foreignKey: 'workStartedByUserId', as: 'workStartedByUser' })
+Ticket.belongsTo(User, { foreignKey: 'completedByUserId', as: 'completedByUser' })
 
 // ── Gate Management associations ───────────────────────────────────────────
 Property.hasMany(GatePreapproved, { foreignKey: 'locId', as: 'gatePreapproveds' })
@@ -878,6 +886,7 @@ export {
   TicketSubCategory,
   Ticket,
   TicketActivityLog,
+  TicketTatHistory,
   GatePreapproved,
   GateEntry,
   FnbResidentOrderDetail,
