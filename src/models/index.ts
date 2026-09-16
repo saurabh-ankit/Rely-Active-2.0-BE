@@ -54,6 +54,8 @@ import { TicketSubCategory } from './ticketSubCategory.model.js'
 import { Ticket } from './ticket.model.js'
 import { TicketActivityLog } from './ticketActivityLog.model.js'
 import { TicketTatHistory } from './ticketTatHistory.model.js'
+import { Specialization } from './specialization.model.js'
+import { DoctorSpecialization } from './doctorSpecialization.model.js'
 import { GatePreapproved } from './gatePreapproved.model.js'
 import { GateEntry } from './gateEntry.model.js'
 import { FnbGlobalMealSlot } from './fnbGlobalMealSlot.model.js'
@@ -354,6 +356,24 @@ TicketTatHistory.belongsTo(User, { foreignKey: 'changedByUserId', as: 'changedBy
 Ticket.belongsTo(User, { foreignKey: 'workStartedByUserId', as: 'workStartedByUser' })
 Ticket.belongsTo(User, { foreignKey: 'completedByUserId', as: 'completedByUser' })
 
+// ── Doctor specializations ─────────────────────────────────────────────────
+User.belongsToMany(Specialization, {
+  through: DoctorSpecialization,
+  foreignKey: 'userId',
+  otherKey: 'specializationId',
+  as: 'specializations',
+})
+Specialization.belongsToMany(User, {
+  through: DoctorSpecialization,
+  foreignKey: 'specializationId',
+  otherKey: 'userId',
+  as: 'doctors',
+})
+User.hasMany(DoctorSpecialization, { foreignKey: 'userId', as: 'doctorSpecializations' })
+DoctorSpecialization.belongsTo(User, { foreignKey: 'userId', as: 'doctor' })
+Specialization.hasMany(DoctorSpecialization, { foreignKey: 'specializationId', as: 'doctorLinks' })
+DoctorSpecialization.belongsTo(Specialization, { foreignKey: 'specializationId', as: 'specialization' })
+
 // ── Gate Management associations ───────────────────────────────────────────
 Property.hasMany(GatePreapproved, { foreignKey: 'locId', as: 'gatePreapproveds' })
 GatePreapproved.belongsTo(Property, { foreignKey: 'locId', as: 'property' })
@@ -519,6 +539,8 @@ export {
   Ticket,
   TicketActivityLog,
   TicketTatHistory,
+  Specialization,
+  DoctorSpecialization,
   GatePreapproved,
   GateEntry,
   FnbResidentOrderDetail,
