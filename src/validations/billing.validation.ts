@@ -157,7 +157,10 @@ export const updateBillingEventSchema = z
     quantity: z.number().positive().optional(),
     unitPrice: z.number().min(0).optional(),
     amount: z.number().min(0).optional(),
-    serviceDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Service date must be YYYY-MM-DD').optional(),
+    serviceDate: z
+      .string()
+      .regex(/^\d{4}-\d{2}-\d{2}$/, 'Service date must be YYYY-MM-DD')
+      .optional(),
   })
   .passthrough()
 
@@ -168,10 +171,17 @@ export const generateInvoiceSchema = z
     billingAccountId: z.string().uuid('Valid billing account ID is required'),
     periodStart: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Period start must be YYYY-MM-DD'),
     periodEnd: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Period end must be YYYY-MM-DD'),
-    issueDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Issue date must be YYYY-MM-DD').optional(),
-    dueDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Due date must be YYYY-MM-DD').optional(),
+    issueDate: z
+      .string()
+      .regex(/^\d{4}-\d{2}-\d{2}$/, 'Issue date must be YYYY-MM-DD')
+      .optional(),
+    dueDate: z
+      .string()
+      .regex(/^\d{4}-\d{2}-\d{2}$/, 'Due date must be YYYY-MM-DD')
+      .optional(),
     isPreview: z.boolean().default(false),
     includePendingEvents: z.boolean().default(true).optional(),
+    pendingEventIds: z.array(z.string().uuid()).optional(),
     billingMode: z.enum(['MONTHLY', 'SUPPLEMENTARY', 'FINAL_DISCHARGE']).optional(),
     includeSubscriptions: z.boolean().default(true).optional(),
     discountType: z.enum(['FIXED', 'PERCENTAGE']).optional(),
