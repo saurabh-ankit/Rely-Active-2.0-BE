@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import type { Response } from 'express'
 import type { AuthenticatedRequest } from '../../middlewares/authenticate.js'
 import { Op } from 'sequelize'
@@ -53,15 +54,9 @@ import {
   updateBillingAccountSchema,
   updateBillingPartySchema,
 } from '../../validations/billing.validation.js'
-import {
-  generateInvoiceForAccount,
-  resolveBillingAccount,
-} from '../../services/billing/invoiceGenerator.service.js'
+import { generateInvoiceForAccount, resolveBillingAccount } from '../../services/billing/invoiceGenerator.service.js'
 import { getAccountLedgerStatement } from '../../services/billing/ledger.service.js'
-import {
-  getBillingQueue,
-  processBatchBilling,
-} from '../../queues/billing.queue.js'
+import { getBillingQueue, processBatchBilling } from '../../queues/billing.queue.js'
 import { logger } from '../../config/logger.js'
 import { uploadFileToS3 } from '../../middlewares/s3/index.js'
 
@@ -398,7 +393,10 @@ export async function getSubscriptions(req: AuthenticatedRequest, res: Response)
     const accountId = String(req.params.accountId || '')
     const subscriptions = await BillingSubscription.findAll({
       where: { billingAccountId: accountId, isActive: true },
-      include: [{ model: BillingProduct, as: 'product' }, { model: BillingPricePlan, as: 'pricePlan' }],
+      include: [
+        { model: BillingProduct, as: 'product' },
+        { model: BillingPricePlan, as: 'pricePlan' },
+      ],
       order: [['startDate', 'DESC']],
     })
 
@@ -508,6 +506,58 @@ export async function ingestEvent(req: AuthenticatedRequest, res: Response): Pro
       }
     }
 
+    // Auto-ensure folio if missing for this unit
+    if (!accountId || !account) {
+      if (data.unitId) {
+        const unit = await PropertyUnit.findByPk(data.unitId, {
+          include: [
+            {
+              model: PropertyFloor,
+              as: 'floor',
+              include: [{ model: PropertyBlock, as: 'block' }],
+            },
+            {
+              model: Resident,
+              as: 'residents',
+              where: { isDeleted: false },
+              required: false,
+            },
+            {
+              model: UnitResident,
+              as: 'unitResidents',
+              where: { isActive: true },
+              required: false,
+              include: [{ model: Resident, as: 'resident' }],
+            },
+          ],
+        })
+
+        if (unit) {
+          let primaryResident: any = null
+          if (data.residentId) {
+            primaryResident = await Resident.findByPk(data.residentId)
+          }
+          if (!primaryResident) {
+            const billingResidents = ((unit as any).unitResidents || []).map((ur: any) => ur.resident).filter(Boolean)
+            const coreResidents = (unit as any).residents || []
+            primaryResident =
+              billingResidents.find((r: any) => r.isResiding) ||
+              coreResidents.find((r: any) => r.isResiding) ||
+              billingResidents[0] ||
+              coreResidents[0] ||
+              null
+          }
+
+          if (primaryResident) {
+            account = await syncUnitFolioAndSubscriptions(unit, primaryResident)
+            if (account) {
+              accountId = account.id
+            }
+          }
+        }
+      }
+    }
+
     if (!accountId || !account) {
       res.status(400).json({
         success: false,
@@ -526,10 +576,7 @@ export async function ingestEvent(req: AuthenticatedRequest, res: Response): Pro
       return
     }
 
-    const amount =
-      data.amount !== undefined
-        ? data.amount
-        : Number((data.quantity * data.unitPrice).toFixed(2))
+    const amount = data.amount !== undefined ? data.amount : Number((data.quantity * data.unitPrice).toFixed(2))
 
     const event = await BillingEvent.create({
       billingAccountId: accountId,
@@ -612,7 +659,12 @@ export async function uploadEventAttachment(req: AuthenticatedRequest, res: Resp
 
     const upload = await uploadFileToS3(req.file, 'billing/event-bills')
     const attachments = Array.isArray(event.attachments) ? event.attachments : []
-    attachments.push({ name: req.file.originalname, url: upload.location, contentType: upload.contentType, size: upload.size })
+    attachments.push({
+      name: req.file.originalname,
+      url: upload.location,
+      contentType: upload.contentType,
+      size: upload.size,
+    })
     await event.update({ attachments })
     res.status(201).json({ success: true, data: event })
   } catch (error) {
@@ -627,7 +679,10 @@ export async function getPendingEvents(req: AuthenticatedRequest, res: Response)
     const events = await BillingEvent.findAll({
       where: { billingAccountId: accountId, status: BillingEventStatus.PENDING },
       order: [['serviceDate', 'ASC']],
-      include: [{ model: Resident, as: 'resident' }, { model: BillingProduct, as: 'product' }],
+      include: [
+        { model: Resident, as: 'resident' },
+        { model: BillingProduct, as: 'product' },
+      ],
     })
 
     res.json({ success: true, data: events })
@@ -750,7 +805,6 @@ export async function getInvoices(req: AuthenticatedRequest, res: Response): Pro
     }
     if (billingAccountId) where.billingAccountId = String(billingAccountId)
     if (status) where.status = String(status)
-
 
     const offset = (Number(page) - 1) * Number(limit)
     const { rows: invoices, count } = await Invoice.findAndCountAll({
@@ -916,7 +970,6 @@ export async function getBillingRuns(req: AuthenticatedRequest, res: Response): 
     }
 
     const runs = await BillingRun.findAll({
-
       where,
       order: [['createdAt', 'DESC']],
       limit: 50,
@@ -931,7 +984,8 @@ export async function getBillingRuns(req: AuthenticatedRequest, res: Response): 
 
 export async function getUnitsBillingSummary(req: AuthenticatedRequest, res: Response): Promise<void> {
   try {
-    const targetPropertyId = (req.params.locationId || req.query.propertyId || req.query.locationId) as string | undefined
+    const targetPropertyId = (req.params.locationId || req.query.propertyId || req.query.locationId) as
+      string | undefined
 
     let propId: string | undefined
     if (targetPropertyId && targetPropertyId !== 'ALL' && targetPropertyId !== 'all') {
@@ -1019,12 +1073,16 @@ export async function getUnitsBillingSummary(req: AuthenticatedRequest, res: Res
       const primaryBillingResidentAssoc = uJson.unitResidents?.find((r: any) => r.isPrimary) || uJson.unitResidents?.[0]
       const corePrimaryResident = uJson.residents?.find((r: any) => r.isResiding) || uJson.residents?.[0] || null
       const primaryResident = primaryBillingResidentAssoc?.resident || corePrimaryResident || null
-      const primaryPayer = folio?.parties?.find((p: any) => p.role === BillingPartyRole.PRIMARY_PAYER && p.isActive) || null
+      const primaryPayer =
+        folio?.parties?.find((p: any) => p.role === BillingPartyRole.PRIMARY_PAYER && p.isActive) || null
 
       const invoices = folio?.invoices || []
       const totalInvoiced = invoices.reduce((acc: number, inv: any) => acc + Number(inv.grandTotal || 0), 0)
       const totalOutstanding = invoices
-        .filter((inv: any) => inv.status !== 'PAID' && inv.status !== 'CANCELLED' && inv.status !== 'DRAFT' && inv.status !== 'PREVIEW')
+        .filter(
+          (inv: any) =>
+            inv.status !== 'PAID' && inv.status !== 'CANCELLED' && inv.status !== 'DRAFT' && inv.status !== 'PREVIEW',
+        )
         .reduce((acc: number, inv: any) => acc + Number(inv.amountDue || 0), 0)
 
       const activeSubscriptionsCount = folio?.subscriptions?.length || 0
@@ -1126,11 +1184,30 @@ export async function syncUnitFolioAndSubscriptions(unit: any, primaryResident: 
     ],
   })
 
-  const locId = (unit as any).floor?.block?.locId || primaryResident?.locId
-  let companyId: string | null = null
+  // Robust property ID resolution across block associations, unit, or resident
+  let locId =
+    (unit as any).floor?.block?.propertyId ||
+    (unit as any).floor?.block?.locId ||
+    primaryResident?.locId ||
+    primaryResident?.propertyId ||
+    (unit as any).propertyId ||
+    null
+
+  if (!locId && unit.floorId) {
+    const floor = await PropertyFloor.findByPk(unit.floorId, {
+      include: [{ model: PropertyBlock, as: 'block' }],
+    })
+    locId = (floor as any)?.block?.propertyId || (floor as any)?.block?.locId || null
+  }
+
+  let companyId: string | null = primaryResident?.companyId || null
   if (locId) {
     const prop = await Property.findByPk(locId)
-    companyId = prop?.companyId || null
+    if (prop?.companyId) companyId = prop.companyId
+  }
+  if (!companyId) {
+    const company = await Company.findOne({ where: { isDeleted: false } })
+    companyId = company?.id || null
   }
 
   if (!folio && primaryResident && locId && companyId) {
@@ -1153,11 +1230,16 @@ export async function syncUnitFolioAndSubscriptions(unit: any, primaryResident: 
       accountNumber,
     })
 
+    const residentName =
+      `${primaryResident.firstName || ''} ${primaryResident.lastName || ''}`.trim() ||
+      primaryResident.name ||
+      'Primary Resident'
+
     await BillingParty.create({
       billingAccountId: folio.id,
       partyType: BillingPartyType.RESIDENT,
       residentId: primaryResident.id,
-      partyName: `${primaryResident.firstName || ''} ${primaryResident.lastName || ''}`.trim(),
+      partyName: residentName,
       partyEmail: primaryResident.email || null,
       partyPhone: primaryResident.phone || null,
       role: BillingPartyRole.PRIMARY_PAYER,
@@ -1176,7 +1258,9 @@ export async function syncUnitFolioAndSubscriptions(unit: any, primaryResident: 
   if (folio) {
     const billingOccupants = ((unit as any).unitResidents || []).map((ur: any) => ur.resident?.id).filter(Boolean)
     const coreOccupants = ((unit as any).residents || []).map((r: any) => r.id).filter(Boolean)
-    const residentIds = Array.from(new Set([...billingOccupants, ...coreOccupants, primaryResident?.id].filter(Boolean)))
+    const residentIds = Array.from(
+      new Set([...billingOccupants, ...coreOccupants, primaryResident?.id].filter(Boolean)),
+    )
 
     if (residentIds.length > 0) {
       const activeFnbPackages = await FnbResidentPackage.findAll({
@@ -1228,7 +1312,10 @@ export async function syncUnitFolioAndSubscriptions(unit: any, primaryResident: 
               isActive: true,
             })
           } else if (existingBillingSub) {
-            if (existingBillingSub.status !== SubscriptionStatus.ACTIVE || Number(existingBillingSub.unitPrice) !== price) {
+            if (
+              existingBillingSub.status !== SubscriptionStatus.ACTIVE ||
+              Number(existingBillingSub.unitPrice) !== price
+            ) {
               await existingBillingSub.update({
                 status: SubscriptionStatus.ACTIVE,
                 unitPrice: price,
@@ -1316,10 +1403,7 @@ export async function syncUnitFolioAndSubscriptions(unit: any, primaryResident: 
                 isActive: true,
               })
             } else if (existingCareSub) {
-              if (
-                existingCareSub.status !== SubscriptionStatus.ACTIVE ||
-                Number(existingCareSub.unitPrice) !== price
-              ) {
+              if (existingCareSub.status !== SubscriptionStatus.ACTIVE || Number(existingCareSub.unitPrice) !== price) {
                 await existingCareSub.update({
                   status: SubscriptionStatus.ACTIVE,
                   unitPrice: price,
@@ -1369,9 +1453,7 @@ export async function syncUnitFolioAndSubscriptions(unit: any, primaryResident: 
 
             if (!existingEvent) {
               const unitPrice =
-                charge.unitPrice && Number(charge.unitPrice) > 0
-                  ? Number(charge.unitPrice)
-                  : Number(charge.price)
+                charge.unitPrice && Number(charge.unitPrice) > 0 ? Number(charge.unitPrice) : Number(charge.price)
               const qty = unitPrice > 0 ? Math.round(Number(charge.price) / unitPrice) || 1 : 1
               const taskName = charge.taskName || charge.feature?.careTaskName || 'Additional Care Task'
               const serviceDate = charge.completedAt
@@ -1433,9 +1515,9 @@ export async function syncUnitFolioAndSubscriptions(unit: any, primaryResident: 
             for (const line of lines) {
               const packQty = Number(line.packQuantity) && Number(line.packQuantity) > 0 ? Number(line.packQuantity) : 1
               const baseUnitPrice = Math.round((Number(line.mrpPrice) / packQty) * 100) / 100
-              const lineAmount = Math.round(((Number(line.quantity) / packQty) * Number(line.mrpPrice)) * 100) / 100
+              const lineAmount = Math.round((Number(line.quantity) / packQty) * Number(line.mrpPrice) * 100) / 100
               const unitLabel = line.packUnit ? ` ${line.packUnit}` : ''
-              const desc = `${line.itemName || 'Inventory Item'}${line.batchNumber ? ` (Batch: ${line.batchNumber})` : ''}`
+              const desc = `${line.itemName || 'Inventory Item'}${unitLabel}${line.batchNumber ? ` (Batch: ${line.batchNumber})` : ''}`
               const serviceDate = tx.date
                 ? new Date(tx.date).toISOString().slice(0, 10)
                 : new Date().toISOString().slice(0, 10)
@@ -1522,8 +1604,12 @@ export async function getUnitBilling360(req: AuthenticatedRequest, res: Response
     const billingOccupants = ((unit as any).unitResidents || []).map((ur: any) => ({
       id: ur.resident?.id,
       name: `${ur.resident?.firstName || ''} ${ur.resident?.lastName || ''}`.trim(),
+      firstName: ur.resident?.firstName,
+      lastName: ur.resident?.lastName,
       email: ur.resident?.email,
       phone: ur.resident?.phone,
+      locId: ur.resident?.locId,
+      companyId: ur.resident?.companyId,
       relationship: ur.relationshipType,
       isPrimary: ur.isPrimary,
       photoUrl: ur.resident?.photoUrl,
@@ -1532,8 +1618,12 @@ export async function getUnitBilling360(req: AuthenticatedRequest, res: Response
     const coreOccupants = ((unit as any).residents || []).map((r: any) => ({
       id: r.id,
       name: `${r.firstName || ''} ${r.lastName || ''}`.trim(),
+      firstName: r.firstName,
+      lastName: r.lastName,
       email: r.email,
       phone: r.phone,
+      locId: r.locId,
+      companyId: r.companyId,
       relationship: r.residentType || 'RESIDENT',
       isPrimary: Boolean(r.isResiding),
       photoUrl: r.photoUrl,
