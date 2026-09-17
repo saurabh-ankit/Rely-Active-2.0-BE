@@ -1137,6 +1137,11 @@ export async function createCareTaskAssignment(req: Request, res: Response): Pro
       return
     }
 
+    if (!resident.isResiding) {
+      res.status(400).json({ success: false, message: 'Cannot assign care task to a non-residing resident' })
+      return
+    }
+
     // 2. Verify care task exists
     const task = await CareTask.findByPk(taskId)
     if (!task || task.isDeleted) {

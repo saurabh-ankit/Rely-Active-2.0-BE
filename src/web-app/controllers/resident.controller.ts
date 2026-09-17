@@ -1304,7 +1304,7 @@ export async function getResidentBillingData(req: Request, res: Response): Promi
     })
 
     for (const tx of inventoryIssues) {
-      const lines = (tx as any).lines || []
+      const lines = (tx as unknown as { lines?: InventoryStockTransactionLine[] }).lines || []
       const txDateStr = tx.date ? new Date(tx.date).toISOString().slice(0, 10) : monthStartStr
       const formattedDate = tx.date
         ? new Date(tx.date).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })
@@ -1313,7 +1313,7 @@ export async function getResidentBillingData(req: Request, res: Response): Promi
       for (const line of lines) {
         const packQty = Number(line.packQuantity) && Number(line.packQuantity) > 0 ? Number(line.packQuantity) : 1
         const baseUnitPrice = Math.round((Number(line.mrpPrice) / packQty) * 100) / 100
-        const lineTotal = Math.round(((Number(line.quantity) / packQty) * Number(line.mrpPrice)) * 100) / 100
+        const lineTotal = Math.round((Number(line.quantity) / packQty) * Number(line.mrpPrice) * 100) / 100
         const unitLabel = line.packUnit ? ` ${line.packUnit}` : ''
 
         services.push({
@@ -1451,8 +1451,13 @@ export async function assignCareTeamMember(req: AuthenticatedRequest, res: Respo
     }
 
     const resident = await Resident.findByPk(residentId as string)
-    if (!resident) {
+    if (!resident || resident.isDeleted) {
       res.status(404).json({ success: false, message: 'Resident not found' })
+      return
+    }
+
+    if (!resident.isResiding) {
+      res.status(400).json({ success: false, message: 'Cannot assign care team to a non-residing resident' })
       return
     }
 

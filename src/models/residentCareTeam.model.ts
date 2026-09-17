@@ -83,10 +83,8 @@ ResidentCareTeam.init(
     timestamps: true,
     indexes: [
       {
-        unique: true,
-        fields: ['resident_id', 'user_id'],
-        name: 'uq_resident_care_team_member',
-        where: { is_deleted: false },
+        fields: ['residentId', 'userId'],
+        name: 'idx_resident_care_team_resident_user',
       },
     ],
   },
