@@ -2,6 +2,7 @@ import type { Request, Response } from 'express'
 import { Op, Sequelize, type WhereOptions } from 'sequelize'
 import sequelize from '../../../config/db/index.js'
 import type { AuthenticatedRequest } from '../../../middlewares/authenticate.js'
+import { ShiftEmployeeDateStatus } from '../../../enums/roster.enum.js'
 import {
   CareTask,
   CareTaskAssignment,
@@ -14,16 +15,313 @@ import {
   PropertyUnit,
   Resident,
   ResidentCareTaskCompletion,
+  ResidentCareTeam,
   ResidentFamilyMember,
+  Shift,
+  ShiftAssignment,
+  ShiftDate,
   SubscriptionStatus,
   User,
   UserDetail,
   UserLocation,
 } from '../../../models/index.js'
+import { AuthorizationService } from '../../../services/authorization.service.js'
 import {
   completeCareTask,
   syncPackageTasksForResidents,
 } from '../../../web-app/controllers/careTaskAssignment.controller.js'
+
+export interface EmployeeShiftScope {
+  shiftAssignmentId: string
+  shiftId: string
+  shiftName: string
+  locationId: string
+  slotTimeRange: string | null
+  startTime: string
+  endTime: string
+  startMinutes: number
+  endMinutes: number
+  blockId: string | null
+  floorId: string | null
+  unitId: string | null
+  areaId: string | null
+}
+
+/**
+ * Returns today's date in YYYY-MM-DD format using local time.
+ */
+export function getTodayDateStr(): string {
+  const now = new Date()
+  const year = now.getFullYear()
+  const month = String(now.getMonth() + 1).padStart(2, '0')
+  const day = String(now.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
+/**
+ * Checks if the caller has Admin or SuperAdmin privileges.
+ */
+export async function isAdminOrSuperAdmin(authReq: AuthenticatedRequest): Promise<boolean> {
+  if (!authReq.user?.id) return false
+
+  // 1. Check user email/username if available
+  const email = (authReq.user.email || '').toLowerCase()
+  if (email === 'superadmin@rely.com' || email.startsWith('superadmin') || email.startsWith('admin@')) {
+    return true
+  }
+
+  // 2. Check roles array from JWT token
+  const tokenRoles = (authReq.user.roles || []).map((r) => String(r).toUpperCase().trim())
+  const adminRoleNames = ['SUPER_ADMIN', 'SUPERADMIN', 'ADMIN', 'PROPERTY_ADMIN', 'COMPANY_ADMIN', 'MANAGER']
+  if (tokenRoles.some((r) => adminRoleNames.includes(r))) {
+    return true
+  }
+
+  // 3. Fallback to DB check via AuthorizationService
+  try {
+    const authCtx = await AuthorizationService.getUserAuthorizationContext(authReq.user.id)
+    if (authCtx.isSuperAdmin) return true
+    const ctxRoles = (authCtx.roles || []).map((r) => String(r).toUpperCase().trim())
+    if (ctxRoles.some((r) => adminRoleNames.includes(r))) {
+      return true
+    }
+  } catch {
+    // ignore error
+  }
+
+  return false
+}
+
+/**
+ * Resolves active resident IDs assigned to a Doctor or Nurse via ResidentCareTeam.
+ */
+export async function getStaffCareTeamResidentIds(userId: string, role?: 'DOCTOR' | 'NURSE'): Promise<string[]> {
+  const where: WhereOptions = {
+    userId,
+    isActive: true,
+    isDeleted: false,
+    ...(role ? { role } : {}),
+  }
+
+  const rows = await ResidentCareTeam.findAll({
+    where,
+    attributes: ['residentId'],
+    include: [
+      {
+        model: Resident,
+        as: 'resident',
+        attributes: ['id'],
+        where: { isResiding: true, isDeleted: false },
+        required: true,
+      },
+    ],
+  })
+
+  return [...new Set(rows.map((r) => r.residentId).filter(Boolean))]
+}
+
+/**
+ * Resolves active shifts for an employee on a given date (YYYY-MM-DD).
+ * Checks both direct ShiftAssignment and covered ShiftDate records.
+ */
+export async function getEmployeeActiveShifts(
+  employeeId: string,
+  dateStr: string,
+  locationId?: string | null,
+): Promise<EmployeeShiftScope[]> {
+  const directWhere: WhereOptions = {
+    employeeId,
+    isActive: true,
+    isDeleted: false,
+    startDate: { [Op.lte]: dateStr },
+    endDate: { [Op.gte]: dateStr },
+  }
+  if (locationId) {
+    directWhere.locationId = locationId
+  }
+
+  const directAssignments = await ShiftAssignment.findAll({
+    where: directWhere,
+    include: [
+      {
+        model: Shift,
+        as: 'shift',
+        where: { isDeleted: false, isActive: true },
+        required: true,
+      },
+      {
+        model: ShiftDate,
+        as: 'dates',
+        where: { date: dateStr, isDeleted: false },
+        required: false,
+      },
+    ],
+  })
+
+  const coveredShiftDates = await ShiftDate.findAll({
+    where: {
+      coveredByEmployeeId: employeeId,
+      date: dateStr,
+      isDeleted: false,
+      isActive: true,
+      ...(locationId ? { locationId } : {}),
+    },
+    include: [
+      {
+        model: ShiftAssignment,
+        as: 'shiftAssignment',
+        where: { isDeleted: false, isActive: true },
+        include: [
+          {
+            model: Shift,
+            as: 'shift',
+            where: { isDeleted: false, isActive: true },
+            required: true,
+          },
+        ],
+      },
+    ],
+  })
+
+  const activeScopes: EmployeeShiftScope[] = []
+
+  for (const a of directAssignments) {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const json = typeof a.toJSON === 'function' ? a.toJSON() : (a as any)
+    const shiftDates = (json.dates || []) as Array<{ status?: string; isDeleted?: boolean }>
+    const targetShiftDate = shiftDates[0]
+
+    // If day_off or absent, skip
+    if (targetShiftDate) {
+      if (
+        targetShiftDate.status === ShiftEmployeeDateStatus.DAY_OFF ||
+        targetShiftDate.status === ShiftEmployeeDateStatus.ABSENT ||
+        targetShiftDate.isDeleted
+      ) {
+        continue
+      }
+    } else {
+      // Check working days if no ShiftDate row exists
+      if (!a.isWorkingOn(dateStr)) {
+        continue
+      }
+    }
+
+    const shiftObj = json.shift
+    if (!shiftObj) continue
+
+    const startTime = shiftObj.startTime || '00:00'
+    const endTime = shiftObj.endTime || '23:59'
+    const startMinutes = timeToMinutes(startTime)
+    const endMinutes = timeToMinutes(endTime)
+
+    activeScopes.push({
+      shiftAssignmentId: json.id,
+      shiftId: shiftObj.id,
+      shiftName: shiftObj.name || '',
+      locationId: json.locationId,
+      slotTimeRange: json.slotTimeRange || null,
+      startTime,
+      endTime,
+      startMinutes,
+      endMinutes,
+      blockId: json.blockId || null,
+      floorId: json.floorId || null,
+      unitId: json.unitId || null,
+      areaId: json.areaId || null,
+    })
+  }
+
+  for (const csd of coveredShiftDates) {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const json = typeof csd.toJSON === 'function' ? csd.toJSON() : (csd as any)
+    const assignment = json.shiftAssignment
+    if (!assignment) continue
+    const shiftObj = assignment.shift
+    if (!shiftObj) continue
+
+    const startTime = shiftObj.startTime || '00:00'
+    const endTime = shiftObj.endTime || '23:59'
+    const startMinutes = timeToMinutes(startTime)
+    const endMinutes = timeToMinutes(endTime)
+
+    activeScopes.push({
+      shiftAssignmentId: assignment.id,
+      shiftId: shiftObj.id,
+      shiftName: shiftObj.name || '',
+      locationId: assignment.locationId,
+      slotTimeRange: assignment.slotTimeRange || null,
+      startTime,
+      endTime,
+      startMinutes,
+      endMinutes,
+      blockId: assignment.blockId || null,
+      floorId: assignment.floorId || null,
+      unitId: assignment.unitId || null,
+      areaId: json.areaId || assignment.areaId || null,
+    })
+  }
+
+  return activeScopes
+}
+
+/**
+ * Checks if a scheduled task time falls within the shift start and end window.
+ */
+export function isTimeInShiftWindow(taskTimeStr: string | null | undefined, startMin: number, endMin: number): boolean {
+  if (!taskTimeStr) return true
+  const taskMin = timeToMinutes(taskTimeStr)
+  if (endMin >= startMin) {
+    return taskMin >= startMin && taskMin <= endMin
+  } else {
+    // Overnight shift crossing midnight (e.g. 22:00 to 06:00)
+    return taskMin >= startMin || taskMin <= endMin
+  }
+}
+
+/**
+ * Checks if a resident's unit, floor, or block matches the geographic scope of a shift.
+ */
+export function doesResidentMatchShiftScope(
+  resident:
+    | {
+        unitId?: string | null
+        unit?: {
+          id?: string | null
+          floorId?: string | null
+          floor?: {
+            id?: string | null
+            blockId?: string | null
+            block?: {
+              id?: string | null
+            } | null
+          } | null
+        } | null
+      }
+    | null
+    | undefined,
+  shift: EmployeeShiftScope,
+): boolean {
+  if (!resident) return false
+
+  // If shift specifies a unit
+  if (shift.unitId) {
+    return resident.unitId === shift.unitId || resident.unit?.id === shift.unitId
+  }
+
+  // If shift specifies a floor
+  if (shift.floorId) {
+    return resident.unit?.floorId === shift.floorId || resident.unit?.floor?.id === shift.floorId
+  }
+
+  // If shift specifies a block
+  if (shift.blockId) {
+    return resident.unit?.floor?.blockId === shift.blockId || resident.unit?.floor?.block?.id === shift.blockId
+  }
+
+  // If no unit/floor/block restriction (e.g. area-wide or entire location)
+  return true
+}
 
 /**
  * Resolves the location/property ID for the current request.
@@ -39,11 +337,11 @@ export async function resolveUserLocationId(req: AuthenticatedRequest): Promise<
     req.headers['x-property-id'] ||
     req.headers['x-location-id']) as string | undefined
 
-  if (queryLoc && queryLoc !== 'all' && queryLoc !== 'global') {
+  if (queryLoc && queryLoc !== 'all' && queryLoc !== 'global' && queryLoc !== '00000000-0000-0000-0000-000000000000') {
     return queryLoc.trim()
   }
 
-  if (req.user?.defaultLocationId) {
+  if (req.user?.defaultLocationId && req.user.defaultLocationId !== '00000000-0000-0000-0000-000000000000') {
     return req.user.defaultLocationId
   }
 
@@ -52,14 +350,14 @@ export async function resolveUserLocationId(req: AuthenticatedRequest): Promise<
       where: { userId: req.user.id, isActive: true, isDeleted: false },
       attributes: ['locId'],
     })
-    if (userLoc?.locId) {
+    if (userLoc?.locId && userLoc.locId !== '00000000-0000-0000-0000-000000000000') {
       return userLoc.locId
     }
 
     const dbUser = await User.findByPk(req.user.id, {
       attributes: ['id', 'defaultLocationId'],
     })
-    if (dbUser?.defaultLocationId) {
+    if (dbUser?.defaultLocationId && dbUser.defaultLocationId !== '00000000-0000-0000-0000-000000000000') {
       return dbUser.defaultLocationId
     }
   }
@@ -184,9 +482,55 @@ export async function getNurseCareTasks(req: Request, res: Response): Promise<vo
     const activeTab = rawTab === 'COMPLETED' ? 'COMPLETED' : rawTab === 'ALL' ? 'ALL' : 'PENDING'
     const search = typeof req.query.search === 'string' ? req.query.search.trim() : ''
 
-    const todayStr = new Date().toISOString().split('T')[0] as string
+    const todayStr = getTodayDateStr()
     const targetDateStr =
       typeof req.query.targetDate === 'string' && req.query.targetDate ? req.query.targetDate : todayStr
+
+    const isAdmin = await isAdminOrSuperAdmin(authReq)
+    let filterNurseId: string | null = null
+    let careTeamResidentIds: string[] | null = null
+    let activeShifts: EmployeeShiftScope[] | null = null
+
+    if (!isAdmin) {
+      filterNurseId = (req.query.nurseId as string) || authReq.user?.id || null
+      if (filterNurseId) {
+        // 1. Resident Care Team Filter
+        careTeamResidentIds = await getStaffCareTeamResidentIds(filterNurseId, 'NURSE')
+        if (careTeamResidentIds.length === 0) {
+          res.status(200).json({
+            success: true,
+            tab: activeTab,
+            locationId,
+            counts: { pending: 0, completed: 0 },
+            data: [],
+            grouped: [],
+            message: 'No residents assigned to nurse care team',
+          })
+          return
+        }
+
+        // 2. Shift & Roster Filter
+        activeShifts = await getEmployeeActiveShifts(filterNurseId, targetDateStr, locationId)
+        if (activeShifts.length === 0) {
+          res.status(200).json({
+            success: true,
+            tab: activeTab,
+            locationId,
+            counts: { pending: 0, completed: 0 },
+            data: [],
+            grouped: [],
+            message: 'No active shift scheduled for this date',
+          })
+          return
+        }
+      }
+    } else {
+      // For Admin / Superadmin: show all.
+      // If admin explicitly requested a specific nurse via query param ?nurseId=
+      if (req.query.nurseId && typeof req.query.nurseId === 'string') {
+        filterNurseId = req.query.nurseId.trim()
+      }
+    }
 
     // 1. Ensure any bundled care package tasks are auto-synced
     if (locationId) {
@@ -217,6 +561,15 @@ export async function getNurseCareTasks(req: Request, res: Response): Promise<vo
       {
         startDate: { [Op.lte]: targetDateStr },
       },
+      ...(careTeamResidentIds ? [{ residentId: { [Op.in]: careTeamResidentIds } }] : []),
+      Sequelize.literal(`
+        EXISTS (
+          SELECT 1 FROM residents r 
+          WHERE r.id = CareTaskAssignment.residentId 
+            AND r.isResiding = true 
+            AND r.isDeleted = false
+        )
+      `),
       Sequelize.literal(`
         (
           (CareTaskAssignment.completedAt IS NULL OR DATE(CareTaskAssignment.completedAt) != ${sequelize.escape(targetDateStr)})
@@ -255,23 +608,27 @@ export async function getNurseCareTasks(req: Request, res: Response): Promise<vo
       where: { [Op.and]: pendingAndConditions },
     })
 
-    const targetNurseId = (req.query.nurseId as string) || authReq.user?.id || null
-
     const completedCountWhere: Record<string | symbol, unknown> = {
       isDeleted: false,
       status: 'COMPLETED',
-      ...(targetNurseId ? { completedBy: targetNurseId } : {}),
+      ...(filterNurseId ? { completedBy: filterNurseId } : {}),
       ...(locationId
         ? {
             [Op.or]: [
               { propertyId: locationId },
               { propertyId: null },
               Sequelize.literal(
-                `EXISTS (SELECT 1 FROM residents r WHERE r.id = ResidentCareTaskCompletion.residentId AND r.locId = ${sequelize.escape(locationId)})`,
+                `EXISTS (SELECT 1 FROM residents r WHERE r.id = ResidentCareTaskCompletion.residentId AND r.locId = ${sequelize.escape(locationId)} AND r.isResiding = true AND r.isDeleted = false)`,
               ),
             ],
           }
-        : {}),
+        : {
+            [Op.and]: [
+              Sequelize.literal(
+                `EXISTS (SELECT 1 FROM residents r WHERE r.id = ResidentCareTaskCompletion.residentId AND r.isResiding = true AND r.isDeleted = false)`,
+              ),
+            ],
+          }),
     }
 
     const completedCount = await ResidentCareTaskCompletion.count({
@@ -297,9 +654,9 @@ export async function getNurseCareTasks(req: Request, res: Response): Promise<vo
           {
             model: Resident,
             as: 'resident',
-            attributes: ['id', 'firstName', 'lastName', 'phone', 'locId', 'unitId'],
-            where: { isDeleted: false },
-            required: false,
+            attributes: ['id', 'firstName', 'lastName', 'phone', 'locId', 'unitId', 'isResiding'],
+            where: { isDeleted: false, isResiding: true },
+            required: true,
             include: [
               {
                 model: PropertyUnit,
@@ -411,10 +768,25 @@ export async function getNurseCareTasks(req: Request, res: Response): Promise<vo
         }
       }
 
+      // Filter assignments by active shift area and shift working hours
+      let effectiveAssignments = assignments
+      if (activeShifts && activeShifts.length > 0) {
+        effectiveAssignments = assignments.filter((a) => {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const json = typeof a.toJSON === 'function' ? a.toJSON() : (a as any)
+          const resObj = json.resident
+          const taskTime = json.time ? String(json.time) : null
+          return activeShifts!.some(
+            (s) =>
+              doesResidentMatchShiftScope(resObj, s) && isTimeInShiftWindow(taskTime, s.startMinutes, s.endMinutes),
+          )
+        })
+      }
+
       // Group assignments by resident & task
       const groupMap = new Map<string, GroupedCareAssignment>()
 
-      for (const a of assignments) {
+      for (const a of effectiveAssignments) {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const json = typeof a.toJSON === 'function' ? a.toJSON() : (a as any)
         const resId = String(json.residentId || '')
@@ -481,13 +853,20 @@ export async function getNurseCareTasks(req: Request, res: Response): Promise<vo
             task: taskObj
               ? {
                   id: taskObj.id,
-                  careTaskName: taskObj.careTaskName,
+                  careTaskName: taskObj.careTaskName || 'Care Task',
                   careTaskDescription: taskObj.careTaskDescription || null,
                   billingType: taskObj.billingType || 'SESSION',
                   price: Number(taskObj.price || 0),
                   careTaskImage: taskObj.careTaskImage || null,
                 }
-              : null,
+              : {
+                  id: tId,
+                  careTaskName: 'Care Task',
+                  careTaskDescription: null,
+                  billingType: 'SESSION',
+                  price: 0,
+                  careTaskImage: null,
+                },
             property: json.property
               ? {
                   id: json.property.id,
@@ -552,19 +931,28 @@ export async function getNurseCareTasks(req: Request, res: Response): Promise<vo
         }
       }
 
-      const groupedAssignments = Array.from(groupMap.values()).map((group) => {
-        group.slots.sort((a, b) => timeToMinutes(a.time) - timeToMinutes(b.time))
-        group.totalSlots = group.slots.length
-        return group
-      })
+      const groupedAssignments = Array.from(groupMap.values())
+        .filter((group) => group.slots.length > 0)
+        .map((group) => {
+          group.slots.sort((a, b) => timeToMinutes(a.time) - timeToMinutes(b.time))
+          group.totalSlots = group.slots.length
+          return group
+        })
+
+      const resolvedPendingCount =
+        activeShifts && activeShifts.length > 0
+          ? groupedAssignments.reduce((sum, g) => sum + g.slots.length, 0)
+          : pendingCount
+
+      const resolvedCompletedCount = completedCount
 
       res.status(200).json({
         success: true,
         tab: 'PENDING',
         locationId,
         counts: {
-          pending: pendingCount,
-          completed: completedCount,
+          pending: resolvedPendingCount,
+          completed: resolvedCompletedCount,
         },
         data: groupedAssignments,
         grouped: groupedAssignments,
@@ -576,7 +964,15 @@ export async function getNurseCareTasks(req: Request, res: Response): Promise<vo
     const completedAndConditions: WhereOptions[] = [
       { isDeleted: false },
       { status: 'COMPLETED' },
-      ...(targetNurseId ? [{ completedBy: targetNurseId }] : []),
+      ...(filterNurseId ? [{ completedBy: filterNurseId }] : []),
+      Sequelize.literal(`
+        EXISTS (
+          SELECT 1 FROM residents r 
+          WHERE r.id = ResidentCareTaskCompletion.residentId 
+            AND r.isResiding = true 
+            AND r.isDeleted = false
+        )
+      `),
     ]
 
     if (locationId) {
@@ -608,8 +1004,9 @@ export async function getNurseCareTasks(req: Request, res: Response): Promise<vo
         {
           model: Resident,
           as: 'resident',
-          attributes: ['id', 'firstName', 'lastName', 'phone', 'locId', 'unitId'],
-          required: false,
+          attributes: ['id', 'firstName', 'lastName', 'phone', 'locId', 'unitId', 'isResiding'],
+          where: { isDeleted: false, isResiding: true },
+          required: true,
           include: [
             {
               model: PropertyUnit,
@@ -682,7 +1079,9 @@ export async function getNurseCareTasks(req: Request, res: Response): Promise<vo
       limit: 100,
     })
 
-    const formattedCompletions = completions.map((c) => {
+    const effectiveCompletions = completions
+
+    const formattedCompletions = effectiveCompletions.map((c) => {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const json = typeof c.toJSON === 'function' ? c.toJSON() : (c as any)
       const resObj = json.resident
@@ -731,13 +1130,62 @@ export async function getNurseCareTasks(req: Request, res: Response): Promise<vo
       }
     })
 
+    const resolvedCompletedCount = search ? formattedCompletions.length : completedCount
+
+    let resolvedPendingCount = pendingCount
+    if (activeShifts && activeShifts.length > 0) {
+      const pendingForCount = await CareTaskAssignment.findAll({
+        where: { [Op.and]: pendingAndConditions },
+        attributes: ['id', 'residentId', 'taskId', 'time'],
+        include: [
+          {
+            model: Resident,
+            as: 'resident',
+            attributes: ['id', 'unitId', 'isResiding'],
+            where: { isDeleted: false, isResiding: true },
+            required: true,
+            include: [
+              {
+                model: PropertyUnit,
+                as: 'unit',
+                attributes: ['id', 'floorId'],
+                include: [
+                  {
+                    model: PropertyFloor,
+                    as: 'floor',
+                    attributes: ['id', 'blockId'],
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      })
+
+      const uniqueSlots = new Set<string>()
+      for (const a of pendingForCount) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const json = typeof a.toJSON === 'function' ? a.toJSON() : (a as any)
+        const resObj = json.resident
+        const taskTime = json.time ? String(json.time) : null
+        const isMatch = activeShifts.some(
+          (s) => doesResidentMatchShiftScope(resObj, s) && isTimeInShiftWindow(taskTime, s.startMinutes, s.endMinutes),
+        )
+        if (isMatch) {
+          const slotTime = taskTime || '12:00 PM'
+          uniqueSlots.add(`${json.residentId}_${json.taskId}_${slotTime}`)
+        }
+      }
+      resolvedPendingCount = uniqueSlots.size
+    }
+
     res.status(200).json({
       success: true,
       tab: 'COMPLETED',
       locationId,
       counts: {
-        pending: pendingCount,
-        completed: completedCount,
+        pending: resolvedPendingCount,
+        completed: resolvedCompletedCount,
       },
       data: formattedCompletions,
     })
@@ -802,11 +1250,70 @@ export async function getDoctorResidents(req: Request, res: Response): Promise<v
     const authReq = req as AuthenticatedRequest
     const locId = await resolveUserLocationId(authReq)
     const search = typeof req.query.search === 'string' ? req.query.search.trim() : ''
+    const isAdmin = await isAdminOrSuperAdmin(authReq)
 
-    const andConditions: WhereOptions[] = [{ isDeleted: false }]
+    const andConditions: WhereOptions[] = [{ isDeleted: false }, { isResiding: true }]
 
     if (locId && locId !== 'all' && locId !== 'global') {
       andConditions.push({ locId })
+    }
+
+    if (!isAdmin) {
+      const targetDoctorId = (req.query.doctorId as string) || authReq.user?.id || null
+      if (targetDoctorId) {
+        // 1. Resident Care Team Filter
+        const careTeamResidentIds = await getStaffCareTeamResidentIds(targetDoctorId, 'DOCTOR')
+        if (careTeamResidentIds.length === 0) {
+          res.status(200).json({
+            success: true,
+            message: 'Location residents fetched successfully',
+            data: [],
+            pagination: {
+              page: 1,
+              limit: 10,
+              total: 0,
+              totalPages: 1,
+              hasNextPage: false,
+              hasPrevPage: false,
+            },
+            total: 0,
+            locationId: locId,
+          })
+          return
+        }
+
+        andConditions.push({ id: { [Op.in]: careTeamResidentIds } })
+
+        // 2. Shift & Roster Filter
+        const todayStr = getTodayDateStr()
+        const targetDateStr =
+          typeof req.query.targetDate === 'string' && req.query.targetDate ? req.query.targetDate : todayStr
+        const doctorShifts = await getEmployeeActiveShifts(targetDoctorId, targetDateStr, locId)
+
+        if (doctorShifts.length > 0) {
+          const shiftOrConditions: WhereOptions[] = []
+          for (const shift of doctorShifts) {
+            if (shift.unitId) {
+              shiftOrConditions.push({ unitId: shift.unitId })
+            } else if (shift.floorId) {
+              shiftOrConditions.push(
+                Sequelize.literal(
+                  `EXISTS (SELECT 1 FROM property_units pu WHERE pu.id = Resident.unitId AND pu.floorId = ${sequelize.escape(shift.floorId)})`,
+                ),
+              )
+            } else if (shift.blockId) {
+              shiftOrConditions.push(
+                Sequelize.literal(
+                  `EXISTS (SELECT 1 FROM property_units pu JOIN property_floors pf ON pf.id = pu.floorId WHERE pu.id = Resident.unitId AND pf.blockId = ${sequelize.escape(shift.blockId)})`,
+                ),
+              )
+            }
+          }
+          if (shiftOrConditions.length > 0) {
+            andConditions.push({ [Op.or]: shiftOrConditions })
+          }
+        }
+      }
     }
 
     if (search) {
@@ -978,7 +1485,7 @@ export async function getDoctorResidentDetails(req: Request, res: Response): Pro
     }
 
     const resident = await Resident.findOne({
-      where: { id, isDeleted: false },
+      where: { id, isDeleted: false, isResiding: true },
       include: [
         {
           model: Property,
@@ -1049,6 +1556,40 @@ export async function getDoctorResidentDetails(req: Request, res: Response): Pro
     if (!resident) {
       res.status(404).json({ success: false, message: 'Resident not found' })
       return
+    }
+
+    const authReq = req as AuthenticatedRequest
+    const isAdmin = await isAdminOrSuperAdmin(authReq)
+
+    if (!isAdmin) {
+      const targetStaffId = (req.query.doctorId as string) || (req.query.nurseId as string) || authReq.user?.id || null
+      if (targetStaffId) {
+        const careTeamResidentIds = await getStaffCareTeamResidentIds(targetStaffId)
+        const residentIdStr = String(id)
+        if (!careTeamResidentIds.includes(residentIdStr)) {
+          res.status(403).json({
+            success: false,
+            message: 'Resident is not assigned to your care team',
+          })
+          return
+        }
+
+        const todayStr = getTodayDateStr()
+        const targetDateStr =
+          typeof req.query.targetDate === 'string' && req.query.targetDate ? req.query.targetDate : todayStr
+        const staffShifts = await getEmployeeActiveShifts(targetStaffId, targetDateStr, resident.locId)
+
+        if (staffShifts.length > 0) {
+          const matchesAnyShift = staffShifts.some((s) => doesResidentMatchShiftScope(resident, s))
+          if (!matchesAnyShift) {
+            res.status(403).json({
+              success: false,
+              message: 'Resident is outside your assigned shift area for today',
+            })
+            return
+          }
+        }
+      }
     }
 
     const unit = resident.unit as
@@ -1164,6 +1705,7 @@ export async function getDoctorResidentDetails(req: Request, res: Response): Pro
  */
 export async function getDoctorResidentCareTasks(req: Request, res: Response): Promise<void> {
   try {
+    const authReq = req as AuthenticatedRequest
     const residentId = (req.params.residentId ||
       req.params.id ||
       req.query.residentId ||
@@ -1173,11 +1715,35 @@ export async function getDoctorResidentCareTasks(req: Request, res: Response): P
       return
     }
 
+    const isAdmin = await isAdminOrSuperAdmin(authReq)
+
+    if (!isAdmin) {
+      const targetStaffId = (req.query.doctorId as string) || (req.query.nurseId as string) || authReq.user?.id || null
+      if (targetStaffId) {
+        const careTeamResidentIds = await getStaffCareTeamResidentIds(targetStaffId)
+        if (!careTeamResidentIds.includes(residentId)) {
+          res.status(403).json({
+            success: false,
+            message: 'Resident is not assigned to your care team',
+          })
+          return
+        }
+      }
+    }
+
     const rawStatus = String(req.query.status || req.query.tab || 'ALL').toUpperCase()
     const page = Math.max(1, parseInt(String(req.query.page || '1'), 10))
     const limit = Math.max(1, Math.min(100, parseInt(String(req.query.limit || '5'), 10)))
 
-    // Fetch active assignments for this resident
+    // Fetch active assignments for this resident (ensuring resident is physically residing)
+    const targetResident = await Resident.findOne({
+      where: { id: residentId, isDeleted: false, isResiding: true },
+    })
+    if (!targetResident) {
+      res.status(404).json({ success: false, message: 'Resident not found or is non-residing' })
+      return
+    }
+
     const assignments = await CareTaskAssignment.findAll({
       where: {
         residentId,
@@ -1346,7 +1912,16 @@ export async function getDoctorResidentCareTasks(req: Request, res: Response): P
 export async function getAvailableCareTasks(req: Request, res: Response): Promise<void> {
   try {
     const authReq = req as AuthenticatedRequest
-    const locId = await resolveUserLocationId(authReq)
+    const queryPropertyId = req.query.propertyId as string | undefined
+    let locId: string | null = null
+    if (queryPropertyId === 'all' || queryPropertyId === 'global') {
+      locId = 'all'
+    } else if (queryPropertyId && queryPropertyId.trim()) {
+      locId = queryPropertyId.trim()
+    } else {
+      locId = await resolveUserLocationId(authReq)
+    }
+
     const search = typeof req.query.search === 'string' ? req.query.search.trim() : ''
 
     const andConditions: WhereOptions[] = [{ isDeleted: false }, { isActive: true }]
@@ -1360,16 +1935,20 @@ export async function getAvailableCareTasks(req: Request, res: Response): Promis
     if (search) {
       const q = `%${search}%`
       andConditions.push({
-        [Op.or]: [{ careTaskName: { [Op.like]: q } }, { careTaskDescription: { [Op.like]: q } }],
+        [Op.or]: [
+          { careTaskName: { [Op.like]: q } },
+          { careTaskDescription: { [Op.like]: q } },
+          { billingType: { [Op.like]: q } },
+        ],
       })
     }
 
     const where = { [Op.and]: andConditions }
     const total = await CareTask.count({ where })
 
-    const isAll = req.query.limit === 'all' || req.query.all === 'true'
+    const isAll = req.query.limit === 'all' || req.query.all === 'true' || !req.query.limit
     const page = Math.max(1, parseInt(String(req.query.page || '1'), 10))
-    const limit = isAll ? total || 10 : Math.max(1, Math.min(100, parseInt(String(req.query.limit || '10'), 10)))
+    const limit = isAll ? total || 50 : Math.max(1, Math.min(100, parseInt(String(req.query.limit || '50'), 10)))
     const totalPages = isAll ? 1 : Math.max(1, Math.ceil(total / limit))
     const safePage = isAll ? 1 : Math.min(page, totalPages)
     const offset = isAll ? 0 : (safePage - 1) * limit
@@ -1454,10 +2033,10 @@ export async function assignDoctorCareTask(req: Request, res: Response): Promise
       return
     }
 
-    // 1. Verify resident exists
+    // 1. Verify resident exists and is physically residing
     const resident = await Resident.findByPk(residentId)
-    if (!resident || resident.isDeleted) {
-      res.status(404).json({ success: false, message: 'Resident not found' })
+    if (!resident || resident.isDeleted || !resident.isResiding) {
+      res.status(400).json({ success: false, message: 'Resident not found or is non-residing' })
       return
     }
 

@@ -7,6 +7,7 @@ import {
   BillingPartyRole,
   BillingPartyType,
   BillingRunType,
+  PaymentMethod,
   ProrationPolicy,
   SubscriptionStatus,
 } from '../enums/billing.enum.js'
@@ -157,7 +158,10 @@ export const updateBillingEventSchema = z
     quantity: z.number().positive().optional(),
     unitPrice: z.number().min(0).optional(),
     amount: z.number().min(0).optional(),
-    serviceDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Service date must be YYYY-MM-DD').optional(),
+    serviceDate: z
+      .string()
+      .regex(/^\d{4}-\d{2}-\d{2}$/, 'Service date must be YYYY-MM-DD')
+      .optional(),
   })
   .passthrough()
 
@@ -168,10 +172,17 @@ export const generateInvoiceSchema = z
     billingAccountId: z.string().uuid('Valid billing account ID is required'),
     periodStart: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Period start must be YYYY-MM-DD'),
     periodEnd: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Period end must be YYYY-MM-DD'),
-    issueDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Issue date must be YYYY-MM-DD').optional(),
-    dueDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Due date must be YYYY-MM-DD').optional(),
+    issueDate: z
+      .string()
+      .regex(/^\d{4}-\d{2}-\d{2}$/, 'Issue date must be YYYY-MM-DD')
+      .optional(),
+    dueDate: z
+      .string()
+      .regex(/^\d{4}-\d{2}-\d{2}$/, 'Due date must be YYYY-MM-DD')
+      .optional(),
     isPreview: z.boolean().default(false),
     includePendingEvents: z.boolean().default(true).optional(),
+    pendingEventIds: z.array(z.string().uuid()).optional(),
     billingMode: z.enum(['MONTHLY', 'SUPPLEMENTARY', 'FINAL_DISCHARGE']).optional(),
     includeSubscriptions: z.boolean().default(true).optional(),
     discountType: z.enum(['FIXED', 'PERCENTAGE']).optional(),
@@ -197,5 +208,26 @@ export const triggerBillingRunSchema = z
     billingPeriodStart: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Billing period start must be YYYY-MM-DD'),
     billingPeriodEnd: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Billing period end must be YYYY-MM-DD'),
     runType: z.nativeEnum(BillingRunType).default(BillingRunType.MANUAL),
+  })
+  .passthrough()
+
+export const recordPaymentSchema = z
+  .object({
+    billingAccountId: z.string().uuid('Valid billing account ID is required'),
+    amount: z.number().positive('Payment amount must be greater than 0'),
+    paymentDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Payment date must be YYYY-MM-DD'),
+    paymentMethod: z.nativeEnum(PaymentMethod),
+    transactionReference: z.string().trim().max(255).optional().nullable(),
+    bankName: z.string().trim().max(255).optional().nullable(),
+    chequeNumber: z.string().trim().max(100).optional().nullable(),
+    notes: z.string().trim().max(500).optional().nullable(),
+    allocations: z
+      .array(
+        z.object({
+          invoiceId: z.string().uuid('Valid invoice ID is required'),
+          amount: z.number().positive('Allocated amount must be greater than 0'),
+        }),
+      )
+      .default([]),
   })
   .passthrough()

@@ -1,4 +1,4 @@
-import type { Transaction } from 'sequelize'
+import type { Transaction, WhereOptions } from 'sequelize'
 import { Op } from 'sequelize'
 import sequelize from '../../config/db/index.js'
 import {
@@ -35,6 +35,7 @@ export interface GenerateInvoiceParams {
   dueDate?: string | undefined
   isPreview?: boolean | undefined
   includePendingEvents?: boolean | undefined
+  pendingEventIds?: string[] | undefined
   billingMode?: 'MONTHLY' | 'SUPPLEMENTARY' | 'FINAL_DISCHARGE' | undefined
   includeSubscriptions?: boolean | undefined
   discountType?: 'FIXED' | 'PERCENTAGE' | undefined
@@ -193,9 +194,7 @@ export async function generateInvoiceForAccount(
   // 2. Determine Bill-To Party (Payer Decoupling)
   const parties = account.parties || []
   const primaryPayer =
-    parties.find((p) => p.role === BillingPartyRole.PRIMARY_PAYER) ||
-    parties.find((p) => p.isDefault) ||
-    parties[0]
+    parties.find((p) => p.role === BillingPartyRole.PRIMARY_PAYER) || parties.find((p) => p.isDefault) || parties[0]
 
   const billToName = primaryPayer?.partyName || account.primaryResident?.firstName || account.accountName
   const billToEmail = primaryPayer?.partyEmail || account.primaryResident?.email || null
@@ -204,8 +203,7 @@ export async function generateInvoiceForAccount(
   const billToGstin = primaryPayer?.partyGstin || null
 
   // 3. Collect Active Subscriptions for the Account (excluded in SUPPLEMENTARY mode)
-  const shouldIncludeSubscriptions =
-    params.includeSubscriptions !== false && params.billingMode !== 'SUPPLEMENTARY'
+  const shouldIncludeSubscriptions = params.includeSubscriptions !== false && params.billingMode !== 'SUPPLEMENTARY'
 
   const subscriptions = shouldIncludeSubscriptions
     ? await BillingSubscription.findAll({
@@ -296,14 +294,20 @@ export async function generateInvoiceForAccount(
   }
 
   // 4. Collect Pending Usage Events for the Account
+  const eventWhere: WhereOptions = {
+    billingAccountId,
+    status: BillingEventStatus.PENDING,
+    serviceDate: { [Op.lte]: periodEnd },
+  }
+  if (Array.isArray(params.pendingEventIds)) {
+    ;(eventWhere as Record<string, unknown>).id = { [Op.in]: params.pendingEventIds }
+  }
+
   const events =
-    params.includePendingEvents !== false
+    params.includePendingEvents !== false &&
+    (!Array.isArray(params.pendingEventIds) || params.pendingEventIds.length > 0)
       ? await BillingEvent.findAll({
-          where: {
-            billingAccountId,
-            status: BillingEventStatus.PENDING,
-            serviceDate: { [Op.lte]: periodEnd },
-          },
+          where: eventWhere,
           include: [{ model: BillingProduct, as: 'product' }],
           order: [['serviceDate', 'ASC']],
         })
@@ -362,9 +366,7 @@ export async function generateInvoiceForAccount(
   const taxableAmount = Math.max(0, Number((rawTaxableAmount - discountTotal).toFixed(2)))
 
   const effectiveTaxFactor = rawTaxableAmount > 0 ? taxableAmount / rawTaxableAmount : 1
-  const rawTaxTotal = globalGstEnabled
-    ? Number(draftLines.reduce((sum, l) => sum + l.taxAmount, 0).toFixed(2))
-    : 0
+  const rawTaxTotal = globalGstEnabled ? Number(draftLines.reduce((sum, l) => sum + l.taxAmount, 0).toFixed(2)) : 0
   const taxTotal = globalGstEnabled ? Number((rawTaxTotal * effectiveTaxFactor).toFixed(2)) : 0
 
   const rawTotal = subtotal - discountTotal + taxTotal

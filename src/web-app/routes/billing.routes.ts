@@ -6,6 +6,7 @@ import {
   cancelEvent,
   cancelSubscription,
   createBillingAccount,
+  createPayment,
   createSubscription,
   generateInvoice,
   getBillingAccountById,
@@ -14,6 +15,7 @@ import {
   getInvoiceById,
   getInvoices,
   getLedgerStatement,
+  getPaymentsForAccount,
   getPendingEvents,
   getSubscriptions,
   getTaxSettings,
@@ -75,11 +77,15 @@ router.post('/invoices/generate', generateInvoice)
 router.get('/invoices', getInvoices)
 router.get('/invoices/:id', getInvoiceById)
 
-// ── 6. Batch Billing Runs ───────────────────────────────────────────────────
+// ── 6. Payments & Allocations ───────────────────────────────────────────────
+router.post('/payments', createPayment)
+router.get('/accounts/:accountId/payments', getPaymentsForAccount)
+
+// ── 7. Batch Billing Runs ───────────────────────────────────────────────────
 router.post('/runs', triggerBatchRun)
 router.get('/runs', getBillingRuns)
 
-// ── 7. Global GST / Tax Settings ────────────────────────────────────────────
+// ── 8. Global GST / Tax Settings ────────────────────────────────────────────
 router.get('/settings/tax', getTaxSettings)
 router.put('/settings/tax', updateTaxSettings)
 
