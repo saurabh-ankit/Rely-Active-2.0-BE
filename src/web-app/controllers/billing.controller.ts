@@ -1284,12 +1284,25 @@ export async function syncUnitFolioAndSubscriptions(unit: any, primaryResident: 
         if (!foodProduct) {
           foodProduct = await BillingProduct.findOne({ where: { category: 'FOOD' } })
         }
+        if (!foodProduct && folio.companyId) {
+          foodProduct = await BillingProduct.create({
+            companyId: folio.companyId,
+            category: BillingProductCategory.FOOD,
+            chargeType: ChargeType.SUBSCRIPTION,
+            productCode: 'PROD-FOOD-PKG',
+            productName: 'Food Package Subscription',
+            description: 'Monthly Food Package Subscription',
+            isTaxable: true,
+            defaultTaxRate: 5,
+            isActive: true,
+          })
+        }
 
         for (const fnbSub of activeFnbPackages) {
           const propPkg = (fnbSub as any).propertyPackage
           const globalPkg = propPkg?.globalPackage
           const pkgName = globalPkg?.name || 'Food Package'
-          const price = Number(propPkg?.price || 0)
+          const price = Number(fnbSub.totalPrice || propPkg?.price || 0)
 
           const existingBillingSub = await BillingSubscription.findOne({
             where: { fnbPackageId: fnbSub.id },
@@ -1314,10 +1327,14 @@ export async function syncUnitFolioAndSubscriptions(unit: any, primaryResident: 
           } else if (existingBillingSub) {
             if (
               existingBillingSub.status !== SubscriptionStatus.ACTIVE ||
+              !existingBillingSub.isActive ||
+              existingBillingSub.billingAccountId !== folio.id ||
               Number(existingBillingSub.unitPrice) !== price
             ) {
               await existingBillingSub.update({
+                billingAccountId: folio.id,
                 status: SubscriptionStatus.ACTIVE,
+                isActive: true,
                 unitPrice: price,
                 description: pkgName,
               })
