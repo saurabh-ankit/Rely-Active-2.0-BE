@@ -7,6 +7,7 @@ import {
   BillingPartyRole,
   BillingPartyType,
   BillingRunType,
+  PaymentMethod,
   ProrationPolicy,
   SubscriptionStatus,
 } from '../enums/billing.enum.js'
@@ -207,5 +208,26 @@ export const triggerBillingRunSchema = z
     billingPeriodStart: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Billing period start must be YYYY-MM-DD'),
     billingPeriodEnd: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Billing period end must be YYYY-MM-DD'),
     runType: z.nativeEnum(BillingRunType).default(BillingRunType.MANUAL),
+  })
+  .passthrough()
+
+export const recordPaymentSchema = z
+  .object({
+    billingAccountId: z.string().uuid('Valid billing account ID is required'),
+    amount: z.number().positive('Payment amount must be greater than 0'),
+    paymentDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Payment date must be YYYY-MM-DD'),
+    paymentMethod: z.nativeEnum(PaymentMethod),
+    transactionReference: z.string().trim().max(255).optional().nullable(),
+    bankName: z.string().trim().max(255).optional().nullable(),
+    chequeNumber: z.string().trim().max(100).optional().nullable(),
+    notes: z.string().trim().max(500).optional().nullable(),
+    allocations: z
+      .array(
+        z.object({
+          invoiceId: z.string().uuid('Valid invoice ID is required'),
+          amount: z.number().positive('Allocated amount must be greater than 0'),
+        }),
+      )
+      .default([]),
   })
   .passthrough()

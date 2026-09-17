@@ -49,6 +49,7 @@ import {
   ingestBillingEventSchema,
   updateBillingEventSchema,
   pauseSubscriptionSchema,
+  recordPaymentSchema,
   taxSettingsSchema,
   triggerBillingRunSchema,
   updateBillingAccountSchema,
@@ -56,6 +57,7 @@ import {
 } from '../../validations/billing.validation.js'
 import { generateInvoiceForAccount, resolveBillingAccount } from '../../services/billing/invoiceGenerator.service.js'
 import { getAccountLedgerStatement } from '../../services/billing/ledger.service.js'
+import { recordPayment, getAccountPayments } from '../../services/billing/payment.service.js'
 import { getBillingQueue, processBatchBilling } from '../../queues/billing.queue.js'
 import { logger } from '../../config/logger.js'
 import { uploadFileToS3 } from '../../middlewares/s3/index.js'
@@ -897,7 +899,55 @@ export async function getLedgerStatement(req: AuthenticatedRequest, res: Respons
   }
 }
 
-// ── 7. BATCH BILLING RUNS ───────────────────────────────────────────────────
+// ── 7. PAYMENTS & ALLOCATIONS ───────────────────────────────────────────────
+
+export async function createPayment(req: AuthenticatedRequest, res: Response): Promise<void> {
+  try {
+    const parseResult = recordPaymentSchema.safeParse(req.body)
+    if (!parseResult.success) {
+      res.status(400).json({ success: false, errors: parseResult.error.flatten().fieldErrors })
+      return
+    }
+
+    const result = await recordPayment({
+      billingAccountId: parseResult.data.billingAccountId,
+      amount: parseResult.data.amount,
+      paymentDate: parseResult.data.paymentDate,
+      paymentMethod: parseResult.data.paymentMethod,
+      transactionReference: parseResult.data.transactionReference,
+      bankName: parseResult.data.bankName,
+      chequeNumber: parseResult.data.chequeNumber,
+      notes: parseResult.data.notes,
+      allocations: parseResult.data.allocations,
+      performedBy: req.user?.id,
+    })
+
+    res.status(201).json({ success: true, data: result })
+  } catch (error: unknown) {
+    const msg = error instanceof Error ? error.message : 'Failed to record payment'
+    logger.error({ error }, 'Failed to record payment')
+    res.status(400).json({ success: false, message: msg })
+  }
+}
+
+export async function getPaymentsForAccount(req: AuthenticatedRequest, res: Response): Promise<void> {
+  try {
+    const accountId = String(req.params.accountId || '')
+    if (!accountId) {
+      res.status(400).json({ success: false, message: 'Account ID is required' })
+      return
+    }
+
+    const payments = await getAccountPayments(accountId)
+    res.json({ success: true, data: payments })
+  } catch (error: unknown) {
+    const msg = error instanceof Error ? error.message : 'Internal error'
+    logger.error({ error }, 'Failed to fetch payments for account')
+    res.status(500).json({ success: false, message: msg })
+  }
+}
+
+// ── 8. BATCH BILLING RUNS ───────────────────────────────────────────────────
 
 export async function triggerBatchRun(req: AuthenticatedRequest, res: Response): Promise<void> {
   try {
