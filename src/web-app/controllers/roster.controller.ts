@@ -922,6 +922,138 @@ export const deleteEmployeeShift = async (req: AuthenticatedRequest, res: Respon
   }
 }
 
+type BulkLocationTarget = {
+  areaId: string | null
+  blockId: string | null
+  floorId: string | null
+  unitId: string | null
+}
+
+function normalizeIdList(value: unknown): string[] {
+  if (!Array.isArray(value)) return []
+  return value.map((id) => normalizeOptionalId(id)).filter((id): id is string => !!id)
+}
+
+async function resolveBulkLocationTargets(params: {
+  areaId?: unknown
+  areaIds?: unknown
+  blockId?: unknown
+  blockIds?: unknown
+  floorId?: unknown
+  floorIds?: unknown
+  unitId?: unknown
+  unitIds?: unknown
+}): Promise<{ targets: BulkLocationTarget[]; error?: string }> {
+  const areaIdsList = normalizeIdList(params.areaIds)
+  if (areaIdsList.length === 0) {
+    const singleArea = normalizeAreaId(params.areaId)
+    if (singleArea) areaIdsList.push(singleArea)
+  }
+
+  const unitIdsList = normalizeIdList(params.unitIds)
+  const singleUnit = normalizeUnitId(params.unitId)
+  if (singleUnit && !unitIdsList.includes(singleUnit)) unitIdsList.push(singleUnit)
+
+  const floorIdsList = normalizeIdList(params.floorIds)
+  const singleFloor = normalizeOptionalId(params.floorId)
+  if (singleFloor && !floorIdsList.includes(singleFloor)) floorIdsList.push(singleFloor)
+
+  const blockIdsList = normalizeIdList(params.blockIds)
+  const singleBlock = normalizeOptionalId(params.blockId)
+  if (singleBlock && !blockIdsList.includes(singleBlock)) blockIdsList.push(singleBlock)
+
+  const hasArea = areaIdsList.length > 0
+  const hasUnitHierarchy = blockIdsList.length > 0 || floorIdsList.length > 0 || unitIdsList.length > 0
+
+  if (hasArea && hasUnitHierarchy) {
+    return { targets: [], error: 'Cannot provide both area and block/floor/unit' }
+  }
+
+  if (hasArea) {
+    return {
+      targets: areaIdsList.map((aId) => ({
+        areaId: aId,
+        blockId: null,
+        floorId: null,
+        unitId: null,
+      })),
+    }
+  }
+
+  if (unitIdsList.length > 0) {
+    const units = await PropertyUnit.findAll({
+      where: { id: { [Op.in]: unitIdsList }, isDeleted: false },
+      attributes: ['id', 'floorId'],
+      include: [
+        {
+          model: PropertyFloor,
+          as: 'floor',
+          required: true,
+          attributes: ['id', 'blockId'],
+          where: { isDeleted: false },
+        },
+      ],
+    })
+
+    if (units.length !== unitIdsList.length) {
+      return { targets: [], error: 'One or more selected flats are invalid' }
+    }
+
+    return {
+      targets: units.map((unit) => ({
+        areaId: null,
+        blockId: unit.floor?.blockId || null,
+        floorId: unit.floorId,
+        unitId: unit.id,
+      })),
+    }
+  }
+
+  if (floorIdsList.length > 0) {
+    const floors = await PropertyFloor.findAll({
+      where: { id: { [Op.in]: floorIdsList }, isDeleted: false },
+      attributes: ['id', 'blockId'],
+    })
+
+    if (floors.length !== floorIdsList.length) {
+      return { targets: [], error: 'One or more selected floors are invalid' }
+    }
+
+    return {
+      targets: floors.map((floor) => ({
+        areaId: null,
+        blockId: floor.blockId,
+        floorId: floor.id,
+        unitId: null,
+      })),
+    }
+  }
+
+  if (blockIdsList.length > 0) {
+    const blocks = await PropertyBlock.findAll({
+      where: { id: { [Op.in]: blockIdsList }, isDeleted: false },
+      attributes: ['id'],
+    })
+
+    if (blocks.length !== blockIdsList.length) {
+      return { targets: [], error: 'One or more selected blocks are invalid' }
+    }
+
+    return {
+      targets: blocks.map((block) => ({
+        areaId: null,
+        blockId: block.id,
+        floorId: null,
+        unitId: null,
+      })),
+    }
+  }
+
+  return {
+    targets: [{ areaId: null, blockId: null, floorId: null, unitId: null }],
+  }
+}
+
 export const bulkCreateEmployeeShifts = async (req: AuthenticatedRequest, res: Response) => {
   try {
     const locationId = asParamString(req.params.locationId)
@@ -935,8 +1067,11 @@ export const bulkCreateEmployeeShifts = async (req: AuthenticatedRequest, res: R
       areaId,
       areaIds,
       unitId,
+      unitIds,
       blockId,
+      blockIds,
       floorId,
+      floorIds,
       slotTimeRange,
     } = req.body
 
@@ -955,27 +1090,18 @@ export const bulkCreateEmployeeShifts = async (req: AuthenticatedRequest, res: R
     const bulkSlot = typeof slotTimeRange === 'string' && slotTimeRange.trim() ? slotTimeRange.trim() : null
     const bulkWindow = resolveEffectiveShiftWindow(newShift.startTime, newShift.endTime, bulkSlot)
 
-    const resolvedBlockId = normalizeOptionalId(blockId)
-    const resolvedFloorId = normalizeOptionalId(floorId)
-    const resolvedUnitId = normalizeUnitId(unitId)
-    let areaIdsList: (string | null)[] = [null]
-    if (Array.isArray(areaIds) && areaIds.length > 0) {
-      areaIdsList = areaIds.map((id: string) => normalizeAreaId(id))
-    } else if (areaId && areaId !== 'none') {
-      areaIdsList = [normalizeAreaId(areaId)]
-    }
-
-    if (areaIdsList.some((id) => id) && (resolvedBlockId || resolvedFloorId || resolvedUnitId)) {
-      return res.status(400).json(errorResponse('Cannot provide both area and block/floor/unit'))
-    }
-    if (resolvedUnitId && !resolvedFloorId) {
-      return res.status(400).json(errorResponse('floorId is required when unitId is provided'))
-    }
-    if ((resolvedFloorId || resolvedUnitId) && !resolvedBlockId) {
-      return res.status(400).json(errorResponse('blockId is required when floorId or unitId is provided'))
-    }
-    if (resolvedBlockId || resolvedFloorId || resolvedUnitId) {
-      areaIdsList = [null]
+    const { targets, error: targetError } = await resolveBulkLocationTargets({
+      areaId,
+      areaIds,
+      blockId,
+      blockIds,
+      floorId,
+      floorIds,
+      unitId,
+      unitIds,
+    })
+    if (targetError) {
+      return res.status(400).json(errorResponse(targetError))
     }
 
     const employees = await User.findAll({
@@ -995,7 +1121,7 @@ export const bulkCreateEmployeeShifts = async (req: AuthenticatedRequest, res: R
     const conflicts: string[] = []
 
     for (const employeeId of employeeIds) {
-      for (const aId of areaIdsList) {
+      for (const target of targets) {
         const conflict = await checkShiftAssignmentOverlap(
           employeeId,
           startDate,
@@ -1005,7 +1131,7 @@ export const bulkCreateEmployeeShifts = async (req: AuthenticatedRequest, res: R
           shiftId,
           undefined,
           workingDays,
-          aId,
+          target.areaId,
         )
         if (conflict) {
           const name = employeeMap[String(employeeId)] || 'Unknown Employee'
@@ -1023,7 +1149,7 @@ export const bulkCreateEmployeeShifts = async (req: AuthenticatedRequest, res: R
     const createdBy = req.user?.id ?? null
     const assignmentData = []
     for (const employeeId of employeeIds) {
-      for (const aId of areaIdsList) {
+      for (const target of targets) {
         assignmentData.push({
           employeeId,
           shiftId,
@@ -1032,10 +1158,10 @@ export const bulkCreateEmployeeShifts = async (req: AuthenticatedRequest, res: R
           endDate,
           notes: notes || null,
           workingDays: workingDays || null,
-          areaId: aId,
-          blockId: resolvedBlockId,
-          floorId: resolvedFloorId,
-          unitId: resolvedUnitId,
+          areaId: target.areaId,
+          blockId: target.blockId,
+          floorId: target.floorId,
+          unitId: target.unitId,
           slotTimeRange: bulkSlot,
           createdBy,
         })
