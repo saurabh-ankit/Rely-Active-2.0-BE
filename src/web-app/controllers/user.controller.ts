@@ -211,18 +211,49 @@ export async function getAllUsers(req: Request, res: Response): Promise<void> {
 
     const targetLocId = rawLocId && rawLocId.trim() !== '' ? rawLocId.trim() : null
 
+    // Optional role filter: ?roleCodes=DOCTOR,NURSE
+    const roleCodesParam = (req.query.roleCodes as string) || ''
+    const filterRoleCodes = roleCodesParam
+      ? roleCodesParam
+          .split(',')
+          .map((r) => r.trim().toUpperCase())
+          .filter(Boolean)
+      : []
+
     let userWhere: Record<string, unknown> = { isDeleted: false }
 
     if (targetLocId) {
+      let locQuery: Record<string, unknown> = { locId: targetLocId }
+
+      // If filtering by role codes, narrow the UserLocation query
+      if (filterRoleCodes.length > 0) {
+        const matchingRoles = await Role.findAll({ where: { code: filterRoleCodes } })
+        const matchingRoleIds = matchingRoles.map((r) => r.id)
+        locQuery = { locId: targetLocId, roleId: matchingRoleIds }
+      }
+
       const locUserRecords = await UserLocation.findAll({
-        where: { locId: targetLocId },
+        where: locQuery,
         attributes: ['userId'],
       })
       const userIdsInLoc = locUserRecords.map((u) => u.userId)
 
       userWhere = {
         isDeleted: false,
-        [Op.or]: [{ id: { [Op.in]: userIdsInLoc } }, { defaultLocationId: targetLocId }],
+        id: { [Op.in]: userIdsInLoc },
+      }
+    } else if (filterRoleCodes.length > 0) {
+      // Global role filter without location
+      const matchingRoles = await Role.findAll({ where: { code: filterRoleCodes } })
+      const matchingRoleIds = matchingRoles.map((r) => r.id)
+      const locUserRecords = await UserLocation.findAll({
+        where: { roleId: matchingRoleIds },
+        attributes: ['userId'],
+      })
+      const userIdsInLoc = locUserRecords.map((u) => u.userId)
+      userWhere = {
+        isDeleted: false,
+        id: { [Op.in]: userIdsInLoc },
       }
     }
 

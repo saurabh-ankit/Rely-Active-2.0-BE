@@ -303,16 +303,21 @@ export const createProperty = async (req: AuthenticatedRequest, res: Response, _
     }
 
     for (const sUserId of superAdminUserIds) {
-      const exists = await UserLocation.findOne({ where: { userId: sUserId, locId: property.id } })
-      if (!exists) {
-        await UserLocation.create({
-          userId: sUserId,
-          locId: property.id,
-          roleId: superAdminRole?.id || null,
-          companyId: property.companyId || null,
-          createdBy: operatingUserId,
-          updatedBy: operatingUserId,
-        })
+      try {
+        const exists = await UserLocation.findOne({ where: { userId: sUserId, locId: property.id } })
+        if (!exists) {
+          await UserLocation.create({
+            userId: sUserId,
+            locId: property.id,
+            roleId: superAdminRole?.id || null,
+            companyId: property.companyId || null,
+            createdBy: operatingUserId,
+            updatedBy: operatingUserId,
+          })
+        }
+      } catch (userLocErr) {
+        // Safe fallback if user is already assigned or unique constraint exists
+        console.warn('SuperAdmin user location auto-assignment warning:', userLocErr)
       }
     }
 
