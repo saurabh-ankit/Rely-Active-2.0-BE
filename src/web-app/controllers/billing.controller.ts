@@ -14,6 +14,10 @@ import {
   CareTask,
   Company,
   CompanyCustomField,
+  Event,
+  EventRegistration,
+  EventRequest,
+  EventVenue,
   FnbGlobalPackage,
   FnbPropertyPackage,
   FnbResidentPackage,
@@ -28,8 +32,10 @@ import {
   PropertyFloor,
   PropertyUnit,
   Resident,
+  Ticket,
   UnitResident,
 } from '../../models/index.js'
+import { EventRequestStatus, RegistrationStatus } from '../../enums/event.enum.js'
 import {
   BillingEventSourceModule,
   BillingEventStatus,
@@ -1621,6 +1627,246 @@ export async function syncUnitFolioAndSubscriptions(unit: any, primaryResident: 
                   quantity: Number(line.quantity),
                   unitPrice: baseUnitPrice,
                   amount: lineAmount,
+                })
+              }
+            }
+          }
+        }
+      }
+
+      // 5. Sync Event Registrations (Event with entryFee > 0) as unbilled BillingEvents
+      const eventRegistrations = await EventRegistration.findAll({
+        where: {
+          residentId: residentIds,
+          isDeleted: false,
+          status: { [Op.in]: [RegistrationStatus.CONFIRMED, RegistrationStatus.ATTENDED] },
+        },
+        include: [{ model: Event, as: 'event', where: { entryFee: { [Op.gt]: 0 } } }],
+      })
+
+      if (eventRegistrations.length > 0) {
+        let eventProduct = await BillingProduct.findOne({
+          where: { category: BillingProductCategory.ACTIVITY, chargeType: ChargeType.USAGE, isActive: true },
+        })
+        if (!eventProduct && folio.companyId) {
+          eventProduct = await BillingProduct.create({
+            companyId: folio.companyId,
+            category: BillingProductCategory.ACTIVITY,
+            chargeType: ChargeType.USAGE,
+            productCode: 'PROD-EVENT-REG',
+            productName: 'Event Registration',
+            description: 'Event Participation / Entry Fee',
+            isTaxable: false,
+            defaultTaxRate: 0,
+            isActive: true,
+          })
+        }
+
+        if (eventProduct) {
+          for (const reg of eventRegistrations) {
+            const ev = (reg as any).event
+            const seats = Number(reg.seatCount) || 1
+            const fee = Number(ev.entryFee) || 0
+            const totalFee = Math.round(fee * seats * 100) / 100
+            const eventTitle = ev.title || 'Community Event'
+            const desc = `Event: ${eventTitle} (${seats} seat${seats > 1 ? 's' : ''})`
+            const serviceDate = reg.registrationDate
+              ? new Date(reg.registrationDate).toISOString().slice(0, 10)
+              : reg.registeredAt
+                ? new Date(reg.registeredAt).toISOString().slice(0, 10)
+                : new Date().toISOString().slice(0, 10)
+
+            const existingEvent = await BillingEvent.findOne({
+              where: {
+                sourceModule: BillingEventSourceModule.ACTIVITY,
+                sourceId: reg.id,
+              },
+            })
+
+            if (!existingEvent) {
+              await BillingEvent.create({
+                billingAccountId: folio.id,
+                unitId: unit.id,
+                residentId: reg.residentId,
+                propertyId: folio.propertyId,
+                sourceModule: BillingEventSourceModule.ACTIVITY,
+                sourceType: 'EVENT_REGISTRATION',
+                sourceId: reg.id,
+                productId: eventProduct.id,
+                chargeType: 'USAGE',
+                description: desc,
+                quantity: seats,
+                unitPrice: fee,
+                amount: totalFee,
+                serviceDate,
+                status: BillingEventStatus.PENDING,
+              })
+            } else if (existingEvent.status === BillingEventStatus.PENDING) {
+              await existingEvent.update({
+                quantity: seats,
+                unitPrice: fee,
+                amount: totalFee,
+                description: desc,
+              })
+            }
+          }
+        }
+      }
+
+      // 6. Sync Confirmed Venue Bookings (EventRequest) as unbilled BillingEvents
+      const confirmedVenueRequests = await EventRequest.findAll({
+        where: {
+          residentId: residentIds,
+          isDeleted: false,
+          status: EventRequestStatus.CLOSED,
+          confirmedEventId: { [Op.ne]: null },
+        },
+        include: [{ model: EventVenue, as: 'venue' }],
+      })
+
+      if (confirmedVenueRequests.length > 0) {
+        let venueProduct = await BillingProduct.findOne({
+          where: { category: BillingProductCategory.ACTIVITY, chargeType: ChargeType.ONE_TIME, isActive: true },
+        })
+        if (!venueProduct && folio.companyId) {
+          venueProduct = await BillingProduct.create({
+            companyId: folio.companyId,
+            category: BillingProductCategory.ACTIVITY,
+            chargeType: ChargeType.ONE_TIME,
+            productCode: 'PROD-VENUE-BOOKING',
+            productName: 'Venue Booking',
+            description: 'Community Venue Reservation & Add-on Services',
+            isTaxable: false,
+            defaultTaxRate: 0,
+            isActive: true,
+          })
+        }
+
+        if (venueProduct) {
+          for (const vReq of confirmedVenueRequests) {
+            const venue = (vReq as any).venue
+            const venueCost = Number(venue?.price ?? 0) || 0
+            const servicesTotal = (Array.isArray(vReq.selectedServices) ? vReq.selectedServices : []).reduce(
+              (sum: number, s: any) => sum + (Number(s.price ?? 0) || 0) * (Number(s.quantity ?? 1) || 1),
+              0,
+            )
+            const totalBookingCost = Math.round((venueCost + servicesTotal) * 100) / 100
+
+            if (totalBookingCost > 0) {
+              const venueName = venue?.name || 'Venue'
+              const desc = `Venue Booking: ${venueName} - ${vReq.title}${vReq.requestNumber ? ` (#${vReq.requestNumber})` : ''}`
+              const serviceDate = vReq.startDate
+                ? new Date(vReq.startDate).toISOString().slice(0, 10)
+                : new Date().toISOString().slice(0, 10)
+
+              const existingEvent = await BillingEvent.findOne({
+                where: {
+                  sourceModule: BillingEventSourceModule.ACTIVITY,
+                  sourceId: vReq.id,
+                },
+              })
+
+              if (!existingEvent) {
+                await BillingEvent.create({
+                  billingAccountId: folio.id,
+                  unitId: unit.id,
+                  residentId: vReq.residentId,
+                  propertyId: folio.propertyId,
+                  sourceModule: BillingEventSourceModule.ACTIVITY,
+                  sourceType: 'VENUE_BOOKING',
+                  sourceId: vReq.id,
+                  productId: venueProduct.id,
+                  chargeType: 'ONE_TIME',
+                  description: desc,
+                  quantity: 1,
+                  unitPrice: totalBookingCost,
+                  amount: totalBookingCost,
+                  serviceDate,
+                  status: BillingEventStatus.PENDING,
+                })
+              } else if (existingEvent.status === BillingEventStatus.PENDING) {
+                await existingEvent.update({
+                  unitPrice: totalBookingCost,
+                  amount: totalBookingCost,
+                  description: desc,
+                })
+              }
+            }
+          }
+        }
+      }
+
+      // 7. Sync Completed Repair & Maintenance Tickets as unbilled BillingEvents
+      const maintenanceTickets = await Ticket.findAll({
+        where: {
+          [Op.or]: [{ unitId: unit.id }, { residentId: residentIds }],
+          status: { [Op.in]: ['RESOLVED', 'CLOSED'] },
+          invoiceAmount: { [Op.gt]: 0 },
+        },
+      })
+
+      if (maintenanceTickets.length > 0) {
+        let maintenanceProduct = await BillingProduct.findOne({
+          where: { category: BillingProductCategory.OTHER, chargeType: ChargeType.USAGE, isActive: true },
+        })
+        if (!maintenanceProduct && folio.companyId) {
+          maintenanceProduct = await BillingProduct.create({
+            companyId: folio.companyId,
+            category: BillingProductCategory.OTHER,
+            chargeType: ChargeType.USAGE,
+            productCode: 'PROD-MAINTENANCE',
+            productName: 'Repair & Maintenance',
+            description: 'Flat Repair & Maintenance Services',
+            isTaxable: false,
+            defaultTaxRate: 0,
+            isActive: true,
+          })
+        }
+
+        if (maintenanceProduct) {
+          for (const tkt of maintenanceTickets) {
+            const tktAmount = Math.round(Number(tkt.invoiceAmount || 0) * 100) / 100
+            if (tktAmount > 0) {
+              const desc = `Maintenance: ${tkt.title || 'Repair Service'} (#${tkt.ticketNumber})`
+              const serviceDate = tkt.completedAt
+                ? new Date(tkt.completedAt).toISOString().slice(0, 10)
+                : tkt.resolvedAt
+                  ? new Date(tkt.resolvedAt).toISOString().slice(0, 10)
+                  : new Date(tkt.updatedAt).toISOString().slice(0, 10)
+
+              const existingEvent = await BillingEvent.findOne({
+                where: {
+                  sourceModule: BillingEventSourceModule.MANUAL,
+                  sourceId: tkt.id,
+                },
+              })
+
+              const targetResidentId = tkt.residentId || folio.primaryResidentId || residentIds[0]
+              if (!targetResidentId) continue
+
+              if (!existingEvent) {
+                await BillingEvent.create({
+                  billingAccountId: folio.id,
+                  unitId: unit.id,
+                  residentId: targetResidentId,
+                  propertyId: folio.propertyId,
+                  sourceModule: BillingEventSourceModule.MANUAL,
+                  sourceType: 'TICKET',
+                  sourceId: tkt.id,
+                  productId: maintenanceProduct.id,
+                  chargeType: 'USAGE',
+                  description: desc,
+                  quantity: 1,
+                  unitPrice: tktAmount,
+                  amount: tktAmount,
+                  serviceDate,
+                  status: BillingEventStatus.PENDING,
+                })
+              } else if (existingEvent.status === BillingEventStatus.PENDING) {
+                await existingEvent.update({
+                  unitPrice: tktAmount,
+                  amount: tktAmount,
+                  description: desc,
                 })
               }
             }
