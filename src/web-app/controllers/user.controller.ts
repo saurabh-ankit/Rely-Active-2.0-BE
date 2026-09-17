@@ -15,6 +15,13 @@ import {
 import { AuthorizationService } from '../../services/authorization.service.js'
 import sequelize from '../../config/db/index.js'
 import { uploadFileToS3, uploadBase64ToS3 } from '../../middlewares/s3/index.js'
+import {
+  getDoctorSpecializations,
+  getSpecializationsForUsers,
+  readSpecializationInput,
+  syncDoctorSpecializations,
+} from '../../services/doctorSpecialization.service.js'
+import { HttpError } from '../../middlewares/error/http-error.js'
 
 function sanitizeUuid(id: string | null | undefined): string | null {
   if (!id || typeof id !== 'string') return null
@@ -204,18 +211,49 @@ export async function getAllUsers(req: Request, res: Response): Promise<void> {
 
     const targetLocId = rawLocId && rawLocId.trim() !== '' ? rawLocId.trim() : null
 
+    // Optional role filter: ?roleCodes=DOCTOR,NURSE
+    const roleCodesParam = (req.query.roleCodes as string) || ''
+    const filterRoleCodes = roleCodesParam
+      ? roleCodesParam
+          .split(',')
+          .map((r) => r.trim().toUpperCase())
+          .filter(Boolean)
+      : []
+
     let userWhere: Record<string, unknown> = { isDeleted: false }
 
     if (targetLocId) {
+      let locQuery: Record<string, unknown> = { locId: targetLocId }
+
+      // If filtering by role codes, narrow the UserLocation query
+      if (filterRoleCodes.length > 0) {
+        const matchingRoles = await Role.findAll({ where: { code: filterRoleCodes } })
+        const matchingRoleIds = matchingRoles.map((r) => r.id)
+        locQuery = { locId: targetLocId, roleId: matchingRoleIds }
+      }
+
       const locUserRecords = await UserLocation.findAll({
-        where: { locId: targetLocId },
+        where: locQuery,
         attributes: ['userId'],
       })
       const userIdsInLoc = locUserRecords.map((u) => u.userId)
 
       userWhere = {
         isDeleted: false,
-        [Op.or]: [{ id: { [Op.in]: userIdsInLoc } }, { defaultLocationId: targetLocId }],
+        id: { [Op.in]: userIdsInLoc },
+      }
+    } else if (filterRoleCodes.length > 0) {
+      // Global role filter without location
+      const matchingRoles = await Role.findAll({ where: { code: filterRoleCodes } })
+      const matchingRoleIds = matchingRoles.map((r) => r.id)
+      const locUserRecords = await UserLocation.findAll({
+        where: { roleId: matchingRoleIds },
+        attributes: ['userId'],
+      })
+      const userIdsInLoc = locUserRecords.map((u) => u.userId)
+      userWhere = {
+        isDeleted: false,
+        id: { [Op.in]: userIdsInLoc },
       }
     }
 
@@ -249,9 +287,14 @@ export async function getAllUsers(req: Request, res: Response): Promise<void> {
       return true
     })
 
+    const specializationsByUser = await getSpecializationsForUsers(nonSuperAdminUsers.map((u) => u.id))
+
     res.status(200).json({
       success: true,
-      data: nonSuperAdminUsers.map(formatUserResponse),
+      data: nonSuperAdminUsers.map((u) => ({
+        ...formatUserResponse(u),
+        specializations: specializationsByUser[u.id] || [],
+      })),
     })
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Unknown error'
@@ -290,6 +333,7 @@ export async function getUserById(req: Request, res: Response): Promise<void> {
       success: true,
       data: {
         ...formatUserResponse(user),
+        specializations: await getDoctorSpecializations(user.id),
         authorizationContext: authCtx,
       },
     })
@@ -501,6 +545,18 @@ export async function createUser(req: AuthenticatedRequest, res: Response): Prom
       }
     }
 
+    // Doctors can carry specializations in the same request as the user.
+    let specializations: Awaited<ReturnType<typeof syncDoctorSpecializations>> = []
+    const specializationInput = readSpecializationInput(req.body)
+    if (specializationInput.specializationIds && (roleCode || '').toUpperCase() === 'DOCTOR') {
+      specializations = await syncDoctorSpecializations({
+        userId: user.id,
+        specializationIds: specializationInput.specializationIds,
+        primarySpecializationId: specializationInput.primarySpecializationId ?? null,
+        operatingUserId,
+      })
+    }
+
     const createdUser = await User.findByPk(user.id, {
       include: [
         { model: UserDetail, as: 'profile' },
@@ -517,9 +573,15 @@ export async function createUser(req: AuthenticatedRequest, res: Response): Prom
     res.status(201).json({
       success: true,
       message: 'User created successfully',
-      data: formatUserResponse(createdUser),
+      data: { ...formatUserResponse(createdUser), specializations },
     })
   } catch (err: unknown) {
+    if (err instanceof HttpError) {
+      res
+        .status(err.status)
+        .json({ success: false, message: err.message, ...(err.details ? { details: err.details } : {}) })
+      return
+    }
     const message = err instanceof Error ? err.message : 'Unknown error'
     res.status(500).json({ success: false, message })
   }
@@ -1172,6 +1234,16 @@ export async function updateUser(req: Request, res: Response): Promise<void> {
     console.log('==================================================')
     console.log('--------------------------------------------------')
 
+    const specializationInput = readSpecializationInput(req.body)
+    if (specializationInput.specializationIds) {
+      await syncDoctorSpecializations({
+        userId: user.id,
+        specializationIds: specializationInput.specializationIds,
+        primarySpecializationId: specializationInput.primarySpecializationId ?? null,
+        operatingUserId,
+      })
+    }
+
     const updatedUser = await User.findByPk(user.id, {
       include: [
         { model: UserDetail, as: 'profile' },
@@ -1188,9 +1260,18 @@ export async function updateUser(req: Request, res: Response): Promise<void> {
     res.status(200).json({
       success: true,
       message: 'User updated successfully',
-      data: formatUserResponse(updatedUser),
+      data: {
+        ...formatUserResponse(updatedUser),
+        specializations: await getDoctorSpecializations(user.id),
+      },
     })
   } catch (err: unknown) {
+    if (err instanceof HttpError) {
+      res
+        .status(err.status)
+        .json({ success: false, message: err.message, ...(err.details ? { details: err.details } : {}) })
+      return
+    }
     const message = err instanceof Error ? err.message : 'Unknown error'
     res.status(500).json({ success: false, message })
   }

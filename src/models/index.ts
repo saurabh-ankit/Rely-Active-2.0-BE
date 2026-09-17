@@ -54,6 +54,8 @@ import { TicketSubCategory } from './ticketSubCategory.model.js'
 import { Ticket } from './ticket.model.js'
 import { TicketActivityLog } from './ticketActivityLog.model.js'
 import { TicketTatHistory } from './ticketTatHistory.model.js'
+import { Specialization } from './specialization.model.js'
+import { DoctorSpecialization } from './doctorSpecialization.model.js'
 import { GatePreapproved } from './gatePreapproved.model.js'
 import { GateEntry } from './gateEntry.model.js'
 import { FnbGlobalMealSlot } from './fnbGlobalMealSlot.model.js'
@@ -124,6 +126,12 @@ import {
   type ResidentCareTaskCompletionCreationAttributes,
   type CompletionStatus,
 } from './residentCareTaskCompletion.model.js'
+import {
+  ResidentCareTeam,
+  type ResidentCareTeamAttributes,
+  type ResidentCareTeamCreationAttributes,
+  type CareTeamRole,
+} from './residentCareTeam.model.js'
 
 // ── Billing & Revenue Management Module ──────────────────────────────────────
 import { UnitResident } from './unitResident.model.js'
@@ -181,6 +189,14 @@ Resident.belongsTo(Property, { foreignKey: 'locId', as: 'property' })
 
 Resident.hasMany(ResidentFamilyMember, { foreignKey: 'residentId', as: 'familyMembers' })
 ResidentFamilyMember.belongsTo(Resident, { foreignKey: 'residentId', as: 'resident' })
+
+// ── ResidentCareTeam associations ───────────────────────────────────────────
+Resident.hasMany(ResidentCareTeam, { foreignKey: 'residentId', as: 'careTeam' })
+ResidentCareTeam.belongsTo(Resident, { foreignKey: 'residentId', as: 'resident' })
+User.hasMany(ResidentCareTeam, { foreignKey: 'userId', as: 'careTeamAssignments' })
+ResidentCareTeam.belongsTo(User, { foreignKey: 'userId', as: 'user' })
+Property.hasMany(ResidentCareTeam, { foreignKey: 'locId', as: 'careTeamMembers' })
+ResidentCareTeam.belongsTo(Property, { foreignKey: 'locId', as: 'property' })
 
 // ── User & Detail ───────────────────────────────────────────────────────────
 User.hasOne(UserDetail, { foreignKey: 'userId', as: 'profile' })
@@ -423,6 +439,24 @@ TicketTatHistory.belongsTo(User, { foreignKey: 'changedByUserId', as: 'changedBy
 
 Ticket.belongsTo(User, { foreignKey: 'workStartedByUserId', as: 'workStartedByUser' })
 Ticket.belongsTo(User, { foreignKey: 'completedByUserId', as: 'completedByUser' })
+
+// ── Doctor specializations ─────────────────────────────────────────────────
+User.belongsToMany(Specialization, {
+  through: DoctorSpecialization,
+  foreignKey: 'userId',
+  otherKey: 'specializationId',
+  as: 'specializations',
+})
+Specialization.belongsToMany(User, {
+  through: DoctorSpecialization,
+  foreignKey: 'specializationId',
+  otherKey: 'userId',
+  as: 'doctors',
+})
+User.hasMany(DoctorSpecialization, { foreignKey: 'userId', as: 'doctorSpecializations' })
+DoctorSpecialization.belongsTo(User, { foreignKey: 'userId', as: 'doctor' })
+Specialization.hasMany(DoctorSpecialization, { foreignKey: 'specializationId', as: 'doctorLinks' })
+DoctorSpecialization.belongsTo(Specialization, { foreignKey: 'specializationId', as: 'specialization' })
 
 // ── Gate Management associations ───────────────────────────────────────────
 Property.hasMany(GatePreapproved, { foreignKey: 'locId', as: 'gatePreapproveds' })
@@ -887,6 +921,8 @@ export {
   Ticket,
   TicketActivityLog,
   TicketTatHistory,
+  Specialization,
+  DoctorSpecialization,
   GatePreapproved,
   GateEntry,
   FnbResidentOrderDetail,
@@ -963,6 +999,10 @@ export {
   type ResidentCareTaskCompletionAttributes,
   type ResidentCareTaskCompletionCreationAttributes,
   type CompletionStatus,
+  ResidentCareTeam,
+  type ResidentCareTeamAttributes,
+  type ResidentCareTeamCreationAttributes,
+  type CareTeamRole,
 }
 
 InventoryItem.belongsTo(InventoryCategory, { foreignKey: 'categoryId', as: 'category' })

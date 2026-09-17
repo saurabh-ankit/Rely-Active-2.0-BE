@@ -8,6 +8,7 @@ import userRouter from './user.routes.js'
 import roleRouter from './role.routes.js'
 import permissionRouter from './permission.routes.js'
 import departmentRouter from './department.routes.js'
+import specializationRouter from './specialization.routes.js'
 import resourceRouter from './resource.routes.js'
 import residentRouter from './resident.routes.js'
 import assetRouter from './asset.routes.js'
@@ -38,6 +39,7 @@ apiRouter.use('/roles', roleRouter)
 apiRouter.use('/permissions', permissionRouter)
 apiRouter.use('/resources', resourceRouter)
 apiRouter.use('/departments', departmentRouter)
+apiRouter.use('/specializations', specializationRouter)
 apiRouter.use('/company', companyRouter)
 apiRouter.use('/property', propertyRouter)
 apiRouter.use('/properties', propertyRouter)

@@ -50,6 +50,9 @@ export const createUserSchema = z
     properties: z.array(z.string()).optional(),
     locIds: z.array(z.string()).optional(),
     locationIds: z.array(z.string()).optional(),
+    // Doctors only: specializations assigned with the user.
+    specializationIds: z.union([z.array(z.string()), z.string()]).optional(),
+    primarySpecializationId: z.string().optional(),
   })
   .refine(
     (data) => {
