@@ -516,7 +516,7 @@ export async function updateTicketOptions(req: AuthenticatedRequest, res: Respon
       return
     }
 
-    const { categoryId, subCategoryId, tatOption, priority, status } = req.body
+    const { categoryId, subCategoryId, tatOption, priority, status, invoiceAmount, resolutionNotes } = req.body
     const userId = req.user?.id || null
     const userName = req.user?.email || 'User'
 
@@ -527,6 +527,8 @@ export async function updateTicketOptions(req: AuthenticatedRequest, res: Respon
     if (tatOption !== undefined) updatePayload.tatOption = tatOption
     if (priority !== undefined) updatePayload.priority = priority
     if (status !== undefined) updatePayload.status = status
+    if (invoiceAmount !== undefined) updatePayload.invoiceAmount = Number(invoiceAmount) || null
+    if (resolutionNotes !== undefined) updatePayload.resolutionNotes = resolutionNotes
 
     await ticket.update(updatePayload)
 
