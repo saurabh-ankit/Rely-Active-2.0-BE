@@ -106,6 +106,15 @@ export async function getStaffCareTeamResidentIds(userId: string, role?: 'DOCTOR
   const rows = await ResidentCareTeam.findAll({
     where,
     attributes: ['residentId'],
+    include: [
+      {
+        model: Resident,
+        as: 'resident',
+        attributes: ['id'],
+        where: { isResiding: true, isDeleted: false },
+        required: true,
+      },
+    ],
   })
 
   return [...new Set(rows.map((r) => r.residentId).filter(Boolean))]
@@ -554,6 +563,14 @@ export async function getNurseCareTasks(req: Request, res: Response): Promise<vo
       },
       ...(careTeamResidentIds ? [{ residentId: { [Op.in]: careTeamResidentIds } }] : []),
       Sequelize.literal(`
+        EXISTS (
+          SELECT 1 FROM residents r 
+          WHERE r.id = CareTaskAssignment.residentId 
+            AND r.isResiding = true 
+            AND r.isDeleted = false
+        )
+      `),
+      Sequelize.literal(`
         (
           (CareTaskAssignment.completedAt IS NULL OR DATE(CareTaskAssignment.completedAt) != ${sequelize.escape(targetDateStr)})
           AND NOT EXISTS (
@@ -601,11 +618,17 @@ export async function getNurseCareTasks(req: Request, res: Response): Promise<vo
               { propertyId: locationId },
               { propertyId: null },
               Sequelize.literal(
-                `EXISTS (SELECT 1 FROM residents r WHERE r.id = ResidentCareTaskCompletion.residentId AND r.locId = ${sequelize.escape(locationId)})`,
+                `EXISTS (SELECT 1 FROM residents r WHERE r.id = ResidentCareTaskCompletion.residentId AND r.locId = ${sequelize.escape(locationId)} AND r.isResiding = true AND r.isDeleted = false)`,
               ),
             ],
           }
-        : {}),
+        : {
+            [Op.and]: [
+              Sequelize.literal(
+                `EXISTS (SELECT 1 FROM residents r WHERE r.id = ResidentCareTaskCompletion.residentId AND r.isResiding = true AND r.isDeleted = false)`,
+              ),
+            ],
+          }),
     }
 
     const completedCount = await ResidentCareTaskCompletion.count({
@@ -631,9 +654,9 @@ export async function getNurseCareTasks(req: Request, res: Response): Promise<vo
           {
             model: Resident,
             as: 'resident',
-            attributes: ['id', 'firstName', 'lastName', 'phone', 'locId', 'unitId'],
-            where: { isDeleted: false },
-            required: false,
+            attributes: ['id', 'firstName', 'lastName', 'phone', 'locId', 'unitId', 'isResiding'],
+            where: { isDeleted: false, isResiding: true },
+            required: true,
             include: [
               {
                 model: PropertyUnit,
@@ -942,6 +965,14 @@ export async function getNurseCareTasks(req: Request, res: Response): Promise<vo
       { isDeleted: false },
       { status: 'COMPLETED' },
       ...(filterNurseId ? [{ completedBy: filterNurseId }] : []),
+      Sequelize.literal(`
+        EXISTS (
+          SELECT 1 FROM residents r 
+          WHERE r.id = ResidentCareTaskCompletion.residentId 
+            AND r.isResiding = true 
+            AND r.isDeleted = false
+        )
+      `),
     ]
 
     if (locationId) {
@@ -973,8 +1004,9 @@ export async function getNurseCareTasks(req: Request, res: Response): Promise<vo
         {
           model: Resident,
           as: 'resident',
-          attributes: ['id', 'firstName', 'lastName', 'phone', 'locId', 'unitId'],
-          required: false,
+          attributes: ['id', 'firstName', 'lastName', 'phone', 'locId', 'unitId', 'isResiding'],
+          where: { isDeleted: false, isResiding: true },
+          required: true,
           include: [
             {
               model: PropertyUnit,
@@ -1109,7 +1141,9 @@ export async function getNurseCareTasks(req: Request, res: Response): Promise<vo
           {
             model: Resident,
             as: 'resident',
-            attributes: ['id', 'unitId'],
+            attributes: ['id', 'unitId', 'isResiding'],
+            where: { isDeleted: false, isResiding: true },
+            required: true,
             include: [
               {
                 model: PropertyUnit,
@@ -1218,7 +1252,7 @@ export async function getDoctorResidents(req: Request, res: Response): Promise<v
     const search = typeof req.query.search === 'string' ? req.query.search.trim() : ''
     const isAdmin = await isAdminOrSuperAdmin(authReq)
 
-    const andConditions: WhereOptions[] = [{ isDeleted: false }]
+    const andConditions: WhereOptions[] = [{ isDeleted: false }, { isResiding: true }]
 
     if (locId && locId !== 'all' && locId !== 'global') {
       andConditions.push({ locId })
@@ -1451,7 +1485,7 @@ export async function getDoctorResidentDetails(req: Request, res: Response): Pro
     }
 
     const resident = await Resident.findOne({
-      where: { id, isDeleted: false },
+      where: { id, isDeleted: false, isResiding: true },
       include: [
         {
           model: Property,
@@ -1701,7 +1735,15 @@ export async function getDoctorResidentCareTasks(req: Request, res: Response): P
     const page = Math.max(1, parseInt(String(req.query.page || '1'), 10))
     const limit = Math.max(1, Math.min(100, parseInt(String(req.query.limit || '5'), 10)))
 
-    // Fetch active assignments for this resident
+    // Fetch active assignments for this resident (ensuring resident is physically residing)
+    const targetResident = await Resident.findOne({
+      where: { id: residentId, isDeleted: false, isResiding: true },
+    })
+    if (!targetResident) {
+      res.status(404).json({ success: false, message: 'Resident not found or is non-residing' })
+      return
+    }
+
     const assignments = await CareTaskAssignment.findAll({
       where: {
         residentId,
@@ -1991,10 +2033,10 @@ export async function assignDoctorCareTask(req: Request, res: Response): Promise
       return
     }
 
-    // 1. Verify resident exists
+    // 1. Verify resident exists and is physically residing
     const resident = await Resident.findByPk(residentId)
-    if (!resident || resident.isDeleted) {
-      res.status(404).json({ success: false, message: 'Resident not found' })
+    if (!resident || resident.isDeleted || !resident.isResiding) {
+      res.status(400).json({ success: false, message: 'Resident not found or is non-residing' })
       return
     }
 
