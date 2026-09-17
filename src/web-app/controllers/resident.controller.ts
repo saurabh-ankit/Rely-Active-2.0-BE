@@ -17,6 +17,9 @@ import {
   CareTask,
   User,
   UserDetail,
+  UserLocation,
+  Role,
+  ResidentCareTeam,
 } from '../../models/index.js'
 import { OwnershipType, ResidentStatus, ResidentType } from '../../enums/resident.enum.js'
 import { SubscriptionStatus } from '../../enums/packageSubscription.enum.js'
@@ -1337,6 +1340,167 @@ export async function getResidentBillingData(req: Request, res: Response): Promi
     })
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Error fetching billing data'
+    res.status(500).json({ success: false, message })
+  }
+}
+
+// ── Care Team ─────────────────────────────────────────────────────────────────
+
+/**
+ * GET /residents/:residentId/care-team
+ * Returns the care team (doctors + nurses) assigned to a resident.
+ */
+export async function getResidentCareTeam(req: Request, res: Response): Promise<void> {
+  try {
+    const { residentId } = req.params
+
+    const careTeam = await ResidentCareTeam.findAll({
+      where: { residentId, isDeleted: false },
+      include: [
+        {
+          model: User,
+          as: 'user',
+          include: [
+            { model: UserDetail, as: 'profile' },
+            {
+              model: UserLocation,
+              as: 'userLocations',
+              include: [{ model: Role, as: 'role' }],
+            },
+          ],
+        },
+      ],
+      order: [['createdAt', 'ASC']],
+    })
+
+    res.status(200).json({ success: true, data: careTeam })
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : 'Unknown error'
+    res.status(500).json({ success: false, message })
+  }
+}
+
+/**
+ * POST /residents/:residentId/care-team
+ * Assign a Doctor or Nurse to a resident's care team.
+ * Body: { userId, role: 'DOCTOR' | 'NURSE', locId, note? }
+ */
+export async function assignCareTeamMember(req: AuthenticatedRequest, res: Response): Promise<void> {
+  try {
+    const { residentId } = req.params
+    const { userId, role, locId, note } = req.body
+    const operatingUserId = req.user?.id || null
+
+    if (!userId || !role || !locId) {
+      res.status(400).json({ success: false, message: 'userId, role, and locId are required' })
+      return
+    }
+
+    const upperRole = (role as string).toUpperCase()
+    if (!['DOCTOR', 'NURSE'].includes(upperRole)) {
+      res.status(400).json({ success: false, message: 'role must be DOCTOR or NURSE' })
+      return
+    }
+
+    const resident = await Resident.findByPk(residentId as string)
+    if (!resident) {
+      res.status(404).json({ success: false, message: 'Resident not found' })
+      return
+    }
+
+    const user = (await User.findByPk(userId as string, {
+      include: [
+        {
+          model: UserLocation,
+          as: 'userLocations',
+          include: [{ model: Role, as: 'role' }],
+        },
+      ],
+    })) as (User & { userLocations?: Array<UserLocation & { role?: Role }> }) | null
+
+    if (!user) {
+      res.status(404).json({ success: false, message: 'User not found' })
+      return
+    }
+
+    const hasRole = user.userLocations?.some((ul) => ul.role?.code === upperRole)
+    if (!hasRole) {
+      res.status(400).json({
+        success: false,
+        message: `Selected user does not have the ${upperRole} role`,
+      })
+      return
+    }
+
+    // Soft-delete any existing assignment for this user + resident
+    await ResidentCareTeam.update(
+      { isDeleted: true, updatedBy: operatingUserId },
+      { where: { residentId: residentId as string, userId: userId as string, isDeleted: false } },
+    )
+
+    const assignment = await ResidentCareTeam.create({
+      residentId: residentId as string,
+      userId: userId as string,
+      role: upperRole as 'DOCTOR' | 'NURSE',
+      locId: locId as string,
+      note: (note as string | undefined)?.trim() || null,
+      isActive: true,
+      isDeleted: false,
+      createdBy: operatingUserId,
+      updatedBy: operatingUserId,
+    })
+
+    const created = await ResidentCareTeam.findByPk(assignment.id, {
+      include: [
+        {
+          model: User,
+          as: 'user',
+          include: [
+            { model: UserDetail, as: 'profile' },
+            {
+              model: UserLocation,
+              as: 'userLocations',
+              include: [{ model: Role, as: 'role' }],
+            },
+          ],
+        },
+      ],
+    })
+
+    res.status(201).json({
+      success: true,
+      message: `${upperRole === 'DOCTOR' ? 'Doctor' : 'Nurse'} assigned to care team successfully`,
+      data: created,
+    })
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : 'Unknown error'
+    res.status(500).json({ success: false, message })
+  }
+}
+
+/**
+ * DELETE /residents/:residentId/care-team/:memberId
+ * Remove a care team member from a resident.
+ */
+export async function removeCareTeamMember(req: AuthenticatedRequest, res: Response): Promise<void> {
+  try {
+    const { residentId, memberId } = req.params
+    const operatingUserId = req.user?.id || null
+
+    const record = await ResidentCareTeam.findOne({
+      where: { id: memberId, residentId, isDeleted: false },
+    })
+
+    if (!record) {
+      res.status(404).json({ success: false, message: 'Care team member not found' })
+      return
+    }
+
+    await record.update({ isDeleted: true, isActive: false, updatedBy: operatingUserId })
+
+    res.status(200).json({ success: true, message: 'Care team member removed successfully' })
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : 'Unknown error'
     res.status(500).json({ success: false, message })
   }
 }

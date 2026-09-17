@@ -114,6 +114,12 @@ import {
   type ResidentCareTaskCompletionCreationAttributes,
   type CompletionStatus,
 } from './residentCareTaskCompletion.model.js'
+import {
+  ResidentCareTeam,
+  type ResidentCareTeamAttributes,
+  type ResidentCareTeamCreationAttributes,
+  type CareTeamRole,
+} from './residentCareTeam.model.js'
 
 // ── F&B Meal Slot associations ──────────────────────────────────────────────
 FnbGlobalMealSlot.hasMany(FnbPropertyMealSlot, { foreignKey: 'globalMealSlotId', as: 'propertyMealSlots' })
@@ -148,6 +154,14 @@ Resident.belongsTo(Property, { foreignKey: 'locId', as: 'property' })
 
 Resident.hasMany(ResidentFamilyMember, { foreignKey: 'residentId', as: 'familyMembers' })
 ResidentFamilyMember.belongsTo(Resident, { foreignKey: 'residentId', as: 'resident' })
+
+// ── ResidentCareTeam associations ───────────────────────────────────────────
+Resident.hasMany(ResidentCareTeam, { foreignKey: 'residentId', as: 'careTeam' })
+ResidentCareTeam.belongsTo(Resident, { foreignKey: 'residentId', as: 'resident' })
+User.hasMany(ResidentCareTeam, { foreignKey: 'userId', as: 'careTeamAssignments' })
+ResidentCareTeam.belongsTo(User, { foreignKey: 'userId', as: 'user' })
+Property.hasMany(ResidentCareTeam, { foreignKey: 'locId', as: 'careTeamMembers' })
+ResidentCareTeam.belongsTo(Property, { foreignKey: 'locId', as: 'property' })
 
 // ── User & Detail ───────────────────────────────────────────────────────────
 User.hasOne(UserDetail, { foreignKey: 'userId', as: 'profile' })
@@ -747,4 +761,8 @@ export {
   type ResidentCareTaskCompletionAttributes,
   type ResidentCareTaskCompletionCreationAttributes,
   type CompletionStatus,
+  ResidentCareTeam,
+  type ResidentCareTeamAttributes,
+  type ResidentCareTeamCreationAttributes,
+  type CareTeamRole,
 }
