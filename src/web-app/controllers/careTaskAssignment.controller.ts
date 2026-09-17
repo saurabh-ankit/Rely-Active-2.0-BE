@@ -342,9 +342,22 @@ export async function syncPackageTasksForResidents(
  */
 export async function getAllCareTaskAssignments(req: Request, res: Response): Promise<void> {
   try {
-    const { residentId, propertyId, status, billingType, source, search, isStopped, pendingOnly, targetDate } =
-      req.query
+    const {
+      residentId,
+      propertyId,
+      status,
+      billingType,
+      source,
+      search,
+      isStopped,
+      pendingOnly,
+      targetDate,
+      nurseId,
+      employeeId,
+    } = req.query
     const locationId = (req.params.locationId as string) || (propertyId as string)
+    const assigneeId =
+      (typeof nurseId === 'string' && nurseId) || (typeof employeeId === 'string' && employeeId) || null
 
     // 1. Ensure any bundled care package tasks are auto-synced into assignments
     await syncPackageTasksForResidents(
@@ -360,6 +373,10 @@ export async function getAllCareTaskAssignments(req: Request, res: Response): Pr
 
     if (residentId && typeof residentId === 'string') {
       andConditions.push({ residentId })
+    }
+
+    if (assigneeId) {
+      andConditions.push({ nurseId: assigneeId })
     }
 
     if (locationId && locationId !== 'all' && locationId !== 'global') {
@@ -500,6 +517,7 @@ export async function getAllCareTaskAssignments(req: Request, res: Response): Pr
         'isStopped',
         'completionCount',
         'completedAt',
+        'nurseId',
       ],
       include: [
         {
@@ -533,6 +551,13 @@ export async function getAllCareTaskAssignments(req: Request, res: Response): Pr
           as: 'packageSubscription',
           attributes: ['id', 'status', 'startDate', 'endDate'],
           required: false,
+        },
+        {
+          model: User,
+          as: 'nurse',
+          attributes: ['id', 'email', 'username'],
+          required: false,
+          include: [{ model: UserDetail, as: 'profile', attributes: ['firstName', 'lastName'] }],
         },
       ],
       order: [
@@ -1755,8 +1780,26 @@ export async function completeCareTask(req: Request, res: Response): Promise<voi
  */
 export async function getCareTaskCompletions(req: Request, res: Response): Promise<void> {
   try {
-    const { assignmentId, residentId, taskId, propertyId, status, startDate, endDate, search, source } = req.query
+    const {
+      assignmentId,
+      residentId,
+      taskId,
+      propertyId,
+      status,
+      startDate,
+      endDate,
+      search,
+      source,
+      nurseId,
+      employeeId,
+      completedBy,
+    } = req.query
     const locationId = (req.params.locationId as string) || (propertyId as string)
+    const completerId =
+      (typeof completedBy === 'string' && completedBy) ||
+      (typeof nurseId === 'string' && nurseId) ||
+      (typeof employeeId === 'string' && employeeId) ||
+      null
     const pageNum = Math.max(1, parseInt(String(req.query.page || '1'), 10) || 1)
     const limitNum = Math.max(1, parseInt(String(req.query.limit || '50'), 10) || 50)
     const offset = (pageNum - 1) * limitNum
@@ -1770,6 +1813,10 @@ export async function getCareTaskCompletions(req: Request, res: Response): Promi
 
     if (residentId && typeof residentId === 'string') {
       andConditions.push({ residentId })
+    }
+
+    if (completerId) {
+      andConditions.push({ completedBy: completerId })
     }
 
     if (taskId && typeof taskId === 'string') {

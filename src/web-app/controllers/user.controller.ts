@@ -913,6 +913,7 @@ export async function updateUser(req: Request, res: Response): Promise<void> {
     }
     if (req.body.qualification !== undefined) detailUpdatePayload.qualification = req.body.qualification || null
     if (req.body.experience !== undefined) detailUpdatePayload.experience = req.body.experience || null
+    if (req.body.address !== undefined) detailUpdatePayload.address = req.body.address || null
     const uploadedFile =
       req.file ||
       (req.files && typeof req.files === 'object' && ('photo' in req.files || 'avatar' in req.files)

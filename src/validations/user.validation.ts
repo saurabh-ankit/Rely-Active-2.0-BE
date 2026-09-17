@@ -1,50 +1,140 @@
 import { z } from 'zod'
 import { EMAIL_REGEX, PHONE_REGEX } from './company.validation.js'
 
+const NAME_REGEX = /^[a-zA-Z\s]+$/
+const USERNAME_REGEX = /^[a-zA-Z0-9_]{3,30}$/
+const EXPERIENCE_REGEX = /^\d{1,2}$/
+const BLOOD_GROUP_VALUES = ['A+', 'A-', 'B+', 'B-', 'O+', 'O-', 'AB+', 'AB-'] as const
+const GENDER_VALUES = ['MALE', 'FEMALE', 'OTHER'] as const
+
+const todayYmdLocal = (): string => {
+  const now = new Date()
+  const y = now.getFullYear()
+  const m = String(now.getMonth() + 1).padStart(2, '0')
+  const d = String(now.getDate()).padStart(2, '0')
+  return `${y}-${m}-${d}`
+}
+
+const optionalNameField = z
+  .string()
+  .optional()
+  .refine((val) => !val || NAME_REGEX.test(val.trim()), {
+    message: 'Name can only contain letters and spaces',
+  })
+  .refine((val) => !val || val.trim().length <= 50, {
+    message: 'Name cannot exceed 50 characters',
+  })
+
+const optionalPhoneField = (message: string) =>
+  z
+    .string()
+    .optional()
+    .refine((val) => !val || PHONE_REGEX.test(val.trim()), {
+      message,
+    })
+
+const optionalDateOfBirth = z
+  .string()
+  .optional()
+  .refine((val) => !val || /^\d{4}-\d{2}-\d{2}$/.test(val.trim()), {
+    message: 'Date of birth must be a valid date (YYYY-MM-DD)',
+  })
+  .refine((val) => !val || val.trim() <= todayYmdLocal(), {
+    message: 'Date of birth cannot be a future date',
+  })
+
+const optionalDateOfJoining = z
+  .string()
+  .optional()
+  .refine((val) => !val || /^\d{4}-\d{2}-\d{2}$/.test(val.trim()), {
+    message: 'Date of joining must be a valid date (YYYY-MM-DD)',
+  })
+  .refine((val) => !val || val.trim() <= todayYmdLocal(), {
+    message: 'Date of joining cannot be a future date',
+  })
+
+const optionalExperience = z
+  .string()
+  .optional()
+  .refine((val) => !val || EXPERIENCE_REGEX.test(val.trim()), {
+    message: 'Experience must be a number between 0 and 99',
+  })
+
+const optionalGender = z
+  .string()
+  .optional()
+  .refine((val) => !val || GENDER_VALUES.includes(val as (typeof GENDER_VALUES)[number]), {
+    message: 'Please select a valid gender',
+  })
+
+const optionalBloodGroup = z
+  .string()
+  .optional()
+  .refine((val) => !val || BLOOD_GROUP_VALUES.includes(val as (typeof BLOOD_GROUP_VALUES)[number]), {
+    message: 'Please select a valid blood group',
+  })
+
+const profileFields = {
+  gender: optionalGender,
+  dateOfBirth: optionalDateOfBirth,
+  date_of_birth: optionalDateOfBirth,
+  bloodGroup: optionalBloodGroup,
+  blood_group: optionalBloodGroup,
+  qualification: z
+    .string()
+    .optional()
+    .refine((val) => !val || val.trim().length <= 150, {
+      message: 'Qualification cannot exceed 150 characters',
+    }),
+  experience: optionalExperience,
+  address: z
+    .string()
+    .optional()
+    .refine((val) => !val || val.trim().length <= 500, {
+      message: 'Address cannot exceed 500 characters',
+    }),
+  employeeCode: z.string().optional(),
+  employee_code: z.string().optional(),
+}
+
 export const createUserSchema = z
   .object({
-    firstName: z.string().optional(),
-    first_name: z.string().optional(),
-    lastName: z.string().optional(),
-    last_name: z.string().optional(),
-    username: z.string().optional(),
+    firstName: optionalNameField,
+    first_name: optionalNameField,
+    lastName: optionalNameField,
+    last_name: optionalNameField,
+    username: z
+      .string()
+      .optional()
+      .refine((val) => !val || USERNAME_REGEX.test(val.trim()), {
+        message: 'Username must be 3–30 characters and contain only letters, numbers, or underscore',
+      }),
     email: z
       .string()
       .optional()
       .refine((val) => !val || EMAIL_REGEX.test(val.trim()), {
         message: 'Invalid email address format',
       }),
-    phone: z
-      .string()
-      .optional()
-      .refine((val) => !val || PHONE_REGEX.test(val.trim()), {
-        message: 'Phone number must start with a digit between 6-9 and be exactly 10 digits',
-      }),
+    phone: optionalPhoneField('Phone number must start with a digit between 6-9 and be exactly 10 digits'),
     password: z
       .string()
       .optional()
       .refine((val) => !val || val.length >= 6, {
         message: 'Password must be at least 6 characters long',
       }),
-    emergencyContact: z
-      .string()
-      .optional()
-      .refine((val) => !val || PHONE_REGEX.test(val.trim()), {
-        message: 'Emergency contact number must start with a digit between 6-9 and be exactly 10 digits',
-      }),
-    emergency_contact: z
-      .string()
-      .optional()
-      .refine((val) => !val || PHONE_REGEX.test(val.trim()), {
-        message: 'Emergency contact number must start with a digit between 6-9 and be exactly 10 digits',
-      }),
+    emergencyContact: optionalPhoneField(
+      'Emergency contact number must start with a digit between 6-9 and be exactly 10 digits',
+    ),
+    emergency_contact: optionalPhoneField(
+      'Emergency contact number must start with a digit between 6-9 and be exactly 10 digits',
+    ),
     roleCode: z.string().optional(),
     companyId: z.string().optional(),
     defaultLocationId: z.string().optional(),
     departmentId: z.string().optional(),
     jobCategoryId: z.string().optional(),
-    dateOfJoining: z.string().optional(),
-    date_of_joining: z.string().optional(),
+    dateOfJoining: optionalDateOfJoining,
+    date_of_joining: optionalDateOfJoining,
     propertyIds: z.array(z.string()).optional(),
     property_ids: z.array(z.string()).optional(),
     properties: z.array(z.string()).optional(),
@@ -53,7 +143,11 @@ export const createUserSchema = z
     // Doctors only: specializations assigned with the user.
     specializationIds: z.union([z.array(z.string()), z.string()]).optional(),
     primarySpecializationId: z.string().optional(),
+    managerId: z.string().optional(),
+    manager_id: z.string().optional(),
+    ...profileFields,
   })
+  .passthrough()
   .refine(
     (data) => {
       const fName = data.firstName || data.first_name
@@ -63,10 +157,24 @@ export const createUserSchema = z
   )
   .refine(
     (data) => {
+      const fName = data.firstName || data.first_name
+      return !fName || NAME_REGEX.test(fName.trim())
+    },
+    { message: 'First name can only contain letters and spaces', path: ['firstName'] },
+  )
+  .refine(
+    (data) => {
       const lName = data.lastName || data.last_name
       return Boolean(lName && lName.trim().length > 0)
     },
     { message: 'Last name is required', path: ['lastName'] },
+  )
+  .refine(
+    (data) => {
+      const lName = data.lastName || data.last_name
+      return !lName || NAME_REGEX.test(lName.trim())
+    },
+    { message: 'Last name can only contain letters and spaces', path: ['lastName'] },
   )
   .refine(
     (data) => {
@@ -93,48 +201,42 @@ export const createUserSchema = z
 
 export const updateUserSchema = z
   .object({
-    firstName: z.string().optional(),
-    first_name: z.string().optional(),
-    lastName: z.string().optional(),
-    last_name: z.string().optional(),
-    username: z.string().optional(),
+    firstName: optionalNameField,
+    first_name: optionalNameField,
+    lastName: optionalNameField,
+    last_name: optionalNameField,
+    username: z
+      .string()
+      .optional()
+      .refine((val) => !val || USERNAME_REGEX.test(val.trim()), {
+        message: 'Username must be 3–30 characters and contain only letters, numbers, or underscore',
+      }),
     email: z
       .string()
       .optional()
       .refine((val) => !val || EMAIL_REGEX.test(val.trim()), {
         message: 'Invalid email address format',
       }),
-    phone: z
-      .string()
-      .optional()
-      .refine((val) => !val || PHONE_REGEX.test(val.trim()), {
-        message: 'Phone number must start with a digit between 6-9 and be exactly 10 digits',
-      }),
+    phone: optionalPhoneField('Phone number must start with a digit between 6-9 and be exactly 10 digits'),
     password: z
       .string()
       .optional()
       .refine((val) => !val || val.length >= 6, {
         message: 'Password must be at least 6 characters long',
       }),
-    emergencyContact: z
-      .string()
-      .optional()
-      .refine((val) => !val || PHONE_REGEX.test(val.trim()), {
-        message: 'Emergency contact number must start with a digit between 6-9 and be exactly 10 digits',
-      }),
-    emergency_contact: z
-      .string()
-      .optional()
-      .refine((val) => !val || PHONE_REGEX.test(val.trim()), {
-        message: 'Emergency contact number must start with a digit between 6-9 and be exactly 10 digits',
-      }),
+    emergencyContact: optionalPhoneField(
+      'Emergency contact number must start with a digit between 6-9 and be exactly 10 digits',
+    ),
+    emergency_contact: optionalPhoneField(
+      'Emergency contact number must start with a digit between 6-9 and be exactly 10 digits',
+    ),
     roleCode: z.string().optional(),
     companyId: z.string().optional(),
     defaultLocationId: z.string().optional(),
     departmentId: z.string().optional(),
     jobCategoryId: z.string().optional(),
-    dateOfJoining: z.string().optional(),
-    date_of_joining: z.string().optional(),
+    dateOfJoining: optionalDateOfJoining,
+    date_of_joining: optionalDateOfJoining,
     propertyIds: z.array(z.string()).optional(),
     property_ids: z.array(z.string()).optional(),
     properties: z.array(z.string()).optional(),
@@ -151,6 +253,7 @@ export const updateUserSchema = z
     manager_id: z.string().nullable().optional(),
     propertyManagers: z.record(z.string(), z.string().nullable().optional()).optional(),
     property_managers: z.record(z.string(), z.string().nullable().optional()).optional(),
+    ...profileFields,
   })
   .passthrough()
   .refine(
@@ -162,6 +265,20 @@ export const updateUserSchema = z
       return true
     },
     { message: 'At least one property location is required', path: ['propertyIds'] },
+  )
+  .refine(
+    (data) => {
+      const fName = data.firstName || data.first_name
+      return !fName || NAME_REGEX.test(fName.trim())
+    },
+    { message: 'First name can only contain letters and spaces', path: ['firstName'] },
+  )
+  .refine(
+    (data) => {
+      const lName = data.lastName || data.last_name
+      return !lName || NAME_REGEX.test(lName.trim())
+    },
+    { message: 'Last name can only contain letters and spaces', path: ['lastName'] },
   )
 
 export const assignUserRoleSchema = z
