@@ -355,13 +355,13 @@ router.get(
 // ==================== ASSET ROUTES ====================
 router.get('/stats', authenticate, getAssetStats)
 
-router.post('/', authenticate, createAssetValidation, validateRequest, createAsset)
+router.post('/', authenticate, upload.single('warrantyDocument'), createAssetValidation, validateRequest, createAsset)
 
 router.get('/', authenticate, getAssetsValidation, validateRequest, getAssets)
 
 router.get('/:id', authenticate, getAssetByIdValidation, validateRequest, getAssetById)
 
-router.put('/:id', authenticate, updateAssetValidation, validateRequest, updateAsset)
+router.put('/:id', authenticate, upload.single('warrantyDocument'), updateAssetValidation, validateRequest, updateAsset)
 
 router.delete('/:id', authenticate, deleteAssetValidation, validateRequest, deleteAsset)
 

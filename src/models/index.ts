@@ -301,10 +301,11 @@ AssetVendor.hasMany(Asset, { foreignKey: 'vendorId', as: 'vendorAssets' })
 
 Asset.hasMany(AssetAssignment, { foreignKey: 'assetId', as: 'assignments' })
 AssetAssignment.belongsTo(Asset, { foreignKey: 'assetId', as: 'asset' })
-AssetAssignment.belongsTo(User, { foreignKey: 'assignedToUserId', as: 'assignedToUser' })
-AssetAssignment.belongsTo(Resident, { foreignKey: 'assignedToResidentId', as: 'assignedToResident' })
-AssetAssignment.belongsTo(Department, { foreignKey: 'assignedToDeptId', as: 'assignedToDept' })
-AssetAssignment.belongsTo(PropertyUnit, { foreignKey: 'assignedToUnitId', as: 'assignedToUnit' })
+// Assignees are polymorphic (`assigneeType` + `assigneeId`), resolved in the
+// controller; the only real foreign keys are the location and the assigner.
+AssetAssignment.belongsTo(Property, { foreignKey: 'locationId', as: 'location' })
+Property.hasMany(AssetAssignment, { foreignKey: 'locationId', as: 'assetAssignments' })
+AssetAssignment.belongsTo(User, { foreignKey: 'assignedBy', as: 'assigner' })
 
 Asset.hasMany(AssetServiceLog, { foreignKey: 'assetId', as: 'serviceLogs' })
 AssetServiceLog.belongsTo(Asset, { foreignKey: 'assetId', as: 'asset' })

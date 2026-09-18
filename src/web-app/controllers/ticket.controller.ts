@@ -19,6 +19,9 @@ import {
   UserLocation,
   AssetVendor,
   Asset,
+  Shift,
+  ShiftArea,
+  ShiftAssignment,
 } from '../../models/index.js'
 import { TicketActivityType, TicketPriority, TicketStatus } from '../../enums/ticket.enum.js'
 import { uploadFileToS3 } from '../../middlewares/s3/index.js'
@@ -111,6 +114,107 @@ export async function getPropertyUnitsForLocation(req: Request, res: Response): 
   }
 }
 
+interface EmployeeShiftInfo {
+  isOnShift: boolean
+  isScheduledToday: boolean
+  shiftName: string | null
+  startTime: string | null
+  endTime: string | null
+  workingDays: string[]
+  areaName: string | null
+  slotTimeRange: string | null
+  startDate: string | null
+  endDate: string | null
+}
+
+const WEEK_DAY_NAMES = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday']
+
+/** `HH:mm` (or `HH:mm:ss`) to minutes since midnight. */
+function timeToMinutes(value?: string | null): number | null {
+  if (!value) return null
+  const [h, m] = value.split(':')
+  const hours = Number(h)
+  const minutes = Number(m || 0)
+  if (Number.isNaN(hours) || Number.isNaN(minutes)) return null
+  return hours * 60 + minutes
+}
+
+/**
+ * Today's shift for each employee, so the assign dialog can show who is on duty.
+ * Returns a map of employeeId -> shift info (only employees with a shift today).
+ */
+async function getShiftInfoForEmployees(
+  employeeIds: string[],
+  locId?: string,
+): Promise<Record<string, EmployeeShiftInfo>> {
+  if (employeeIds.length === 0) return {}
+
+  const now = new Date()
+  const today = now.toISOString().split('T')[0] as string
+  const todayName = WEEK_DAY_NAMES[now.getDay()] as string
+  const nowMinutes = now.getHours() * 60 + now.getMinutes()
+
+  const assignments = (await ShiftAssignment.findAll({
+    where: {
+      employeeId: { [Op.in]: employeeIds },
+      isActive: true,
+      isDeleted: false,
+      startDate: { [Op.lte]: today },
+      endDate: { [Op.gte]: today },
+      ...(locId ? { locationId: locId } : {}),
+    },
+    include: [
+      { model: Shift, as: 'shift', required: false },
+      { model: ShiftArea, as: 'area', required: false, attributes: ['id', 'areaName', 'areaType'] },
+    ],
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  })) as any[]
+
+  const byEmployee: Record<string, EmployeeShiftInfo> = {}
+
+  for (const assignment of assignments) {
+    const workingDays: string[] = Array.isArray(assignment.workingDays) ? assignment.workingDays : []
+    // An empty working-days list means the shift runs every day.
+    const isScheduledToday =
+      workingDays.length === 0 || workingDays.some((day: string) => day.toLowerCase() === todayName)
+
+    const startTime = assignment.shift?.startTime || null
+    const endTime = assignment.shift?.endTime || null
+    const startMinutes = timeToMinutes(startTime)
+    const endMinutes = timeToMinutes(endTime)
+
+    let withinHours = false
+    if (startMinutes !== null && endMinutes !== null) {
+      withinHours =
+        endMinutes >= startMinutes
+          ? nowMinutes >= startMinutes && nowMinutes <= endMinutes
+          : // Overnight shift, e.g. 22:00 - 06:00
+            nowMinutes >= startMinutes || nowMinutes <= endMinutes
+    }
+
+    const info: EmployeeShiftInfo = {
+      isOnShift: isScheduledToday && withinHours,
+      isScheduledToday,
+      shiftName: assignment.shift?.name || null,
+      startTime,
+      endTime,
+      workingDays,
+      areaName: assignment.area?.areaName || assignment.area?.areaType || null,
+      slotTimeRange: assignment.slotTimeRange || null,
+      startDate: assignment.startDate || null,
+      endDate: assignment.endDate || null,
+    }
+
+    // Prefer the shift the employee is actually on right now.
+    const existing = byEmployee[assignment.employeeId]
+    if (!existing || (info.isOnShift && !existing.isOnShift)) {
+      byEmployee[assignment.employeeId] = info
+    }
+  }
+
+  return byEmployee
+}
+
 /**
  * Fetch employees matching department & job category with workload metrics
  */
@@ -125,26 +229,58 @@ export async function getAssignableEmployees(req: Request, res: Response): Promi
     if (jobCategoryId) userLocWhere.jobCategoryId = jobCategoryId
 
     // Find users associated with the given property/department/jobCategory
+    const userInclude = [
+      {
+        model: User,
+        as: 'user',
+        attributes: ['id', 'email', 'username'],
+        include: [{ model: UserDetail, as: 'profile', attributes: ['firstName', 'lastName'], required: false }],
+      },
+    ]
+
     const userLocations = (await UserLocation.findAll({
       where: userLocWhere,
-      include: [{ model: User, as: 'user', attributes: ['id', 'email'] }],
-    })) as unknown as Array<{ user?: { id: string; email: string | null } }>
+      include: userInclude,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    })) as any[]
 
     // Deduplicate user list
-    const userMap = new Map<string, { id: string; email: string }>()
+    const userMap = new Map<
+      string,
+      { id: string; email: string; username?: string | undefined; fullName?: string | undefined }
+    >()
+    const addUser = (u: {
+      id: string
+      email: string | null
+      username?: string | null
+      profile?: { firstName?: string | null; lastName?: string | null } | null
+    }) => {
+      const fullName = `${u.profile?.firstName || ''} ${u.profile?.lastName || ''}`.trim()
+      userMap.set(u.id, {
+        id: u.id,
+        email: u.email || 'user@rely.com',
+        username: u.username || undefined,
+        fullName: fullName || undefined,
+      })
+    }
+
     for (const ul of userLocations) {
-      if (ul.user) {
-        userMap.set(ul.user.id, { id: ul.user.id, email: ul.user.email || 'user@rely.com' })
-      }
+      if (ul.user) addUser(ul.user)
     }
 
     // Fallback: If no location filter matched, fetch active staff users
     if (userMap.size === 0) {
-      const allUsers = await User.findAll({ limit: 20, attributes: ['id', 'email'] })
-      for (const u of allUsers) {
-        userMap.set(u.id, { id: u.id, email: u.email || 'user@rely.com' })
-      }
+       
+      const allUsers = (await User.findAll({
+        limit: 20,
+        attributes: ['id', 'email', 'username'],
+        include: [{ model: UserDetail, as: 'profile', attributes: ['firstName', 'lastName'], required: false }],
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      })) as any[]
+      for (const u of allUsers) addUser(u)
     }
+
+    const shiftByEmployee = await getShiftInfoForEmployees(Array.from(userMap.keys()), locId)
 
     const employeesWithMetrics = await Promise.all(
       Array.from(userMap.values()).map(async (u) => {
@@ -162,16 +298,18 @@ export async function getAssignableEmployees(req: Request, res: Response): Promi
           },
         })
 
-        const initials = u.email ? u.email.substring(0, 2).toUpperCase() : 'EMP'
+        const name = u.fullName || u.username || u.email.split('@')[0] || 'Employee'
+        const initials = name.substring(0, 2).toUpperCase()
 
         return {
           id: u.id,
-          name: u.email.split('@')[0],
+          name,
           email: u.email,
           initials,
           totalAssigned,
           openCount,
           closedCount,
+          shift: shiftByEmployee[u.id] || null,
         }
       }),
     )

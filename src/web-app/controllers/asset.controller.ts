@@ -49,6 +49,7 @@ export const createAsset = async (req: AuthenticatedRequest, res: Response) => {
       condition,
       status,
       notes,
+      warrantyDocumentUrl: warrantyDocumentUrlInput,
     } = req.body
 
     const item = await AssetItem.findByPk(itemId)
@@ -68,6 +69,13 @@ export const createAsset = async (req: AuthenticatedRequest, res: Response) => {
       }
     }
 
+    // The form posts the warranty document as multipart; keep any URL sent directly.
+    let warrantyDocumentUrl: string | null = warrantyDocumentUrlInput || null
+    if (req.file) {
+      const s3Res = await uploadFileToS3(req.file, 'assets/warranty-documents')
+      warrantyDocumentUrl = s3Res.location
+    }
+
     const asset = await Asset.create({
       itemId,
       locationId,
@@ -79,6 +87,7 @@ export const createAsset = async (req: AuthenticatedRequest, res: Response) => {
       purchasePrice,
       currentValue: currentValue || purchasePrice,
       warrantyEndDate: warrantyEndDate || null,
+      warrantyDocumentUrl,
       condition,
       status,
       notes,
@@ -326,6 +335,7 @@ export const updateAsset = async (req: AuthenticatedRequest, res: Response) => {
       condition,
       status,
       notes,
+      warrantyDocumentUrl: warrantyDocumentUrlInput,
     } = req.body
 
     const asset = await Asset.findOne({
@@ -357,6 +367,12 @@ export const updateAsset = async (req: AuthenticatedRequest, res: Response) => {
       }
     }
 
+    let warrantyDocumentUrl: string | undefined = warrantyDocumentUrlInput
+    if (req.file) {
+      const s3Res = await uploadFileToS3(req.file, 'assets/warranty-documents')
+      warrantyDocumentUrl = s3Res.location
+    }
+
     await asset.update({
       ...(itemId && { itemId }),
       ...(locationId && { locationId }),
@@ -368,6 +384,7 @@ export const updateAsset = async (req: AuthenticatedRequest, res: Response) => {
       ...(purchasePrice !== undefined && { purchasePrice }),
       ...(currentValue !== undefined && { currentValue }),
       ...(warrantyEndDate !== undefined && { warrantyEndDate: warrantyEndDate || null }),
+      ...(warrantyDocumentUrl !== undefined && { warrantyDocumentUrl: warrantyDocumentUrl || null }),
       ...(condition && { condition }),
       ...(status && { status }),
       ...(notes !== undefined && { notes }),
@@ -576,6 +593,9 @@ export const getEmployeesForAssignment = async (req: AuthenticatedRequest, res: 
       attributes: ['id', 'username', 'email', 'phone'],
       order: [['username', 'ASC']],
       limit: 200,
+      // Without this, `limit` makes Sequelize push the users into a subquery and the
+      // nested Role join then references userLocations.roleId outside its scope.
+      subQuery: false,
     })
 
     const formattedEmployees = employees.map((emp) => {
