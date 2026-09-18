@@ -355,6 +355,7 @@ TicketTatHistory.belongsTo(User, { foreignKey: 'changedByUserId', as: 'changedBy
 
 Ticket.belongsTo(User, { foreignKey: 'workStartedByUserId', as: 'workStartedByUser' })
 Ticket.belongsTo(User, { foreignKey: 'completedByUserId', as: 'completedByUser' })
+Ticket.belongsTo(User, { foreignKey: 'verifiedByUserId', as: 'verifiedByUser' })
 
 // ── Doctor specializations ─────────────────────────────────────────────────
 User.belongsToMany(Specialization, {

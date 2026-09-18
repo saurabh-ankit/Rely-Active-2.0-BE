@@ -13,6 +13,7 @@ import {
   getTickets,
   getTicketStats,
   updateTicketOptions,
+  verifyTicket,
 } from '../controllers/ticket.controller.js'
 
 const ticketRouter = Router({ mergeParams: true })
@@ -28,6 +29,7 @@ ticketRouter.post('/', upload.single('attachment'), createTicket)
 ticketRouter.get('/:id', getTicketById)
 ticketRouter.patch('/:id/options', updateTicketOptions)
 ticketRouter.patch('/:id/assign', assignTicket)
+ticketRouter.patch('/:id/verify', verifyTicket)
 ticketRouter.post('/:id/comments', upload.single('attachment'), addTicketComment)
 ticketRouter.delete('/:id', deleteTicket)
 

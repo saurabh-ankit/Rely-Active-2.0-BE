@@ -36,6 +36,13 @@ export interface TicketAttributes extends BaseAttributes {
   completedAt?: Date | null
   completedByUserId?: string | null
   invoiceAmount?: string | number | null
+  verifiedAt?: Date | null
+  verifiedByUserId?: string | null
+  verificationNotes?: string | null
+  escalatedAt?: Date | null
+  escalatedByUserId?: string | null
+  escalatedByName?: string | null
+  escalationReason?: string | null
 }
 
 export type TicketCreationAttributes = Optional<
@@ -67,6 +74,13 @@ export type TicketCreationAttributes = Optional<
   | 'completedAt'
   | 'completedByUserId'
   | 'invoiceAmount'
+  | 'verifiedAt'
+  | 'verifiedByUserId'
+  | 'verificationNotes'
+  | 'escalatedAt'
+  | 'escalatedByUserId'
+  | 'escalatedByName'
+  | 'escalationReason'
   | 'createdBy'
   | 'updatedBy'
   | 'createdAt'
@@ -107,6 +121,13 @@ export class Ticket extends BaseModel<TicketAttributes, TicketCreationAttributes
   declare completedByUserId: string | null
   // DECIMAL columns are returned as strings by the MySQL driver
   declare invoiceAmount: string | number | null
+  declare verifiedAt: Date | null
+  declare verifiedByUserId: string | null
+  declare verificationNotes: string | null
+  declare escalatedAt: Date | null
+  declare escalatedByUserId: string | null
+  declare escalatedByName: string | null
+  declare escalationReason: string | null
 }
 
 Ticket.init(
@@ -243,6 +264,34 @@ Ticket.init(
     },
     invoiceAmount: {
       type: DataTypes.DECIMAL(12, 2),
+      allowNull: true,
+    },
+    verifiedAt: {
+      type: DataTypes.DATE,
+      allowNull: true,
+    },
+    verifiedByUserId: {
+      type: DataTypes.UUID,
+      allowNull: true,
+    },
+    verificationNotes: {
+      type: DataTypes.TEXT,
+      allowNull: true,
+    },
+    escalatedAt: {
+      type: DataTypes.DATE,
+      allowNull: true,
+    },
+    escalatedByUserId: {
+      type: DataTypes.UUID,
+      allowNull: true,
+    },
+    escalatedByName: {
+      type: DataTypes.STRING(255),
+      allowNull: true,
+    },
+    escalationReason: {
+      type: DataTypes.TEXT,
       allowNull: true,
     },
   },

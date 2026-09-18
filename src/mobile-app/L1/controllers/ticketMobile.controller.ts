@@ -202,7 +202,8 @@ export async function getResidentTickets(req: AuthenticatedRequest, res: Respons
         t.assignedToUserId === resident.id || assigneeName.toLowerCase() === residentName.toLowerCase()
       const completedBy = isClosed ? (isAssignedToSelf ? 'Self' : assigneeName) : null
       const resolutionNotesStr = String(t.resolutionNotes || '')
-      const isEscalated = Boolean(resolutionNotesStr && resolutionNotesStr.includes('[ESCALATED'))
+      const isEscalated =
+        Boolean(t.escalatedAt) || Boolean(resolutionNotesStr && resolutionNotesStr.includes('[ESCALATED'))
 
       return {
         id: t.id,
@@ -221,7 +222,9 @@ export async function getResidentTickets(req: AuthenticatedRequest, res: Respons
         raisedBy: residentName,
         completedBy: completedBy || (isClosed ? 'Self' : null),
         tatUpdatedBy: t.tatOption ? residentName : null,
-        escalatedBy: isEscalated ? residentName : null,
+        escalatedBy: isEscalated ? t.escalatedByName || residentName : null,
+        escalatedAt: t.escalatedAt || null,
+        escalationReason: t.escalationReason || null,
         tatOption: t.tatOption || '1-2 hour',
         customTatDeadline: t.customTatDeadline || null,
         resolutionNotes: t.resolutionNotes || null,
@@ -554,6 +557,21 @@ export async function escalateTicket(req: AuthenticatedRequest, res: Response): 
     // Append escalation reason to resolution notes or description
     const reasonText = `[ESCALATED ${new Date().toLocaleString()}]: ${String(reason).trim()}`
     ticket.resolutionNotes = ticket.resolutionNotes ? `${ticket.resolutionNotes}\n${reasonText}` : reasonText
+
+    // Record the escalation as first-class data so every app can read it.
+    const escalatingUserId = req.user?.residentId || req.user?.id || null
+    let escalatedByName: string | null = req.user?.email || null
+    if (req.user?.residentId) {
+      const resident = await Resident.findByPk(req.user.residentId)
+      if (resident) {
+        escalatedByName = `${resident.firstName || ''} ${resident.lastName || ''}`.trim() || escalatedByName
+      }
+    }
+
+    ticket.escalatedAt = new Date()
+    ticket.escalatedByUserId = escalatingUserId
+    ticket.escalatedByName = escalatedByName
+    ticket.escalationReason = String(reason).trim()
 
     await ticket.save()
 

@@ -1,5 +1,6 @@
 import type { Request, Response } from 'express'
 import { Op } from 'sequelize'
+import sequelize from '../../config/db/index.js'
 import type { AuthenticatedRequest } from '../../middlewares/authenticate.js'
 import {
   Ticket,
@@ -14,6 +15,7 @@ import {
   Department,
   JobCategory,
   User,
+  UserDetail,
   UserLocation,
   AssetVendor,
   Asset,
@@ -217,7 +219,7 @@ export async function getTickets(req: Request, res: Response): Promise<void> {
       where.priority = priority
     }
 
-    // Tab filter: Open, In Progress, Closed
+    // Tab filter: Open, In Progress, Completed (awaiting verification), Closed (verified)
     if (tab && tab !== 'ALL') {
       if (tab === 'OPEN') {
         where.status = TicketStatus.OPEN
@@ -234,8 +236,11 @@ export async function getTickets(req: Request, res: Response): Promise<void> {
             { assignedToUserId: { [Op.ne]: null } },
           ]
         }
+      } else if (tab === 'COMPLETED') {
+        // Work finished by staff, still waiting for admin verification.
+        where.status = TicketStatus.RESOLVED
       } else if (tab === 'CLOSED') {
-        where.status = { [Op.in]: [TicketStatus.RESOLVED, TicketStatus.CLOSED, TicketStatus.CANCELLED] }
+        where.status = { [Op.in]: [TicketStatus.CLOSED, TicketStatus.CANCELLED] }
       }
     } else if (status && status !== 'ALL') {
       where.status = status
@@ -281,7 +286,12 @@ export async function getTickets(req: Request, res: Response): Promise<void> {
         { model: AssetVendor, as: 'vendor', required: false },
         { model: Asset, as: 'asset', required: false },
       ],
-      order: [['createdAt', 'DESC']],
+      // Escalated tickets first (newest escalation on top), then the rest by recency.
+      order: [
+        [sequelize.literal('CASE WHEN Ticket.escalatedAt IS NULL THEN 1 ELSE 0 END'), 'ASC'],
+        ['escalatedAt', 'DESC'],
+        ['createdAt', 'DESC'],
+      ],
       limit: limitNum,
       offset,
       distinct: true,
@@ -365,6 +375,27 @@ export async function getTicketById(req: Request, res: Response): Promise<void> 
         { model: TicketSubCategory, as: 'subCategoryObj' },
         { model: User, as: 'assignedToUser', attributes: ['id', 'email'] },
         { model: User, as: 'raisedByUser', attributes: ['id', 'email'] },
+        {
+          model: User,
+          as: 'workStartedByUser',
+          attributes: ['id', 'email', 'username'],
+          include: [{ model: UserDetail, as: 'profile', attributes: ['firstName', 'lastName'] }],
+          required: false,
+        },
+        {
+          model: User,
+          as: 'completedByUser',
+          attributes: ['id', 'email', 'username'],
+          include: [{ model: UserDetail, as: 'profile', attributes: ['firstName', 'lastName'] }],
+          required: false,
+        },
+        {
+          model: User,
+          as: 'verifiedByUser',
+          attributes: ['id', 'email', 'username'],
+          include: [{ model: UserDetail, as: 'profile', attributes: ['firstName', 'lastName'] }],
+          required: false,
+        },
         { model: AssetVendor, as: 'vendor' },
         { model: Asset, as: 'asset' },
         {
@@ -547,6 +578,73 @@ export async function updateTicketOptions(req: AuthenticatedRequest, res: Respon
   } catch (error) {
     console.error('Error updating ticket options:', error)
     res.status(500).json({ success: false, message: 'Failed to update ticket options' })
+  }
+}
+
+/**
+ * PATCH /tickets/:id/verify
+ * Admin verification of a completed ticket: reviews the resident's request and the
+ * staff completion report, then closes the ticket. RESOLVED -> CLOSED.
+ */
+export async function verifyTicket(req: AuthenticatedRequest, res: Response): Promise<void> {
+  try {
+    const id = req.params.id as string
+    const ticket = await Ticket.findByPk(id)
+
+    if (!ticket) {
+      res.status(404).json({ success: false, message: 'Ticket not found' })
+      return
+    }
+
+    if (ticket.verifiedAt) {
+      res.status(409).json({ success: false, message: 'This ticket has already been verified' })
+      return
+    }
+    if (ticket.status !== TicketStatus.RESOLVED) {
+      res.status(409).json({
+        success: false,
+        message: `Only completed tickets can be verified. This ticket is ${ticket.status}.`,
+      })
+      return
+    }
+
+    const userId = req.user?.id || null
+    const verifierName = req.user?.email || 'Admin'
+    const { verificationNotes } = (req.body || {}) as { verificationNotes?: string }
+    const previousStatus = ticket.status
+    const verifiedAt = new Date()
+
+    ticket.status = TicketStatus.CLOSED
+    ticket.closedAt = verifiedAt
+    ticket.verifiedAt = verifiedAt
+    ticket.verifiedByUserId = userId
+    if (verificationNotes && verificationNotes.trim()) {
+      ticket.verificationNotes = verificationNotes.trim()
+    }
+    ticket.updatedBy = userId
+    await ticket.save()
+
+    await TicketActivityLog.create({
+      ticketId: ticket.id,
+      performedByUserId: userId,
+      performedByName: verifierName,
+      activityType: TicketActivityType.STATUS_CHANGE,
+      fromStatus: previousStatus,
+      toStatus: TicketStatus.CLOSED,
+      comment: verificationNotes?.trim()
+        ? `Work verified by ${verifierName}: ${verificationNotes.trim()}`
+        : `Work verified by ${verifierName}`,
+      createdBy: userId,
+    })
+
+    res.status(200).json({
+      success: true,
+      message: 'Ticket verified and closed successfully',
+      data: ticket,
+    })
+  } catch (error) {
+    console.error('Error verifying ticket:', error)
+    res.status(500).json({ success: false, message: 'Failed to verify ticket' })
   }
 }
 
