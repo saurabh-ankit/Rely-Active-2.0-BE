@@ -5,7 +5,7 @@
   "packageManager": "pnpm@10.18.3",
   "type": "module",
   "engines": {
-    "node": ">=24.19.0 <25",
+    "node": ">=23.0.0 <24",
     "pnpm": ">=10"
   },
   "scripts": {
@@ -26,6 +26,8 @@
     "migrate:executed": "tsx src/scripts/migrate.ts executed",
     "migrate:create": "tsx src/scripts/migrate.ts create",
     "seed": "tsx src/scripts/seed.ts",
+    "demo:billing": "tsx src/scripts/billingDemo.ts",
+    "demo:billing:reset": "tsx src/scripts/billingDemo.ts reset",
     "prepare": "husky"
   },
   "lint-staged": {
@@ -50,6 +52,7 @@
     "jsonwebtoken": "^9.0.3",
     "multer": "^2.2.0",
     "mysql2": "^3.24.2",
+    "node-cron": "^4.6.0",
     "pino": "^10.3.1",
     "pino-http": "^11.0.0",
     "qrcode": "^1.5.4",
@@ -67,6 +70,7 @@
     "@types/multer": "^2.2.0",
     "@types/node": "^24.13.3",
     "@types/qrcode": "^1.5.6",
+    "@types/node-cron": "^3.0.11",
     "@types/supertest": "^7.2.1",
     "@types/uuid": "^10.0.0",
     "eslint": "^9.36.0",

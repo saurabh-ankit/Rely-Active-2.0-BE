@@ -15,7 +15,6 @@ import assetRouter from './asset.routes.js'
 import fnbRouter from './fnb.routes.js'
 import ticketRouter from './ticket.routes.js'
 import gateRouter from './gate.routes.js'
-import { eventRouter, venueRouter, globalServiceRouter, eventRequestRouter } from './event.routes.js'
 import {
   shiftRouter,
   employeeShiftRouter,
@@ -23,6 +22,11 @@ import {
   shiftResidentPoolRouter,
   shiftRosterRouter,
 } from './roster.routes.js'
+import billingRouter from './billing.routes.js'
+import { eventRouter, venueRouter, globalServiceRouter, eventRequestRouter } from './event.routes.js'
+import globalSettingsRouter from './globalSettings.js'
+import medicalRouter from './medical.routes.js'
+import dashboardRouter from './dashboard.routes.js'
 
 export const apiRouter = Router()
 
@@ -60,11 +64,22 @@ apiRouter.use('/event-requests', eventRequestRouter)
 apiRouter.use('/location/:locationId/event-requests', eventRequestRouter)
 apiRouter.use('/global-services', globalServiceRouter)
 apiRouter.use('/location/:locationId/global-services', globalServiceRouter)
+apiRouter.use('/global-settings', globalSettingsRouter)
+
+// Medical routes (Care Tasks, Care Packages, Subscriptions)
+apiRouter.use('/medical', medicalRouter)
+apiRouter.use('/location/:locationId/medical', medicalRouter)
 
 apiRouter.use('/location/:locationId/shifts', shiftRouter)
 apiRouter.use('/location/:locationId/employee-shifts', employeeShiftRouter)
 apiRouter.use('/location/:locationId/shift-employee-dates', shiftEmployeeDateRouter)
 apiRouter.use('/location/:locationId/shift-resident-pools', shiftResidentPoolRouter)
 apiRouter.use('/location/:locationId/shift-roster', shiftRosterRouter)
+
+apiRouter.use('/billing', billingRouter)
+apiRouter.use('/location/:locationId/billing', billingRouter)
+
+apiRouter.use('/dashboard', dashboardRouter)
+apiRouter.use('/location/:locationId/dashboard', dashboardRouter)
 
 export default apiRouter

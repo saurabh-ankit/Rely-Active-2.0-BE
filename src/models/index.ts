@@ -79,6 +79,82 @@ import { ShiftSetting, RosterSetting } from './shiftSetting.model.js'
 import { ShiftRolePolicy, RosterRolePolicy } from './shiftRolePolicy.model.js'
 import { ShiftArea, RosterArea } from './shiftArea.model.js'
 import { FnbFoodAttendance } from './fnbFoodAttendance.model.js'
+import {
+  CareTask,
+  type CareTaskAttributes,
+  type CareTaskCreationAttributes,
+  type BillingType,
+} from './careTasks.model.js'
+import {
+  Package,
+  type PackageAttributes,
+  type PackageCreationAttributes,
+  type PackageDuration,
+  type PackageTaskItem,
+} from './package.model.js'
+import {
+  PackageSubscription,
+  type PackageSubscriptionAttributes,
+  type PackageSubscriptionCreationAttributes,
+  SubscriptionStatus,
+} from './packageSubscription.model.js'
+import {
+  PackageSubscriptionFeature,
+  type PackageSubscriptionFeatureAttributes,
+  type PackageSubscriptionFeatureCreationAttributes,
+} from './packageSubscriptionFeature.model.js'
+import {
+  AdditionalTaskCharge,
+  type AdditionalTaskChargeAttributes,
+  type AdditionalTaskChargeCreationAttributes,
+} from './additionalTaskCharge.model.js'
+import {
+  CarePackageFeaturesMap,
+  type CarePackageFeaturesMapAttributes,
+  type CarePackageFeaturesMapCreationAttributes,
+} from './carePackageFeaturesMap.model.js'
+import {
+  CareTaskAssignment,
+  type CareTaskAssignmentAttributes,
+  type CareTaskAssignmentCreationAttributes,
+  type AssignmentSource,
+  type AssignmentStatus,
+} from './careTaskAssignment.model.js'
+import {
+  ResidentCareTaskCompletion,
+  type ResidentCareTaskCompletionAttributes,
+  type ResidentCareTaskCompletionCreationAttributes,
+  type CompletionStatus,
+} from './residentCareTaskCompletion.model.js'
+import {
+  ResidentCareTeam,
+  type ResidentCareTeamAttributes,
+  type ResidentCareTeamCreationAttributes,
+  type CareTeamRole,
+} from './residentCareTeam.model.js'
+
+// ── Billing & Revenue Management Module ──────────────────────────────────────
+import { UnitResident } from './unitResident.model.js'
+import { BillingProduct } from './billingProduct.model.js'
+import { BillingPricePlan } from './billingPricePlan.model.js'
+import { BillingAccount } from './billingAccount.model.js'
+import { BillingParty } from './billingParty.model.js'
+import { BillingContract } from './billingContract.model.js'
+import { BillingSubscription } from './billingSubscription.model.js'
+import { BillingEvent } from './billingEvent.model.js'
+import { Invoice } from './invoice.model.js'
+import { InvoiceLine } from './invoiceLine.model.js'
+import { Payment } from './payment.model.js'
+import { PaymentAllocation } from './paymentAllocation.model.js'
+import { BillingRun } from './billingRun.model.js'
+import { BillingLedgerEntry } from './billingLedgerEntry.model.js'
+import {
+  InventoryStock,
+  InventoryPurchaseOrder,
+  InventoryPurchaseOrderLine,
+  InventoryStockTransaction,
+  InventoryStockTransactionLine,
+} from './inventoryStock.model.js'
 
 // ── F&B Meal Slot associations ──────────────────────────────────────────────
 FnbGlobalMealSlot.hasMany(FnbPropertyMealSlot, { foreignKey: 'globalMealSlotId', as: 'propertyMealSlots' })
@@ -113,6 +189,14 @@ Resident.belongsTo(Property, { foreignKey: 'locId', as: 'property' })
 
 Resident.hasMany(ResidentFamilyMember, { foreignKey: 'residentId', as: 'familyMembers' })
 ResidentFamilyMember.belongsTo(Resident, { foreignKey: 'residentId', as: 'resident' })
+
+// ── ResidentCareTeam associations ───────────────────────────────────────────
+Resident.hasMany(ResidentCareTeam, { foreignKey: 'residentId', as: 'careTeam' })
+ResidentCareTeam.belongsTo(Resident, { foreignKey: 'residentId', as: 'resident' })
+User.hasMany(ResidentCareTeam, { foreignKey: 'userId', as: 'careTeamAssignments' })
+ResidentCareTeam.belongsTo(User, { foreignKey: 'userId', as: 'user' })
+Property.hasMany(ResidentCareTeam, { foreignKey: 'locId', as: 'careTeamMembers' })
+ResidentCareTeam.belongsTo(Property, { foreignKey: 'locId', as: 'property' })
 
 // ── User & Detail ───────────────────────────────────────────────────────────
 User.hasOne(UserDetail, { foreignKey: 'userId', as: 'profile' })
@@ -488,6 +572,304 @@ ShiftRolePolicy.belongsTo(Property, { foreignKey: 'locationId', as: 'location' }
 
 Property.hasMany(ShiftArea, { foreignKey: 'locationId', as: 'shiftAreas' })
 ShiftArea.belongsTo(Property, { foreignKey: 'locationId', as: 'property' })
+// ── Billing Module Associations ────────────────────────────────────────────────
+// "Start simple in implementation, but never simplistic in architecture."
+// Golden Rule: Billing Account = Financial Folio. Decoupled from occupancy.
+
+// ── UnitResident (Occupancy Bridge) ──────────────────────────────────────────
+PropertyUnit.hasMany(UnitResident, { foreignKey: 'unitId', as: 'unitResidents' })
+UnitResident.belongsTo(PropertyUnit, { foreignKey: 'unitId', as: 'unit' })
+
+Resident.hasMany(UnitResident, { foreignKey: 'residentId', as: 'unitResidencies' })
+UnitResident.belongsTo(Resident, { foreignKey: 'residentId', as: 'resident' })
+
+// ── Billing Product & Price Plans ─────────────────────────────────────────────
+Company.hasMany(BillingProduct, { foreignKey: 'companyId', as: 'billingProducts' })
+BillingProduct.belongsTo(Company, { foreignKey: 'companyId', as: 'company' })
+
+BillingProduct.hasMany(BillingPricePlan, { foreignKey: 'productId', as: 'pricePlans' })
+BillingPricePlan.belongsTo(BillingProduct, { foreignKey: 'productId', as: 'product' })
+
+Property.hasMany(BillingPricePlan, { foreignKey: 'propertyId', as: 'billingPricePlans' })
+BillingPricePlan.belongsTo(Property, { foreignKey: 'propertyId', as: 'property' })
+
+// ── Billing Account (Financial Folio) ─────────────────────────────────────────
+PropertyUnit.hasMany(BillingAccount, { foreignKey: 'unitId', as: 'billingAccounts' })
+BillingAccount.belongsTo(PropertyUnit, { foreignKey: 'unitId', as: 'unit' })
+
+Property.hasMany(BillingAccount, { foreignKey: 'propertyId', as: 'billingAccounts' })
+BillingAccount.belongsTo(Property, { foreignKey: 'propertyId', as: 'property' })
+
+Company.hasMany(BillingAccount, { foreignKey: 'companyId', as: 'billingAccounts' })
+BillingAccount.belongsTo(Company, { foreignKey: 'companyId', as: 'company' })
+
+// primaryResidentId is informational (anchor) — NOT the payer
+Resident.hasMany(BillingAccount, { foreignKey: 'primaryResidentId', as: 'primaryBillingAccounts' })
+BillingAccount.belongsTo(Resident, { foreignKey: 'primaryResidentId', as: 'primaryResident' })
+
+// ── Billing Parties (WHO PAYS) ────────────────────────────────────────────────
+BillingAccount.hasMany(BillingParty, { foreignKey: 'billingAccountId', as: 'parties' })
+BillingParty.belongsTo(BillingAccount, { foreignKey: 'billingAccountId', as: 'billingAccount' })
+
+Resident.hasMany(BillingParty, { foreignKey: 'residentId', as: 'billingParties' })
+BillingParty.belongsTo(Resident, { foreignKey: 'residentId', as: 'resident' })
+
+ResidentFamilyMember.hasMany(BillingParty, { foreignKey: 'familyMemberId', as: 'billingParties' })
+BillingParty.belongsTo(ResidentFamilyMember, { foreignKey: 'familyMemberId', as: 'familyMember' })
+
+// ── Billing Contracts ─────────────────────────────────────────────────────────
+BillingAccount.hasMany(BillingContract, { foreignKey: 'billingAccountId', as: 'contracts' })
+BillingContract.belongsTo(BillingAccount, { foreignKey: 'billingAccountId', as: 'billingAccount' })
+
+PropertyUnit.hasMany(BillingContract, { foreignKey: 'unitId', as: 'billingContracts' })
+BillingContract.belongsTo(PropertyUnit, { foreignKey: 'unitId', as: 'unit' })
+
+// ── Billing Subscriptions ─────────────────────────────────────────────────────
+BillingAccount.hasMany(BillingSubscription, { foreignKey: 'billingAccountId', as: 'subscriptions' })
+BillingSubscription.belongsTo(BillingAccount, { foreignKey: 'billingAccountId', as: 'billingAccount' })
+
+BillingContract.hasMany(BillingSubscription, { foreignKey: 'contractId', as: 'subscriptions' })
+BillingSubscription.belongsTo(BillingContract, { foreignKey: 'contractId', as: 'contract' })
+
+BillingProduct.hasMany(BillingSubscription, { foreignKey: 'productId', as: 'subscriptions' })
+BillingSubscription.belongsTo(BillingProduct, { foreignKey: 'productId', as: 'product' })
+
+BillingPricePlan.hasMany(BillingSubscription, { foreignKey: 'pricePlanId', as: 'subscriptions' })
+BillingSubscription.belongsTo(BillingPricePlan, { foreignKey: 'pricePlanId', as: 'pricePlan' })
+
+PropertyUnit.hasMany(BillingSubscription, { foreignKey: 'unitId', as: 'billingSubscriptions' })
+BillingSubscription.belongsTo(PropertyUnit, { foreignKey: 'unitId', as: 'unit' })
+
+// FnB package bridge: food subscription links to fnb_resident_packages
+FnbResidentPackage.hasOne(BillingSubscription, { foreignKey: 'fnbPackageId', as: 'billingSubscription' })
+BillingSubscription.belongsTo(FnbResidentPackage, { foreignKey: 'fnbPackageId', as: 'fnbPackage' })
+
+// ── Billing Events (IMMUTABLE Usage Facts) ────────────────────────────────────
+BillingAccount.hasMany(BillingEvent, { foreignKey: 'billingAccountId', as: 'billingEvents' })
+BillingEvent.belongsTo(BillingAccount, { foreignKey: 'billingAccountId', as: 'billingAccount' })
+
+Resident.hasMany(BillingEvent, { foreignKey: 'residentId', as: 'billingEvents' })
+BillingEvent.belongsTo(Resident, { foreignKey: 'residentId', as: 'resident' })
+
+PropertyUnit.hasMany(BillingEvent, { foreignKey: 'unitId', as: 'billingEvents' })
+BillingEvent.belongsTo(PropertyUnit, { foreignKey: 'unitId', as: 'unit' })
+
+BillingProduct.hasMany(BillingEvent, { foreignKey: 'productId', as: 'billingEvents' })
+BillingEvent.belongsTo(BillingProduct, { foreignKey: 'productId', as: 'product' })
+
+// ── Invoices ──────────────────────────────────────────────────────────────────
+BillingAccount.hasMany(Invoice, { foreignKey: 'billingAccountId', as: 'invoices' })
+Invoice.belongsTo(BillingAccount, { foreignKey: 'billingAccountId', as: 'billingAccount' })
+
+PropertyUnit.hasMany(Invoice, { foreignKey: 'unitId', as: 'invoices' })
+Invoice.belongsTo(PropertyUnit, { foreignKey: 'unitId', as: 'unit' })
+
+Resident.hasMany(Invoice, { foreignKey: 'residentId', as: 'invoices' })
+Invoice.belongsTo(Resident, { foreignKey: 'residentId', as: 'resident' })
+
+// Self-referential for credit/debit notes
+Invoice.belongsTo(Invoice, { foreignKey: 'referenceInvoiceId', as: 'referenceInvoice' })
+Invoice.hasMany(Invoice, { foreignKey: 'referenceInvoiceId', as: 'relatedNotes' })
+
+// ── Invoice Lines ─────────────────────────────────────────────────────────────
+Invoice.hasMany(InvoiceLine, { foreignKey: 'invoiceId', as: 'lines' })
+InvoiceLine.belongsTo(Invoice, { foreignKey: 'invoiceId', as: 'invoice' })
+
+BillingSubscription.hasMany(InvoiceLine, { foreignKey: 'subscriptionId', as: 'invoiceLines' })
+InvoiceLine.belongsTo(BillingSubscription, { foreignKey: 'subscriptionId', as: 'subscription' })
+
+BillingEvent.hasMany(InvoiceLine, { foreignKey: 'billingEventId', as: 'invoiceLines' })
+InvoiceLine.belongsTo(BillingEvent, { foreignKey: 'billingEventId', as: 'billingEvent' })
+
+BillingProduct.hasMany(InvoiceLine, { foreignKey: 'productId', as: 'invoiceLines' })
+InvoiceLine.belongsTo(BillingProduct, { foreignKey: 'productId', as: 'product' })
+
+// consumedByResidentId = WHO used the service (not who pays)
+Resident.hasMany(InvoiceLine, { foreignKey: 'consumedByResidentId', as: 'consumedInvoiceLines' })
+InvoiceLine.belongsTo(Resident, { foreignKey: 'consumedByResidentId', as: 'consumedByResident' })
+
+// ── Payments ──────────────────────────────────────────────────────────────────
+BillingAccount.hasMany(Payment, { foreignKey: 'billingAccountId', as: 'payments' })
+Payment.belongsTo(BillingAccount, { foreignKey: 'billingAccountId', as: 'billingAccount' })
+
+// ── Payment Allocations ───────────────────────────────────────────────────────
+Payment.hasMany(PaymentAllocation, { foreignKey: 'paymentId', as: 'allocations' })
+PaymentAllocation.belongsTo(Payment, { foreignKey: 'paymentId', as: 'payment' })
+
+Invoice.hasMany(PaymentAllocation, { foreignKey: 'invoiceId', as: 'paymentAllocations' })
+PaymentAllocation.belongsTo(Invoice, { foreignKey: 'invoiceId', as: 'invoice' })
+
+BillingAccount.hasMany(PaymentAllocation, { foreignKey: 'billingAccountId', as: 'paymentAllocations' })
+PaymentAllocation.belongsTo(BillingAccount, { foreignKey: 'billingAccountId', as: 'billingAccount' })
+
+// ── Billing Runs ──────────────────────────────────────────────────────────────
+Property.hasMany(BillingRun, { foreignKey: 'propertyId', as: 'billingRuns' })
+BillingRun.belongsTo(Property, { foreignKey: 'propertyId', as: 'property' })
+
+// ── Billing Ledger Entries (SACRED APPEND-ONLY) ───────────────────────────────
+BillingAccount.hasMany(BillingLedgerEntry, { foreignKey: 'billingAccountId', as: 'ledgerEntries' })
+BillingLedgerEntry.belongsTo(BillingAccount, { foreignKey: 'billingAccountId', as: 'billingAccount' })
+
+PropertyUnit.hasMany(BillingLedgerEntry, { foreignKey: 'unitId', as: 'ledgerEntries' })
+BillingLedgerEntry.belongsTo(PropertyUnit, { foreignKey: 'unitId', as: 'unit' })
+
+// ── Care Tasks associations ──────────────────────────────────────────────────
+Property.hasMany(CareTask, { foreignKey: 'propertyId', as: 'careTasks' })
+CareTask.belongsTo(Property, { foreignKey: 'propertyId', as: 'property' })
+
+// ── Packages associations ────────────────────────────────────────────────────
+Property.hasMany(Package, { foreignKey: 'propertyId', as: 'packages' })
+Package.belongsTo(Property, { foreignKey: 'propertyId', as: 'property' })
+
+// ── Care Package Features Map associations ──────────────────────────────────
+Package.belongsToMany(CareTask, {
+  through: CarePackageFeaturesMap,
+  as: 'features',
+  foreignKey: 'carePackageId',
+  otherKey: 'featureId',
+})
+CareTask.belongsToMany(Package, {
+  through: CarePackageFeaturesMap,
+  as: 'packages',
+  foreignKey: 'featureId',
+  otherKey: 'carePackageId',
+})
+
+Package.hasMany(CarePackageFeaturesMap, {
+  foreignKey: 'carePackageId',
+  as: 'featureMaps',
+})
+Package.hasMany(CarePackageFeaturesMap, {
+  foreignKey: 'carePackageId',
+  as: 'featureMappings',
+})
+CarePackageFeaturesMap.belongsTo(Package, {
+  foreignKey: 'carePackageId',
+  as: 'carePackage',
+})
+
+CareTask.hasMany(CarePackageFeaturesMap, {
+  foreignKey: 'featureId',
+  as: 'packageMaps',
+})
+CarePackageFeaturesMap.belongsTo(CareTask, {
+  foreignKey: 'featureId',
+  as: 'feature',
+})
+
+// ── Package Subscription associations ─────────────────────────────────────────
+Resident.belongsTo(Package, { foreignKey: 'carePackageId', as: 'carePackage' })
+Package.hasMany(Resident, { foreignKey: 'carePackageId', as: 'residents' })
+
+Resident.hasMany(PackageSubscription, { foreignKey: 'residentId', as: 'packageSubscriptions' })
+PackageSubscription.belongsTo(Resident, { foreignKey: 'residentId', as: 'resident' })
+
+Package.hasMany(PackageSubscription, { foreignKey: 'carePackageId', as: 'packageSubscriptions' })
+PackageSubscription.belongsTo(Package, { foreignKey: 'carePackageId', as: 'carePackage' })
+
+Property.hasMany(PackageSubscription, { foreignKey: 'propertyId', as: 'packageSubscriptions' })
+PackageSubscription.belongsTo(Property, { foreignKey: 'propertyId', as: 'property' })
+
+PackageSubscription.hasMany(PackageSubscriptionFeature, {
+  foreignKey: 'packageSubscriptionId',
+  as: 'packageSubscriptionFeatures',
+})
+PackageSubscription.hasMany(PackageSubscriptionFeature, {
+  foreignKey: 'packageSubscriptionId',
+  as: 'features',
+})
+PackageSubscriptionFeature.belongsTo(PackageSubscription, {
+  foreignKey: 'packageSubscriptionId',
+  as: 'subscription',
+})
+
+CareTask.hasMany(PackageSubscriptionFeature, {
+  foreignKey: 'featureId',
+  as: 'packageSubscriptionFeatures',
+})
+PackageSubscriptionFeature.belongsTo(CareTask, {
+  foreignKey: 'featureId',
+  as: 'feature',
+})
+
+// ── Additional Task Charges associations ──────────────────────────────────────
+Resident.hasMany(AdditionalTaskCharge, { foreignKey: 'residentId', as: 'additionalTaskCharges' })
+AdditionalTaskCharge.belongsTo(Resident, { foreignKey: 'residentId', as: 'resident' })
+
+CareTask.hasMany(AdditionalTaskCharge, { foreignKey: 'featureId', as: 'additionalTaskCharges' })
+AdditionalTaskCharge.belongsTo(CareTask, { foreignKey: 'featureId', as: 'feature' })
+
+User.hasMany(AdditionalTaskCharge, { foreignKey: 'nurseId', as: 'nurseAdditionalTaskCharges' })
+AdditionalTaskCharge.belongsTo(User, { foreignKey: 'nurseId', as: 'nurse' })
+
+// ── Care Task Assignments associations ─────────────────────────────────────────
+Resident.hasMany(CareTaskAssignment, { foreignKey: 'residentId', as: 'careTaskAssignments' })
+CareTaskAssignment.belongsTo(Resident, { foreignKey: 'residentId', as: 'resident' })
+
+CareTask.hasMany(CareTaskAssignment, { foreignKey: 'taskId', as: 'assignments' })
+CareTaskAssignment.belongsTo(CareTask, { foreignKey: 'taskId', as: 'task' })
+
+Property.hasMany(CareTaskAssignment, { foreignKey: 'propertyId', as: 'careTaskAssignments' })
+CareTaskAssignment.belongsTo(Property, { foreignKey: 'propertyId', as: 'property' })
+
+User.hasMany(CareTaskAssignment, { foreignKey: 'nurseId', as: 'assignedCareTasks' })
+CareTaskAssignment.belongsTo(User, { foreignKey: 'nurseId', as: 'nurse' })
+
+User.hasMany(CareTaskAssignment, { foreignKey: 'completedBy', as: 'completedCareTasks' })
+CareTaskAssignment.belongsTo(User, { foreignKey: 'completedBy', as: 'completedByUser' })
+
+User.hasMany(CareTaskAssignment, { foreignKey: 'stoppedBy', as: 'stoppedCareTasks' })
+CareTaskAssignment.belongsTo(User, { foreignKey: 'stoppedBy', as: 'stoppedByUser' })
+
+CareTaskAssignment.hasMany(AdditionalTaskCharge, { foreignKey: 'taskAssignmentId', as: 'charges' })
+AdditionalTaskCharge.belongsTo(CareTaskAssignment, { foreignKey: 'taskAssignmentId', as: 'taskAssignment' })
+
+PackageSubscription.hasMany(CareTaskAssignment, { foreignKey: 'packageSubscriptionId', as: 'careTaskAssignments' })
+CareTaskAssignment.belongsTo(PackageSubscription, { foreignKey: 'packageSubscriptionId', as: 'packageSubscription' })
+
+Package.hasMany(CareTaskAssignment, { foreignKey: 'carePackageId', as: 'careTaskAssignments' })
+CareTaskAssignment.belongsTo(Package, { foreignKey: 'carePackageId', as: 'carePackage' })
+
+// ── Resident Care Task Completion associations ─────────────────────────────────
+CareTaskAssignment.hasMany(ResidentCareTaskCompletion, {
+  foreignKey: 'residentCareTaskAssignmentId',
+  as: 'completions',
+})
+ResidentCareTaskCompletion.belongsTo(CareTaskAssignment, {
+  foreignKey: 'residentCareTaskAssignmentId',
+  as: 'assignment',
+})
+
+Resident.hasMany(ResidentCareTaskCompletion, { foreignKey: 'residentId', as: 'careTaskCompletions' })
+ResidentCareTaskCompletion.belongsTo(Resident, { foreignKey: 'residentId', as: 'resident' })
+
+CareTask.hasMany(ResidentCareTaskCompletion, { foreignKey: 'taskId', as: 'completions' })
+ResidentCareTaskCompletion.belongsTo(CareTask, { foreignKey: 'taskId', as: 'task' })
+
+Property.hasMany(ResidentCareTaskCompletion, { foreignKey: 'propertyId', as: 'careTaskCompletions' })
+ResidentCareTaskCompletion.belongsTo(Property, { foreignKey: 'propertyId', as: 'property' })
+
+User.hasMany(ResidentCareTaskCompletion, { foreignKey: 'completedBy', as: 'completedCareTaskRecords' })
+ResidentCareTaskCompletion.belongsTo(User, { foreignKey: 'completedBy', as: 'completedByUser' })
+
+// ── Inventory Stock Transactions & Billing ─────────────────────────────────────
+InventoryStockTransaction.hasMany(InventoryStockTransactionLine, {
+  foreignKey: 'transactionId',
+  as: 'lines',
+})
+InventoryStockTransactionLine.belongsTo(InventoryStockTransaction, {
+  foreignKey: 'transactionId',
+  as: 'transaction',
+})
+
+Resident.hasMany(InventoryStockTransaction, {
+  foreignKey: 'residentId',
+  as: 'inventoryTransactions',
+})
+InventoryStockTransaction.belongsTo(Resident, {
+  foreignKey: 'residentId',
+  as: 'resident',
+})
 
 export {
   GuestMaster,
@@ -571,6 +953,57 @@ export {
   ShiftArea,
   RosterArea,
   FnbFoodAttendance,
+  // ── Billing & Revenue Management Module ───────────────────────────────────
+  UnitResident,
+  BillingProduct,
+  BillingPricePlan,
+  BillingAccount,
+  BillingParty,
+  BillingContract,
+  BillingSubscription,
+  BillingEvent,
+  Invoice,
+  InvoiceLine,
+  Payment,
+  PaymentAllocation,
+  BillingRun,
+  BillingLedgerEntry,
+  // ── Care Tasks & Medical Module ───────────────────────────────────────────
+  CareTask,
+  type CareTaskAttributes,
+  type CareTaskCreationAttributes,
+  type BillingType,
+  Package,
+  type PackageAttributes,
+  type PackageCreationAttributes,
+  type PackageDuration,
+  type PackageTaskItem,
+  PackageSubscription,
+  type PackageSubscriptionAttributes,
+  type PackageSubscriptionCreationAttributes,
+  SubscriptionStatus,
+  PackageSubscriptionFeature,
+  type PackageSubscriptionFeatureAttributes,
+  type PackageSubscriptionFeatureCreationAttributes,
+  AdditionalTaskCharge,
+  type AdditionalTaskChargeAttributes,
+  type AdditionalTaskChargeCreationAttributes,
+  CarePackageFeaturesMap,
+  type CarePackageFeaturesMapAttributes,
+  type CarePackageFeaturesMapCreationAttributes,
+  CareTaskAssignment,
+  type CareTaskAssignmentAttributes,
+  type CareTaskAssignmentCreationAttributes,
+  type AssignmentSource,
+  type AssignmentStatus,
+  ResidentCareTaskCompletion,
+  type ResidentCareTaskCompletionAttributes,
+  type ResidentCareTaskCompletionCreationAttributes,
+  type CompletionStatus,
+  ResidentCareTeam,
+  type ResidentCareTeamAttributes,
+  type ResidentCareTeamCreationAttributes,
+  type CareTeamRole,
 }
 
 InventoryItem.belongsTo(InventoryCategory, { foreignKey: 'categoryId', as: 'category' })
@@ -604,4 +1037,4 @@ export {
   InventoryPurchaseOrderLine,
   InventoryStockTransaction,
   InventoryStockTransactionLine,
-} from './inventoryStock.model.js'
+}

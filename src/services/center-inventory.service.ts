@@ -18,7 +18,16 @@ import {
   UserDetail,
   UserLocation,
   Role,
+  BillingAccount,
+  BillingEvent,
+  BillingProduct,
 } from '../models/index.js'
+import {
+  BillingEventSourceModule,
+  BillingEventStatus,
+  BillingProductCategory,
+  ChargeType,
+} from '../enums/billing.enum.js'
 import {
   InventoryIssueAllocation,
   InventoryStock,
@@ -893,6 +902,69 @@ export async function assignItems(locationId: string, input: AssignmentInput, us
           },
           { transaction },
         )
+
+        // If assigned to a resident, emit an unbilled BillingEvent for the resident's unit folio
+        if (input.residentId) {
+          try {
+            const resident = await Resident.findByPk(input.residentId, { transaction })
+            if (resident && resident.unitId) {
+              const billingAccount = await BillingAccount.findOne({
+                where: { unitId: resident.unitId, isActive: true },
+                transaction,
+              })
+              if (billingAccount) {
+                let consumableProduct = await BillingProduct.findOne({
+                  where: { category: BillingProductCategory.CONSUMABLE, chargeType: ChargeType.USAGE, isActive: true },
+                  transaction,
+                })
+                if (!consumableProduct && billingAccount.companyId) {
+                  consumableProduct = await BillingProduct.create(
+                    {
+                      companyId: billingAccount.companyId,
+                      category: BillingProductCategory.CONSUMABLE,
+                      chargeType: ChargeType.USAGE,
+                      productCode: 'PROD-CONSUMABLE',
+                      productName: 'Inventory Consumable',
+                      description: 'Inventory Consumable Item',
+                      isTaxable: false,
+                      defaultTaxRate: 0,
+                      isActive: true,
+                    },
+                    { transaction },
+                  )
+                }
+                if (consumableProduct) {
+                  const packQty =
+                    Number(receipt.packQuantity) && Number(receipt.packQuantity) > 0 ? Number(receipt.packQuantity) : 1
+                  const baseUnitPrice = Math.round((Number(receipt.mrpPrice) / packQty) * 100) / 100
+
+                  await BillingEvent.create(
+                    {
+                      billingAccountId: billingAccount.id,
+                      unitId: resident.unitId,
+                      residentId: resident.id,
+                      propertyId: locationId,
+                      sourceModule: BillingEventSourceModule.INVENTORY,
+                      sourceType: 'INVENTORY_ISSUE',
+                      sourceId: line.id,
+                      productId: consumableProduct.id,
+                      chargeType: 'USAGE',
+                      description: `${receipt.itemName || 'Inventory Item'}${receipt.batchNumber ? ` (Batch: ${receipt.batchNumber})` : ''}`,
+                      quantity,
+                      unitPrice: baseUnitPrice,
+                      amount: mrpAmount,
+                      serviceDate: input.date,
+                      status: BillingEventStatus.PENDING,
+                    },
+                    { transaction },
+                  )
+                }
+              }
+            }
+          } catch (billingErr) {
+            console.error('Failed to ingest billing event for inventory assignment:', billingErr)
+          }
+        }
       }
       await InventoryStock.update(
         { quantity: item.remainingQuantity, updatedBy: userId },

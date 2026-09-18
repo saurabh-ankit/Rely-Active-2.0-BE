@@ -34,6 +34,9 @@ export type UserCreationAttributes = Optional<
   | 'updatedAt'
 >
 
+import type { UserDetail } from './userDetail.model.js'
+import type { UserLocation } from './userLocation.model.js'
+
 export class User extends BaseModel<UserAttributes, UserCreationAttributes> implements UserAttributes {
   declare username: string | null
   declare companyId: string | null
@@ -44,6 +47,8 @@ export class User extends BaseModel<UserAttributes, UserCreationAttributes> impl
   declare status: UserStatus
   declare isActive: boolean
   declare isDeleted: boolean
+  declare profile?: UserDetail | null
+  declare userLocations?: UserLocation[]
 }
 
 User.init(

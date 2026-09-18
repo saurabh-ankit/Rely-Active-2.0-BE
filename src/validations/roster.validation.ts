@@ -117,6 +117,8 @@ export const createEmployeeShiftSchema = z
     }
   })
 
+const optionalUuidList = z.array(z.union([uuid, z.literal('none')])).optional()
+
 export const bulkCreateEmployeeShiftSchema = z
   .object({
     employeeIds: z.array(uuid).min(1, 'employeeIds is required'),
@@ -126,17 +128,26 @@ export const bulkCreateEmployeeShiftSchema = z
     notes: z.string().max(500).optional().nullable(),
     workingDays: workingDaysSchema,
     areaId: optionalLocationRef,
-    areaIds: z.array(z.union([uuid, z.literal('none')])).optional(),
+    areaIds: optionalUuidList,
     unitId: optionalLocationRef,
+    unitIds: optionalUuidList,
     blockId: optionalLocationRef,
+    blockIds: optionalUuidList,
     floorId: optionalLocationRef,
+    floorIds: optionalUuidList,
     slotTimeRange: slotTimeRangeSchema,
   })
   .superRefine((data, ctx) => {
     const hasArea =
       (data.areaId && data.areaId !== 'none') ||
       (Array.isArray(data.areaIds) && data.areaIds.some((id) => id && id !== 'none'))
-    const hasUnit = data.unitId && data.unitId !== 'none'
+    const hasUnit =
+      (data.unitId && data.unitId !== 'none') ||
+      (Array.isArray(data.unitIds) && data.unitIds.some((id) => id && id !== 'none')) ||
+      (data.blockId && data.blockId !== 'none') ||
+      (Array.isArray(data.blockIds) && data.blockIds.some((id) => id && id !== 'none')) ||
+      (data.floorId && data.floorId !== 'none') ||
+      (Array.isArray(data.floorIds) && data.floorIds.some((id) => id && id !== 'none'))
     if (hasArea && hasUnit) {
       ctx.addIssue({
         code: 'custom',
