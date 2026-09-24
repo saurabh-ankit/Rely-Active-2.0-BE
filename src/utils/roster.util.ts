@@ -267,3 +267,71 @@ export function getDaysUnavailableForAllEmployees(
   const offSets = employeesWeekOffs.map((offs) => new Set((offs || []).map((d) => d.toLowerCase())))
   return days.filter((day) => offSets.every((offs) => offs.has(day)))
 }
+
+/**
+ * Medical roster location assignment mode derived from employee role + job category.
+ * - unit_only: Nurse / In-house Doctor — Unit hierarchy required, Area forbidden
+ * - none: Visiting Doctor — no Area or Unit
+ * - null: not a Medical special-case role (unrestricted)
+ */
+export type MedicalRosterLocationMode = 'unit_only' | 'none'
+
+export function resolveMedicalRosterLocationMode(params: {
+  roleCode?: string | null
+  roleName?: string | null
+  jobCategoryCode?: string | null
+  jobCategoryName?: string | null
+}): MedicalRosterLocationMode | null {
+  const role = `${params.roleCode || ''} ${params.roleName || ''}`.toUpperCase()
+  const jcCode = (params.jobCategoryCode || '').toUpperCase()
+  const jcName = (params.jobCategoryName || '').toLowerCase()
+  const isVisiting = jcCode === 'MED_VISITING' || jcName.includes('visiting')
+  const isInhouse =
+    jcCode === 'MED_INHOUSE' || jcName.includes('inhouse') || jcName.includes('in-house') || jcName.includes('in house')
+
+  if (role.includes('NURSE')) return 'unit_only'
+
+  const isDoctor = role.includes('DOCTOR') || /\bDR\b/.test(role)
+  if (isDoctor) {
+    if (isVisiting) return 'none'
+    if (isInhouse) return 'unit_only'
+  }
+
+  return null
+}
+
+/**
+ * Validate location targets against Medical roster rules for the given modes.
+ * Returns an error message when invalid; null when ok.
+ */
+export function validateMedicalRosterLocationTargets(params: {
+  modes: Array<MedicalRosterLocationMode | null>
+  hasArea: boolean
+  hasUnitHierarchy: boolean
+}): string | null {
+  const active = params.modes.filter((m): m is MedicalRosterLocationMode => m === 'unit_only' || m === 'none')
+  if (active.length === 0) return null
+
+  const hasUnitOnly = active.includes('unit_only')
+  const hasNone = active.includes('none')
+
+  if (hasUnitOnly && hasNone) {
+    return 'Cannot mix Visiting Doctor with Nurse/In-house Doctor in the same roster assignment'
+  }
+
+  if (hasNone) {
+    if (params.hasArea || params.hasUnitHierarchy) {
+      return 'Visiting Doctor roster cannot be assigned to Area or Unit'
+    }
+    return null
+  }
+
+  // unit_only
+  if (params.hasArea) {
+    return 'Nurse and In-house Doctor must be assigned to Unit (Area is not allowed)'
+  }
+  if (!params.hasUnitHierarchy) {
+    return 'Nurse and In-house Doctor require a Unit assignment (select at least one block)'
+  }
+  return null
+}

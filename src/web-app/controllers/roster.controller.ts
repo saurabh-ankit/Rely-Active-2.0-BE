@@ -28,6 +28,7 @@ import {
   User,
   UserDetail,
   UserLocation,
+  JobCategory,
 } from '../../models/index.js'
 import {
   asParamString,
@@ -40,8 +41,11 @@ import {
   parseSlotTimeRange,
   parseTimeToMinutes,
   resolveLifecycleRosterStatus,
+  resolveMedicalRosterLocationMode,
   subtractWeekOffDays,
   todayYmdLocal,
+  validateMedicalRosterLocationTargets,
+  type MedicalRosterLocationMode,
 } from '../../utils/roster.util.js'
 import { errorResponse, successResponse } from '../../utils/response/index.js'
 
@@ -700,6 +704,16 @@ export const createEmployeeShift = async (req: AuthenticatedRequest, res: Respon
       return res.status(400).json(errorResponse('blockId is required when floorId or unitId is provided'))
     }
 
+    const medicalModes = await getMedicalRosterLocationModesForEmployees([employeeId], locationId)
+    const medicalLocationError = validateMedicalRosterLocationTargets({
+      modes: medicalModes,
+      hasArea: !!resolvedAreaId,
+      hasUnitHierarchy: !!(resolvedBlockId || resolvedFloorId || resolvedUnitId),
+    })
+    if (medicalLocationError) {
+      return res.status(400).json(errorResponse(medicalLocationError))
+    }
+
     const conflict = await checkShiftAssignmentOverlap(
       employeeId,
       startDate,
@@ -1199,6 +1213,18 @@ export const bulkCreateEmployeeShifts = async (req: AuthenticatedRequest, res: R
       return res.status(400).json(errorResponse(targetError))
     }
 
+    const hasAreaTarget = targets.some((t) => !!t.areaId)
+    const hasUnitHierarchyTarget = targets.some((t) => !!t.blockId || !!t.floorId || !!t.unitId)
+    const medicalModes = await getMedicalRosterLocationModesForEmployees(employeeIds, locationId)
+    const medicalLocationError = validateMedicalRosterLocationTargets({
+      modes: medicalModes,
+      hasArea: hasAreaTarget,
+      hasUnitHierarchy: hasUnitHierarchyTarget,
+    })
+    if (medicalLocationError) {
+      return res.status(400).json(errorResponse(medicalLocationError))
+    }
+
     const employees = await User.findAll({
       where: { id: { [Op.in]: employeeIds } },
       attributes: ['id', 'email', 'username'],
@@ -1548,6 +1574,50 @@ async function getUserRoleCode(userId: string, locationId?: string): Promise<str
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const role = (ul as any)?.role
   return (role?.code || role?.name) as string | undefined
+}
+
+/**
+ * Resolve Medical roster location modes for employees at a location
+ * (Nurse / In-house → unit_only, Visiting Doctor → none).
+ */
+async function getMedicalRosterLocationModesForEmployees(
+  employeeIds: string[],
+  locationId?: string,
+): Promise<Array<MedicalRosterLocationMode | null>> {
+  if (employeeIds.length === 0) return []
+
+  const where: Record<string, unknown> = {
+    userId: { [Op.in]: employeeIds },
+    isDeleted: false,
+    isActive: true,
+  }
+  if (locationId) where.locId = locationId
+
+  const locations = await UserLocation.findAll({
+    where,
+    attributes: ['userId', 'jobCategoryId'],
+    include: [
+      { model: Role, as: 'role', attributes: ['code', 'name'], required: false },
+      { model: JobCategory, as: 'jobCategory', attributes: ['code', 'name'], required: false },
+    ],
+  })
+
+  const modeByUser = new Map<string, MedicalRosterLocationMode | null>()
+  for (const ul of locations) {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const row = ul as any
+    const userId = String(row.userId)
+    if (modeByUser.has(userId) && modeByUser.get(userId)) continue
+    const mode = resolveMedicalRosterLocationMode({
+      roleCode: row.role?.code,
+      roleName: row.role?.name,
+      jobCategoryCode: row.jobCategory?.code,
+      jobCategoryName: row.jobCategory?.name,
+    })
+    modeByUser.set(userId, mode)
+  }
+
+  return employeeIds.map((id) => modeByUser.get(String(id)) ?? null)
 }
 
 function resolveDateWindow(assignment: {

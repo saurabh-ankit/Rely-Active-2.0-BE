@@ -1,11 +1,16 @@
 import type { Response } from 'express'
 import { Op } from 'sequelize'
 import { AppointmentStatus } from '../../../enums/appointment.enum.js'
+import { DiagnosisStatus } from '../../../enums/diagnosis.enum.js'
 import { ShiftEmployeeDateStatus } from '../../../enums/roster.enum.js'
 import type { AuthenticatedRequest } from '../../../middlewares/authenticate.js'
 import {
+  Consultant,
   DoctorAppointment,
   JobCategory,
+  PropertyBlock,
+  PropertyFloor,
+  PropertyUnit,
   Resident,
   ResidentFamilyMember,
   Role,
@@ -24,6 +29,7 @@ import {
   getSpecializationsForUsers,
   type DoctorSpecializationSummary,
 } from '../../../services/doctorSpecialization.service.js'
+import { formatConsultant } from '../../L3/controllers/doctorDiagnosis.controller.js'
 
 const ACTIVE_BOOKING_STATUSES = [AppointmentStatus.PENDING, AppointmentStatus.CONFIRMED, AppointmentStatus.ATTENDED]
 
@@ -77,20 +83,26 @@ async function resolveResidentContext(req: AuthenticatedRequest): Promise<{
   }
 }
 
-async function getVisitingDoctorIds(locationId: string): Promise<Set<string>> {
-  const jobCats = await JobCategory.findAll({
-    where: {
-      [Op.or]: [{ code: 'MED_VISITING' }, { name: { [Op.like]: '%visiting%' } }, { name: { [Op.like]: '%Visiting%' } }],
-    },
-    attributes: ['id', 'code', 'name'],
-  })
-  const jobCatIds = jobCats
-    .filter((j) => {
-      const code = (j.code || '').toUpperCase()
-      const name = (j.name || '').toLowerCase()
-      return code === 'MED_VISITING' || name.includes('visiting')
-    })
-    .map((j) => j.id)
+type DoctorCategory = 'VISITING' | 'INHOUSE'
+
+function isVisitingJobCategory(code?: string | null, name?: string | null): boolean {
+  const c = (code || '').toUpperCase()
+  const n = (name || '').toLowerCase()
+  return c === 'MED_VISITING' || n.includes('visiting')
+}
+
+function isInhouseJobCategory(code?: string | null, name?: string | null): boolean {
+  const c = (code || '').toUpperCase()
+  const n = (name || '').toLowerCase()
+  return c === 'MED_INHOUSE' || n.includes('inhouse') || n.includes('in-house')
+}
+
+async function getDoctorIdsByJobCategory(
+  locationId: string,
+  match: (code?: string | null, name?: string | null) => boolean,
+): Promise<Set<string>> {
+  const jobCats = await JobCategory.findAll({ attributes: ['id', 'code', 'name'] })
+  const jobCatIds = jobCats.filter((j) => match(j.code, j.name)).map((j) => j.id)
   if (jobCatIds.length === 0) return new Set()
 
   const doctorRole = await Role.findOne({ where: { code: 'DOCTOR' }, attributes: ['id'] })
@@ -106,6 +118,188 @@ async function getVisitingDoctorIds(locationId: string): Promise<Set<string>> {
   })
 
   return new Set(userLocations.map((ul) => ul.userId).filter(Boolean) as string[])
+}
+
+async function getVisitingDoctorIds(locationId: string): Promise<Set<string>> {
+  return getDoctorIdsByJobCategory(locationId, isVisitingJobCategory)
+}
+
+async function getInhouseDoctorIds(locationId: string): Promise<Set<string>> {
+  return getDoctorIdsByJobCategory(locationId, isInhouseJobCategory)
+}
+
+async function resolveDoctorCategories(locationId: string, doctorIds: string[]): Promise<Map<string, DoctorCategory>> {
+  const result = new Map<string, DoctorCategory>()
+  if (doctorIds.length === 0) return result
+
+  const userLocations = await UserLocation.findAll({
+    where: {
+      locId: locationId,
+      userId: { [Op.in]: doctorIds },
+      isDeleted: false,
+    },
+    attributes: ['userId', 'jobCategoryId'],
+    include: [{ model: JobCategory, as: 'jobCategory', attributes: ['id', 'code', 'name'], required: false }],
+  })
+
+  for (const ul of userLocations) {
+    const userId = ul.userId
+    if (!userId || result.has(userId)) continue
+    const jc = (ul as UserLocation & { jobCategory?: JobCategory | null }).jobCategory
+    if (isVisitingJobCategory(jc?.code, jc?.name)) {
+      result.set(userId, 'VISITING')
+    } else if (isInhouseJobCategory(jc?.code, jc?.name)) {
+      result.set(userId, 'INHOUSE')
+    }
+  }
+  return result
+}
+
+type ResidentUnitScope = {
+  unitId: string
+  floorId: string | null
+  blockId: string | null
+  unitNumber: string | null
+  floorName: string | null
+  blockName: string | null
+}
+
+async function resolveResidentUnitScope(residentId: string): Promise<ResidentUnitScope | null> {
+  const resident = await Resident.findByPk(residentId, {
+    attributes: ['id', 'unitId'],
+    include: [
+      {
+        model: PropertyUnit,
+        as: 'unit',
+        attributes: ['id', 'unit_number', 'floorId'],
+        required: false,
+        include: [
+          {
+            model: PropertyFloor,
+            as: 'floor',
+            attributes: ['id', 'floor_name', 'floor_number', 'blockId'],
+            required: false,
+            include: [
+              {
+                model: PropertyBlock,
+                as: 'block',
+                attributes: ['id', 'block_name'],
+                required: false,
+              },
+            ],
+          },
+        ],
+      },
+    ],
+  })
+
+  const unit = (
+    resident as
+      | (Resident & {
+          unit?:
+            | (PropertyUnit & {
+                floor?: (PropertyFloor & { block?: PropertyBlock | null }) | null
+              })
+            | null
+        })
+      | null
+  )?.unit
+
+  if (!resident?.unitId || !unit) return null
+
+  return {
+    unitId: resident.unitId,
+    floorId: unit.floorId || unit.floor?.id || null,
+    blockId: unit.floor?.blockId || unit.floor?.block?.id || null,
+    unitNumber: unit.unit_number || null,
+    floorName: unit.floor?.floor_name || (unit.floor?.floor_number != null ? `Floor ${unit.floor.floor_number}` : null),
+    blockName: unit.floor?.block?.block_name || null,
+  }
+}
+
+function assignmentCoversResidentUnit(
+  assignment: Pick<ShiftAssignment, 'unitId' | 'floorId' | 'blockId'>,
+  scope: ResidentUnitScope,
+): boolean {
+  if (assignment.unitId) return assignment.unitId === scope.unitId
+  if (assignment.floorId) return Boolean(scope.floorId) && assignment.floorId === scope.floorId
+  if (assignment.blockId) return Boolean(scope.blockId) && assignment.blockId === scope.blockId
+  return false
+}
+
+function buildInhouseScopeLabel(
+  assignment: Pick<ShiftAssignment, 'unitId' | 'floorId' | 'blockId'> & {
+    unit?: PropertyUnit | null
+    floor?: PropertyFloor | null
+    block?: PropertyBlock | null
+  },
+  scope: ResidentUnitScope,
+): string | null {
+  const parts: string[] = []
+  const blockName = assignment.block?.block_name || scope.blockName
+  const floorName =
+    assignment.floor?.floor_name ||
+    (assignment.floor?.floor_number != null ? `Floor ${assignment.floor.floor_number}` : null) ||
+    scope.floorName
+  const unitNumber = assignment.unit?.unit_number || scope.unitNumber
+
+  if (blockName) parts.push(blockName)
+  if (assignment.unitId) {
+    if (floorName) parts.push(floorName)
+    if (unitNumber) parts.push(unitNumber)
+  } else if (assignment.floorId) {
+    if (floorName) parts.push(floorName)
+    parts.push('Entire floor')
+  } else if (assignment.blockId) {
+    parts.push('Entire block')
+  }
+  return parts.length ? parts.join(' · ') : null
+}
+
+async function ensureShiftDatesForAssignments(
+  locationId: string,
+  assignments: AssignmentWithRelations[],
+  today: string,
+  horizonStr: string,
+): Promise<void> {
+  const weekDays = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'] as const
+  for (const assignment of assignments) {
+    const rangeStart = assignment.startDate > today ? assignment.startDate : today
+    const rangeEnd = assignment.endDate < horizonStr ? assignment.endDate : horizonStr
+    if (rangeStart > rangeEnd) continue
+
+    const cur = new Date(`${rangeStart}T00:00:00`)
+    const last = new Date(`${rangeEnd}T00:00:00`)
+
+    for (let d = new Date(cur); d <= last; d.setDate(d.getDate() + 1)) {
+      if (assignment.workingDays && assignment.workingDays.length > 0) {
+        const dayName = weekDays[d.getDay()]
+        if (!dayName || !assignment.workingDays.includes(dayName)) continue
+      }
+      const y = d.getFullYear()
+      const m = String(d.getMonth() + 1).padStart(2, '0')
+      const day = String(d.getDate()).padStart(2, '0')
+      const dateStr = `${y}-${m}-${day}`
+
+      const existing = await ShiftDate.findOne({
+        where: {
+          employeeShiftAssignmentId: assignment.id,
+          date: dateStr,
+          locationId,
+          isDeleted: false,
+        },
+      })
+      if (!existing) {
+        await ShiftDate.create({
+          employeeShiftAssignmentId: assignment.id,
+          date: dateStr,
+          locationId,
+          areaId: assignment.areaId,
+          status: ShiftEmployeeDateStatus.UPCOMING,
+        })
+      }
+    }
+  }
 }
 
 const loadShiftDateContext = async (
@@ -214,44 +408,7 @@ export async function listVisitingDoctorAppointments(req: AuthenticatedRequest, 
       ],
     })) as AssignmentWithRelations[]
 
-    const weekDays = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'] as const
-    for (const assignment of assignments) {
-      const rangeStart = assignment.startDate > today ? assignment.startDate : today
-      const rangeEnd = assignment.endDate < horizonStr ? assignment.endDate : horizonStr
-      if (rangeStart > rangeEnd) continue
-
-      const cur = new Date(`${rangeStart}T00:00:00`)
-      const last = new Date(`${rangeEnd}T00:00:00`)
-
-      for (let d = new Date(cur); d <= last; d.setDate(d.getDate() + 1)) {
-        if (assignment.workingDays && assignment.workingDays.length > 0) {
-          const dayName = weekDays[d.getDay()]
-          if (!dayName || !assignment.workingDays.includes(dayName)) continue
-        }
-        const y = d.getFullYear()
-        const m = String(d.getMonth() + 1).padStart(2, '0')
-        const day = String(d.getDate()).padStart(2, '0')
-        const dateStr = `${y}-${m}-${day}`
-
-        const existing = await ShiftDate.findOne({
-          where: {
-            employeeShiftAssignmentId: assignment.id,
-            date: dateStr,
-            locationId: ctx.locationId,
-            isDeleted: false,
-          },
-        })
-        if (!existing) {
-          await ShiftDate.create({
-            employeeShiftAssignmentId: assignment.id,
-            date: dateStr,
-            locationId: ctx.locationId,
-            areaId: assignment.areaId,
-            status: ShiftEmployeeDateStatus.UPCOMING,
-          })
-        }
-      }
-    }
+    await ensureShiftDatesForAssignments(ctx.locationId, assignments, today, horizonStr)
 
     const shiftDates = (await ShiftDate.findAll({
       where: {
@@ -353,7 +510,203 @@ export async function listVisitingDoctorAppointments(req: AuthenticatedRequest, 
 }
 
 /**
+ * GET /medical/appointments/inhouse
+ * Upcoming in-house doctor shift days whose roster scope covers this resident's unit.
+ */
+export async function listInhouseDoctorAppointments(req: AuthenticatedRequest, res: Response): Promise<void> {
+  try {
+    const ctx = await resolveResidentContext(req)
+    if (!ctx) {
+      res.status(401).json({ success: false, message: 'Unable to resolve resident context' })
+      return
+    }
+
+    const unitScope = await resolveResidentUnitScope(ctx.residentId)
+    if (!unitScope) {
+      res.status(200).json({
+        success: true,
+        message: 'Resident unit not found',
+        data: { appointments: [] },
+      })
+      return
+    }
+
+    const inhouseIds = await getInhouseDoctorIds(ctx.locationId)
+    if (inhouseIds.size === 0) {
+      res.status(200).json({ success: true, message: 'No in-house doctor shifts', data: { appointments: [] } })
+      return
+    }
+
+    const today = todayYmdLocal()
+    const horizon = new Date()
+    horizon.setDate(horizon.getDate() + 45)
+    const horizonStr = todayYmdLocal(horizon)
+
+    const assignments = (await ShiftAssignment.findAll({
+      where: {
+        locationId: ctx.locationId,
+        employeeId: { [Op.in]: [...inhouseIds] },
+        isDeleted: false,
+        endDate: { [Op.gte]: today },
+        startDate: { [Op.lte]: horizonStr },
+        [Op.or]: [
+          { unitId: unitScope.unitId },
+          ...(unitScope.floorId ? [{ floorId: unitScope.floorId }] : []),
+          ...(unitScope.blockId ? [{ blockId: unitScope.blockId }] : []),
+        ],
+      },
+      include: [
+        {
+          model: Shift,
+          as: 'shift',
+          attributes: ['id', 'name', 'startTime', 'endTime', 'numberOfSlots', 'slotDuration'],
+        },
+        {
+          model: PropertyBlock,
+          as: 'block',
+          attributes: ['id', 'block_name'],
+          required: false,
+        },
+        {
+          model: PropertyFloor,
+          as: 'floor',
+          attributes: ['id', 'floor_name', 'floor_number'],
+          required: false,
+        },
+        {
+          model: PropertyUnit,
+          as: 'unit',
+          attributes: ['id', 'unit_number'],
+          required: false,
+        },
+      ],
+    })) as (AssignmentWithRelations & {
+      unit?: PropertyUnit | null
+      floor?: PropertyFloor | null
+      block?: PropertyBlock | null
+    })[]
+
+    const coveringAssignments = assignments.filter((a) => assignmentCoversResidentUnit(a, unitScope))
+    await ensureShiftDatesForAssignments(ctx.locationId, coveringAssignments, today, horizonStr)
+
+    const coveringAssignmentIds = new Set(coveringAssignments.map((a) => a.id))
+    if (coveringAssignmentIds.size === 0) {
+      res.status(200).json({ success: true, message: 'No in-house doctor shifts', data: { appointments: [] } })
+      return
+    }
+
+    const shiftDates = (await ShiftDate.findAll({
+      where: {
+        locationId: ctx.locationId,
+        isDeleted: false,
+        date: { [Op.between]: [today, horizonStr] },
+        status: { [Op.notIn]: [ShiftEmployeeDateStatus.DAY_OFF, ShiftEmployeeDateStatus.ABSENT] },
+        employeeShiftAssignmentId: { [Op.in]: [...coveringAssignmentIds] },
+      },
+      include: [
+        {
+          model: ShiftAssignment,
+          as: 'shiftAssignment',
+          where: {
+            isDeleted: false,
+            employeeId: { [Op.in]: [...inhouseIds] },
+          },
+          required: true,
+          include: [
+            {
+              model: User,
+              as: 'employee',
+              attributes: ['id', 'email', 'username'],
+              include: [{ model: UserDetail, as: 'profile', attributes: ['firstName', 'lastName'] }],
+            },
+            {
+              model: Shift,
+              as: 'shift',
+              attributes: ['id', 'name', 'startTime', 'endTime', 'numberOfSlots', 'slotDuration'],
+            },
+            {
+              model: PropertyBlock,
+              as: 'block',
+              attributes: ['id', 'block_name'],
+              required: false,
+            },
+            {
+              model: PropertyFloor,
+              as: 'floor',
+              attributes: ['id', 'floor_name', 'floor_number'],
+              required: false,
+            },
+            {
+              model: PropertyUnit,
+              as: 'unit',
+              attributes: ['id', 'unit_number'],
+              required: false,
+            },
+          ],
+        },
+      ],
+      order: [['date', 'ASC']],
+    })) as (ShiftDateWithAssignment & {
+      shiftAssignment?: AssignmentWithRelations & {
+        unit?: PropertyUnit | null
+        floor?: PropertyFloor | null
+        block?: PropertyBlock | null
+      }
+    })[]
+
+    const doctorIds = [
+      ...new Set(
+        shiftDates
+          .map((sd) => sd.shiftAssignment?.employeeId || sd.shiftAssignment?.employee?.id)
+          .filter((id): id is string => Boolean(id)),
+      ),
+    ]
+    const specializationsByUser = await getSpecializationsForUsers(doctorIds)
+
+    const appointments = shiftDates
+      .filter((sd) => {
+        const assignment = sd.shiftAssignment
+        return assignment ? assignmentCoversResidentUnit(assignment, unitScope) : false
+      })
+      .map((sd) => {
+        const assignment = sd.shiftAssignment!
+        const employeeId = assignment.employeeId || assignment.employee?.id
+        const doctor = formatDoctor(assignment.employee, employeeId ? specializationsByUser[employeeId] || [] : [])
+        const shift = assignment.shift
+        const effectiveTime = assignment.slotTimeRange || (shift ? `${shift.startTime} - ${shift.endTime}` : null)
+
+        return {
+          shiftEmployeeDateId: sd.id,
+          date: sd.date,
+          status: sd.status,
+          doctor,
+          shift: shift
+            ? {
+                id: shift.id,
+                name: shift.name,
+                startTime: shift.startTime,
+                endTime: shift.endTime,
+              }
+            : null,
+          effectiveTime,
+          scopeLabel: buildInhouseScopeLabel(assignment, unitScope),
+        }
+      })
+
+    res.status(200).json({
+      success: true,
+      message: 'In-house doctor appointments retrieved successfully',
+      data: { appointments },
+    })
+  } catch (err) {
+    console.error('List In-house Doctor Appointments Error:', err)
+    res.status(500).json({ success: false, message: 'Failed to fetch in-house appointments' })
+  }
+}
+
+/**
  * GET /medical/appointments/my-bookings
+ * Optional query: ?category=VISITING|INHOUSE
  */
 export async function listMyAppointmentBookings(req: AuthenticatedRequest, res: Response): Promise<void> {
   try {
@@ -362,6 +715,12 @@ export async function listMyAppointmentBookings(req: AuthenticatedRequest, res: 
       res.status(401).json({ success: false, message: 'Unable to resolve resident context' })
       return
     }
+
+    const categoryRaw = String(req.query.category || '')
+      .trim()
+      .toUpperCase()
+    const categoryFilter: DoctorCategory | null =
+      categoryRaw === 'VISITING' || categoryRaw === 'INHOUSE' ? categoryRaw : null
 
     const rows = await DoctorAppointment.findAll({
       where: {
@@ -402,34 +761,41 @@ export async function listMyAppointmentBookings(req: AuthenticatedRequest, res: 
       ],
     })
 
-    const bookings = rows.map((row) => {
-      const data = row.toJSON() as DoctorAppointment & {
-        familyMember?: ResidentFamilyMember
-        doctor?: User & { profile?: UserDetail }
-        shiftEmployeeDate?: ShiftDateWithAssignment
-      }
-      const doctorProfile = data.doctor?.profile
-      const doctorName = doctorProfile
-        ? `${doctorProfile.firstName || ''} ${doctorProfile.lastName || ''}`.trim()
-        : data.doctor?.email || 'Doctor'
-      const fm = data.familyMember
-      const memberName = fm ? `${fm.firstName || ''} ${fm.lastName || ''}`.trim() : 'Self'
+    const doctorIds = [...new Set(rows.map((row) => row.doctorId).filter((id): id is string => Boolean(id)))]
+    const doctorCategories = await resolveDoctorCategories(ctx.locationId, doctorIds)
 
-      return {
-        id: data.id,
-        shiftEmployeeDateId: data.shiftEmployeeDateId,
-        appointmentDate: data.appointmentDate,
-        slotTimeRange: data.slotTimeRange,
-        status: data.status,
-        bookedAt: data.bookedAt,
-        notes: data.notes,
-        familyMemberId: data.familyMemberId,
-        memberName,
-        memberRelation: fm?.relation || 'Self',
-        doctorName,
-        shiftName: data.shiftEmployeeDate?.shiftAssignment?.shift?.name || 'Shift',
-      }
-    })
+    const bookings = rows
+      .map((row) => {
+        const data = row.toJSON() as DoctorAppointment & {
+          familyMember?: ResidentFamilyMember
+          doctor?: User & { profile?: UserDetail }
+          shiftEmployeeDate?: ShiftDateWithAssignment
+        }
+        const doctorProfile = data.doctor?.profile
+        const doctorName = doctorProfile
+          ? `${doctorProfile.firstName || ''} ${doctorProfile.lastName || ''}`.trim()
+          : data.doctor?.email || 'Doctor'
+        const fm = data.familyMember
+        const memberName = fm ? `${fm.firstName || ''} ${fm.lastName || ''}`.trim() : 'Self'
+        const doctorCategory = data.doctorId ? doctorCategories.get(data.doctorId) || null : null
+
+        return {
+          id: data.id,
+          shiftEmployeeDateId: data.shiftEmployeeDateId,
+          appointmentDate: data.appointmentDate,
+          slotTimeRange: data.slotTimeRange,
+          status: data.status,
+          bookedAt: data.bookedAt,
+          notes: data.notes,
+          familyMemberId: data.familyMemberId,
+          memberName,
+          memberRelation: fm?.relation || 'Self',
+          doctorName,
+          shiftName: data.shiftEmployeeDate?.shiftAssignment?.shift?.name || 'Shift',
+          doctorCategory,
+        }
+      })
+      .filter((b) => (categoryFilter ? b.doctorCategory === categoryFilter : true))
 
     res.status(200).json({
       success: true,
@@ -439,6 +805,101 @@ export async function listMyAppointmentBookings(req: AuthenticatedRequest, res: 
   } catch (err) {
     console.error('List My Appointment Bookings Error:', err)
     res.status(500).json({ success: false, message: 'Failed to fetch my bookings' })
+  }
+}
+
+/**
+ * GET /medical/appointments/bookings/:appointmentId/diagnosis
+ * Resident-facing read of COMPLETED consultant diagnosis for an ATTENDED booking.
+ */
+export async function getMyBookingDiagnosis(req: AuthenticatedRequest, res: Response): Promise<void> {
+  try {
+    const ctx = await resolveResidentContext(req)
+    if (!ctx) {
+      res.status(401).json({ success: false, message: 'Unable to resolve resident context' })
+      return
+    }
+
+    const appointmentId = asParamString(req.params.appointmentId)
+    if (!appointmentId) {
+      res.status(400).json({ success: false, message: 'Appointment id is required' })
+      return
+    }
+
+    const appointment = await DoctorAppointment.findOne({
+      where: {
+        id: appointmentId,
+        residentId: ctx.residentId,
+        locationId: ctx.locationId,
+        isDeleted: false,
+      },
+      include: [
+        {
+          model: ResidentFamilyMember,
+          as: 'familyMember',
+          attributes: ['id', 'firstName', 'lastName', 'relation'],
+          required: false,
+        },
+        {
+          model: User,
+          as: 'doctor',
+          attributes: ['id', 'email'],
+          include: [{ model: UserDetail, as: 'profile', attributes: ['firstName', 'lastName'] }],
+        },
+      ],
+    })
+
+    if (!appointment) {
+      res.status(404).json({ success: false, message: 'Appointment not found' })
+      return
+    }
+
+    if (appointment.status !== AppointmentStatus.ATTENDED) {
+      res.status(404).json({ success: false, message: 'Diagnosis is only available for attended appointments' })
+      return
+    }
+
+    const consultant = await Consultant.findOne({
+      where: {
+        appointmentId: appointment.id,
+        status: DiagnosisStatus.COMPLETED,
+        isDeleted: false,
+      },
+    })
+
+    if (!consultant) {
+      res.status(404).json({ success: false, message: 'Diagnosis not found for this appointment' })
+      return
+    }
+
+    const data = appointment.toJSON() as DoctorAppointment & {
+      familyMember?: ResidentFamilyMember
+      doctor?: User & { profile?: UserDetail }
+    }
+    const doctorProfile = data.doctor?.profile
+    const doctorName = doctorProfile
+      ? `${doctorProfile.firstName || ''} ${doctorProfile.lastName || ''}`.trim()
+      : data.doctor?.email || 'Doctor'
+    const fm = data.familyMember
+    const memberName = fm ? `${fm.firstName || ''} ${fm.lastName || ''}`.trim() : 'Self'
+
+    res.status(200).json({
+      success: true,
+      message: 'Appointment diagnosis retrieved successfully',
+      data: {
+        ...formatConsultant(consultant),
+        doctorName,
+        appointmentDate: data.appointmentDate,
+        slotTimeRange: data.slotTimeRange,
+        memberName,
+        memberRelation: fm?.relation || 'Self',
+        appointmentStatus: data.status,
+        attendedAt: data.attendedAt || null,
+      },
+    })
+  } catch (err) {
+    console.error('Get My Booking Diagnosis Error:', err)
+    res.status(500).json({ success: false, message: 'Failed to fetch diagnosis' })
   }
 }
 

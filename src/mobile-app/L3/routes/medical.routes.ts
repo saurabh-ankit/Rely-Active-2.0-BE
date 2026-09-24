@@ -16,7 +16,12 @@ import {
   assignDoctorCareTask,
   deleteDoctorCareTask,
 } from '../controllers/medical.controller.js'
-import { getDoctorShifts, getDoctorShiftBookings } from '../controllers/doctorShift.controller.js'
+import {
+  getDoctorShifts,
+  getDoctorShiftBookings,
+  getDoctorShiftResidents,
+  ensureDoctorShiftAppointment,
+} from '../controllers/doctorShift.controller.js'
 import { getResidentClinical } from '../controllers/doctorClinical.controller.js'
 import {
   getAppointmentDiagnosis,
@@ -52,9 +57,14 @@ router.get('/care-task/assignments', getDoctorResidentCareTasks)
 router.delete('/care-task/assignments/:id', deleteDoctorCareTask)
 router.delete('/care-tasks/:id', deleteDoctorCareTask)
 
-// ── Doctor Shift / Roster (Visiting Doctor) ──────────────────────────────────
+// ── Doctor Shift / Roster (Visiting + In-house) ──────────────────────────────
 router.get('/doctor/shifts', getDoctorShifts)
 router.get('/doctor/shifts/:shiftEmployeeDateId/bookings', getDoctorShiftBookings)
+router.get('/doctor/shifts/:shiftEmployeeDateId/residents', getDoctorShiftResidents)
+router.post(
+  '/doctor/shifts/:shiftEmployeeDateId/residents/:residentId/ensure-appointment',
+  ensureDoctorShiftAppointment,
+)
 
 // ── Doctor Appointment Diagnosis (consultants table) ─────────────────────────
 router.get('/doctor/appointments/:appointmentId/diagnosis', getAppointmentDiagnosis)
