@@ -1,7 +1,7 @@
 import { DataTypes, Optional } from 'sequelize'
 import sequelize from '../config/db/index.js'
 import { BaseAttributes, BaseModel, baseModelColumns } from './base.model.js'
-import { Gender, OwnershipType, ResidentStatus, ResidentType } from '../enums/resident.enum.js'
+import { CareLevel, Gender, OwnershipType, ResidentStatus, ResidentType } from '../enums/resident.enum.js'
 
 import type { PropertyUnit } from './propertyUnit.model.js'
 import type { ResidentFamilyMember } from './residentFamilyMember.model.js'
@@ -35,6 +35,7 @@ export interface ResidentAttributes extends BaseAttributes {
   moveOutDate?: Date | string | null
   rentAmount?: number | null
   payRentToCompany?: boolean
+  careLevel?: CareLevel | null
   status: ResidentStatus
   isActive?: boolean
   isDeleted?: boolean
@@ -61,6 +62,7 @@ export type ResidentCreationAttributes = Optional<
   | 'moveOutDate'
   | 'rentAmount'
   | 'payRentToCompany'
+  | 'careLevel'
   | 'status'
   | 'isActive'
   | 'isDeleted'
@@ -101,6 +103,7 @@ export class Resident extends BaseModel<ResidentAttributes, ResidentCreationAttr
   declare moveOutDate: Date | string | null
   declare rentAmount: number | null
   declare payRentToCompany: boolean
+  declare careLevel: CareLevel | null
   declare status: ResidentStatus
   declare isActive: boolean
   declare isDeleted: boolean
@@ -203,6 +206,11 @@ Resident.init(
       type: DataTypes.BOOLEAN,
       allowNull: false,
       defaultValue: false,
+    },
+    careLevel: {
+      type: DataTypes.ENUM('STABLE', 'MODERATE', 'CRITICAL'),
+      allowNull: true,
+      defaultValue: 'STABLE',
     },
     status: {
       type: DataTypes.ENUM('PENDING', 'ACTIVE', 'INACTIVE', 'MOVED_OUT'),
