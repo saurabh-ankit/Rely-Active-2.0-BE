@@ -5,6 +5,7 @@ import fnbMobileRouter from './fnbMobile.routes.js'
 import ticketMobileRouter from './ticketMobile.routes.js'
 import gnsRouter from './gns.routes.js'
 import eventMobileRouter, { eventVenueMobileRouter, eventRequestMobileRouter } from './eventMobile.routes.js'
+import appointmentMobileRouter from './appointmentMobile.routes.js'
 
 export const l1MobileRouter = Router()
 
@@ -47,5 +48,9 @@ l1MobileRouter.use('/event', eventMobileRouter)
 // Direct venue & request endpoints for backwards compatibility
 l1MobileRouter.use('/venues', eventVenueMobileRouter)
 l1MobileRouter.use('/event-requests', eventRequestMobileRouter)
+
+// ── Medical Appointments (/api/v1/mobile/l1/medical/appointments) ──
+l1MobileRouter.use('/medical/appointments', appointmentMobileRouter)
+l1MobileRouter.use('/appointments', appointmentMobileRouter)
 
 export default l1MobileRouter

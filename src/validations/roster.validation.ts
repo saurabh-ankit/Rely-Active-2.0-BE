@@ -211,6 +211,10 @@ export const swapShiftEmployeeDatesSchema = z.object({
   notes: z.string().optional().nullable(),
 })
 
+export const bulkDeleteShiftEmployeeDatesSchema = z.object({
+  ids: z.array(uuid).min(1, 'At least one shift date ID is required'),
+})
+
 // ── Shift resident pool ───────────────────────────────────────────────────────
 export const createShiftResidentPoolSchema = z.object({
   shiftEmployeeDateId: uuid,

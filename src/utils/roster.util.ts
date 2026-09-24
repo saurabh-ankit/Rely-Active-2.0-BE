@@ -217,3 +217,48 @@ export function resolveLifecycleRosterStatus(
   }
   return resolveTimeBasedShiftStatus(dateYmd, startHHmm, endHHmm, now)
 }
+
+const ALL_WEEK_DAYS = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'] as const
+
+/**
+ * Return weekdays from `workingDays` that fall on the employee's configured weekoffs.
+ * Empty/null workingDays means all weekdays (same semantics as ShiftAssignment.isWorkingOn).
+ */
+export function getWeekOffConflicts(
+  workingDays: string[] | null | undefined,
+  weekOffDays: string[] | null | undefined,
+): string[] {
+  if (!weekOffDays || weekOffDays.length === 0) return []
+  const offs = new Set(weekOffDays.map((d) => d.toLowerCase()))
+  const days = !workingDays || workingDays.length === 0 ? [...ALL_WEEK_DAYS] : workingDays.map((d) => d.toLowerCase())
+  return days.filter((d) => offs.has(d))
+}
+
+/**
+ * Remove employee weekoffs from selected working days.
+ * Empty/null workingDays is treated as all weekdays for input.
+ * Returns [] when no days remain (never collapses to "all days").
+ */
+export function subtractWeekOffDays(
+  workingDays: string[] | null | undefined,
+  weekOffDays: string[] | null | undefined,
+): string[] {
+  const days = !workingDays || workingDays.length === 0 ? [...ALL_WEEK_DAYS] : workingDays.map((d) => d.toLowerCase())
+  if (!weekOffDays || weekOffDays.length === 0) return days
+  const offs = new Set(weekOffDays.map((d) => d.toLowerCase()))
+  return days.filter((d) => !offs.has(d))
+}
+
+/**
+ * Days from the selected working set where every employee is on weekoff
+ * (no one available). Empty/null workingDays = all weekdays.
+ */
+export function getDaysUnavailableForAllEmployees(
+  workingDays: string[] | null | undefined,
+  employeesWeekOffs: Array<string[] | null | undefined>,
+): string[] {
+  if (!employeesWeekOffs.length) return []
+  const days = !workingDays || workingDays.length === 0 ? [...ALL_WEEK_DAYS] : workingDays.map((d) => d.toLowerCase())
+  const offSets = employeesWeekOffs.map((offs) => new Set((offs || []).map((d) => d.toLowerCase())))
+  return days.filter((day) => offSets.every((offs) => offs.has(day)))
+}

@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { WEEK_DAYS } from '../enums/roster.enum.js'
 import { EMAIL_REGEX, PHONE_REGEX } from './company.validation.js'
 
 const NAME_REGEX = /^[a-zA-Z\s]+$/
@@ -95,6 +96,16 @@ const profileFields = {
     }),
   employeeCode: z.string().optional(),
   employee_code: z.string().optional(),
+  consultantFee: z.union([z.number(), z.string()]).optional().nullable(),
+  consultant_fee: z.union([z.number(), z.string()]).optional().nullable(),
+  weekOffDays: z
+    .array(z.enum(WEEK_DAYS as unknown as [string, ...string[]]))
+    .nullable()
+    .optional(),
+  week_off_days: z
+    .array(z.enum(WEEK_DAYS as unknown as [string, ...string[]]))
+    .nullable()
+    .optional(),
 }
 
 export const createUserSchema = z

@@ -9,6 +9,8 @@ import roleRouter from './role.routes.js'
 import permissionRouter from './permission.routes.js'
 import departmentRouter from './department.routes.js'
 import specializationRouter from './specialization.routes.js'
+import vitalSettingRouter from './vitalSetting.routes.js'
+import labTestSettingRouter from './labTestSetting.routes.js'
 import resourceRouter from './resource.routes.js'
 import residentRouter from './resident.routes.js'
 import assetRouter from './asset.routes.js'
@@ -41,6 +43,8 @@ apiRouter.use('/permissions', permissionRouter)
 apiRouter.use('/resources', resourceRouter)
 apiRouter.use('/departments', departmentRouter)
 apiRouter.use('/specializations', specializationRouter)
+apiRouter.use('/vital-settings', vitalSettingRouter)
+apiRouter.use('/lab-test-settings', labTestSettingRouter)
 apiRouter.use('/company', companyRouter)
 apiRouter.use('/property', propertyRouter)
 apiRouter.use('/properties', propertyRouter)
