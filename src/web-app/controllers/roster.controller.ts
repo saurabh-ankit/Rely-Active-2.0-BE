@@ -4,7 +4,13 @@ import * as XLSX from 'xlsx'
 import sequelize from '../../config/db/index.js'
 import { logger } from '../../config/logger.js'
 import { OccupancyStatus } from '../../enums/propertyUnit.enum.js'
-import { LEAVE_TYPES, RosterAreaStatus, ShiftEmployeeDateStatus, type LeaveType } from '../../enums/roster.enum.js'
+import {
+  LEAVE_TYPES,
+  RosterAreaStatus,
+  ShiftEmployeeDateStatus,
+  type LeaveType,
+  type WeekDay,
+} from '../../enums/roster.enum.js'
 import type { AuthenticatedRequest } from '../../middlewares/authenticate.js'
 import {
   Property,
@@ -1226,7 +1232,7 @@ export const bulkCreateEmployeeShifts = async (req: AuthenticatedRequest, res: R
 
     // Per-employee working days = selected days minus that employee's weekoffs
 
-    const effectiveWorkingDaysByEmployee: Record<string, string[]> = {}
+    const effectiveWorkingDaysByEmployee: Record<string, WeekDay[]> = {}
     for (const emp of employees) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const profile = (emp as any).profile || {}

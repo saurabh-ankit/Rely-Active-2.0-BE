@@ -218,7 +218,9 @@ export function resolveLifecycleRosterStatus(
   return resolveTimeBasedShiftStatus(dateYmd, startHHmm, endHHmm, now)
 }
 
-const ALL_WEEK_DAYS = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'] as const
+import type { WeekDay } from '../enums/roster.enum.js'
+
+const ALL_WEEK_DAYS: WeekDay[] = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday']
 
 /**
  * Return weekdays from `workingDays` that fall on the employee's configured weekoffs.
@@ -242,8 +244,11 @@ export function getWeekOffConflicts(
 export function subtractWeekOffDays(
   workingDays: string[] | null | undefined,
   weekOffDays: string[] | null | undefined,
-): string[] {
-  const days = !workingDays || workingDays.length === 0 ? [...ALL_WEEK_DAYS] : workingDays.map((d) => d.toLowerCase())
+): WeekDay[] {
+  const days: WeekDay[] =
+    !workingDays || workingDays.length === 0
+      ? [...ALL_WEEK_DAYS]
+      : (workingDays.map((d) => d.toLowerCase()) as WeekDay[])
   if (!weekOffDays || weekOffDays.length === 0) return days
   const offs = new Set(weekOffDays.map((d) => d.toLowerCase()))
   return days.filter((d) => !offs.has(d))
