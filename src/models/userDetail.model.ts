@@ -1,5 +1,6 @@
 import { DataTypes, Optional } from 'sequelize'
 import sequelize from '../config/db/index.js'
+import type { WeekDay } from '../enums/roster.enum.js'
 import { BaseAttributes, BaseModel, baseModelColumns } from './base.model.js'
 
 export interface UserDetailAttributes extends BaseAttributes {
@@ -17,6 +18,8 @@ export interface UserDetailAttributes extends BaseAttributes {
   address?: string | null
   qualification?: string | null
   experience?: string | null
+  consultantFee?: number | string | null
+  weekOffDays?: WeekDay[] | null
 }
 
 export type UserDetailCreationAttributes = Optional<
@@ -34,6 +37,8 @@ export type UserDetailCreationAttributes = Optional<
   | 'address'
   | 'qualification'
   | 'experience'
+  | 'consultantFee'
+  | 'weekOffDays'
   | 'createdBy'
   | 'updatedBy'
   | 'createdAt'
@@ -58,6 +63,8 @@ export class UserDetail
   declare address: string | null
   declare qualification: string | null
   declare experience: string | null
+  declare consultantFee: number | string | null
+  declare weekOffDays: WeekDay[] | null
 }
 
 UserDetail.init(
@@ -118,6 +125,14 @@ UserDetail.init(
     },
     experience: {
       type: DataTypes.STRING(50),
+      allowNull: true,
+    },
+    consultantFee: {
+      type: DataTypes.DECIMAL(10, 2),
+      allowNull: true,
+    },
+    weekOffDays: {
+      type: DataTypes.JSON,
       allowNull: true,
     },
   },

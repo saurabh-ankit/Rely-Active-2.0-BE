@@ -4,7 +4,13 @@ import * as XLSX from 'xlsx'
 import sequelize from '../../config/db/index.js'
 import { logger } from '../../config/logger.js'
 import { OccupancyStatus } from '../../enums/propertyUnit.enum.js'
-import { LEAVE_TYPES, RosterAreaStatus, ShiftEmployeeDateStatus, type LeaveType } from '../../enums/roster.enum.js'
+import {
+  LEAVE_TYPES,
+  RosterAreaStatus,
+  ShiftEmployeeDateStatus,
+  type LeaveType,
+  type WeekDay,
+} from '../../enums/roster.enum.js'
 import type { AuthenticatedRequest } from '../../middlewares/authenticate.js'
 import {
   Property,
@@ -27,11 +33,14 @@ import {
   asParamString,
   doSlotRangesOverlap,
   eachDay,
+  getDaysUnavailableForAllEmployees,
+  getWeekOffConflicts,
   hasWindowStartPassedOnDate,
   isSlotWithinShift,
   parseSlotTimeRange,
   parseTimeToMinutes,
   resolveLifecycleRosterStatus,
+  subtractWeekOffDays,
   todayYmdLocal,
 } from '../../utils/roster.util.js'
 import { errorResponse, successResponse } from '../../utils/response/index.js'
@@ -620,6 +629,21 @@ export const createEmployeeShift = async (req: AuthenticatedRequest, res: Respon
       return res.status(400).json(errorResponse('Missing required fields'))
     }
 
+    const employeeProfile = await UserDetail.findOne({
+      where: { userId: employeeId },
+      attributes: ['firstName', 'lastName', 'employeeCode', 'weekOffDays'],
+    })
+    const weekOffConflicts = getWeekOffConflicts(workingDays, employeeProfile?.weekOffDays)
+    if (weekOffConflicts.length > 0) {
+      const empLabel =
+        `${employeeProfile?.firstName || ''} ${employeeProfile?.lastName || ''}`.trim() ||
+        employeeProfile?.employeeCode ||
+        'Employee'
+      return res
+        .status(400)
+        .json(errorResponse(`Cannot create roster on weekoff day(s) for ${empLabel}: ${weekOffConflicts.join(', ')}`))
+    }
+
     const today = todayYmdLocal()
     if (startDate < today) {
       return res.status(400).json(errorResponse('Start date cannot be in the past'))
@@ -922,6 +946,77 @@ export const deleteEmployeeShift = async (req: AuthenticatedRequest, res: Respon
   }
 }
 
+export const bulkDeleteShiftEmployeeDates = async (req: AuthenticatedRequest, res: Response) => {
+  const transaction = await ShiftDate.sequelize!.transaction()
+  try {
+    const locationId = asParamString(req.params.locationId)
+    const { ids } = req.body as { ids: string[] }
+    const updatedBy = req.user?.id ?? null
+
+    if (!locationId) {
+      await transaction.rollback()
+      return res.status(400).json(errorResponse('Location ID is required'))
+    }
+    if (!Array.isArray(ids) || ids.length === 0) {
+      await transaction.rollback()
+      return res.status(400).json(errorResponse('Please provide an array of shift date IDs to delete'))
+    }
+
+    const dates = await ShiftDate.findAll({
+      where: { id: { [Op.in]: ids }, locationId, isDeleted: false },
+      attributes: ['id', 'employeeShiftAssignmentId'],
+      transaction,
+    })
+
+    if (dates.length === 0) {
+      await transaction.rollback()
+      return res.status(404).json(errorResponse('No matching shift dates found to delete'))
+    }
+
+    const foundIds = dates.map((d) => d.id)
+    const assignmentIds = Array.from(new Set(dates.map((d) => d.employeeShiftAssignmentId)))
+
+    await ShiftResidentPool.update(
+      { isDeleted: true, isActive: false, updatedBy },
+      {
+        where: { shiftEmployeeDateId: { [Op.in]: foundIds }, isDeleted: false },
+        transaction,
+      },
+    )
+
+    await ShiftDate.update(
+      { isDeleted: true, isActive: false, updatedBy },
+      { where: { id: { [Op.in]: foundIds }, locationId }, transaction },
+    )
+
+    // Soft-delete assignments that no longer have any active dates
+    for (const assignmentId of assignmentIds) {
+      const remaining = await ShiftDate.count({
+        where: { employeeShiftAssignmentId: assignmentId, isDeleted: false },
+        transaction,
+      })
+      if (remaining === 0) {
+        await ShiftAssignment.update(
+          { isDeleted: true, updatedBy },
+          { where: { id: assignmentId, isDeleted: false }, transaction },
+        )
+      }
+    }
+
+    await transaction.commit()
+    return res.status(200).json(
+      successResponse(`Successfully deleted ${foundIds.length} shift date(s)`, {
+        deletedCount: foundIds.length,
+        deletedIds: foundIds,
+      }),
+    )
+  } catch (error) {
+    await transaction.rollback()
+    logger.error({ err: error }, 'bulkDeleteShiftEmployeeDates failed')
+    return res.status(500).json(errorResponse('Failed to delete shift dates'))
+  }
+}
+
 type BulkLocationTarget = {
   areaId: string | null
   blockId: string | null
@@ -1107,7 +1202,13 @@ export const bulkCreateEmployeeShifts = async (req: AuthenticatedRequest, res: R
     const employees = await User.findAll({
       where: { id: { [Op.in]: employeeIds } },
       attributes: ['id', 'email', 'username'],
-      include: [{ model: UserDetail, as: 'profile', attributes: ['firstName', 'lastName'] }],
+      include: [
+        {
+          model: UserDetail,
+          as: 'profile',
+          attributes: ['firstName', 'lastName', 'employeeCode', 'weekOffDays'],
+        },
+      ],
     })
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -1118,9 +1219,31 @@ export const bulkCreateEmployeeShifts = async (req: AuthenticatedRequest, res: R
       return acc
     }, {})
 
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const employeesWeekOffs = employees.map((emp: any) => (emp.profile?.weekOffDays as string[] | null) || null)
+    const unavailableForAll = getDaysUnavailableForAllEmployees(workingDays, employeesWeekOffs)
+    if (unavailableForAll.length > 0) {
+      return res.status(400).json(
+        errorResponse(`Cannot create roster: no selected employee is available on ${unavailableForAll.join(', ')}`, {
+          conflicts: unavailableForAll,
+        }),
+      )
+    }
+
+    // Per-employee working days = selected days minus that employee's weekoffs
+
+    const effectiveWorkingDaysByEmployee: Record<string, WeekDay[]> = {}
+    for (const emp of employees) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const profile = (emp as any).profile || {}
+      effectiveWorkingDaysByEmployee[String(emp.id)] = subtractWeekOffDays(workingDays, profile.weekOffDays)
+    }
+
     const conflicts: string[] = []
 
     for (const employeeId of employeeIds) {
+      const effectiveDays = effectiveWorkingDaysByEmployee[String(employeeId)]
+      if (!effectiveDays || effectiveDays.length === 0) continue
       for (const target of targets) {
         const conflict = await checkShiftAssignmentOverlap(
           employeeId,
@@ -1130,7 +1253,7 @@ export const bulkCreateEmployeeShifts = async (req: AuthenticatedRequest, res: R
           bulkWindow.end,
           shiftId,
           undefined,
-          workingDays,
+          effectiveDays,
           target.areaId,
         )
         if (conflict) {
@@ -1149,6 +1272,8 @@ export const bulkCreateEmployeeShifts = async (req: AuthenticatedRequest, res: R
     const createdBy = req.user?.id ?? null
     const assignmentData = []
     for (const employeeId of employeeIds) {
+      const effectiveDays = effectiveWorkingDaysByEmployee[String(employeeId)]
+      if (!effectiveDays || effectiveDays.length === 0) continue
       for (const target of targets) {
         assignmentData.push({
           employeeId,
@@ -1157,7 +1282,7 @@ export const bulkCreateEmployeeShifts = async (req: AuthenticatedRequest, res: R
           startDate,
           endDate,
           notes: notes || null,
-          workingDays: workingDays || null,
+          workingDays: effectiveDays,
           areaId: target.areaId,
           blockId: target.blockId,
           floorId: target.floorId,
@@ -1166,6 +1291,12 @@ export const bulkCreateEmployeeShifts = async (req: AuthenticatedRequest, res: R
           createdBy,
         })
       }
+    }
+
+    if (assignmentData.length === 0) {
+      return res
+        .status(400)
+        .json(errorResponse('No assignments to create: selected employees have no available working days'))
     }
 
     const assignments = await ShiftAssignment.bulkCreate(assignmentData)
