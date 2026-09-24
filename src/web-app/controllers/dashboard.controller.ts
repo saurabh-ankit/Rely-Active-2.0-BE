@@ -6,12 +6,12 @@ import {
   PropertyFloor,
   PropertyBlock,
   Invoice,
+  InvoiceStatus,
   InventoryItemLocation,
   InventoryVendorLocation,
 } from '../../models/index.js'
 import { ResidentStatus } from '../../enums/resident.enum.js'
 import { OccupancyStatus } from '../../enums/propertyUnit.enum.js'
-import { InvoiceStatus } from '../../enums/billing.enum.js'
 
 export async function getDashboardStats(req: Request, res: Response): Promise<void> {
   try {
@@ -186,21 +186,27 @@ export async function getDashboardStats(req: Request, res: Response): Promise<vo
     const occupancyRate = totalRooms > 0 ? Number(((occupiedRooms / totalRooms) * 100).toFixed(1)) : 0
 
     // 4. Monthly Revenue & Billing Summary
-    const invoiceWhere: Record<string, unknown> = { isDeleted: false }
+    const invoiceWhere: Record<string, unknown> = {}
     if (locId && locId !== 'ALL') {
-      invoiceWhere.propertyId = locId
+      invoiceWhere.loc_id = locId
     }
 
     const [invoicesAgg, pendingInvoicesCount] = await Promise.all([
       Invoice.findAll({
         where: invoiceWhere,
-        attributes: ['amountPaid', 'amountDue', 'grandTotal'],
+        attributes: ['paidAmount', 'total', 'discountedAmount'],
       }),
       Invoice.count({
         where: {
           ...invoiceWhere,
           status: {
-            [Op.in]: [InvoiceStatus.FINALIZED, InvoiceStatus.SENT, InvoiceStatus.PARTIALLY_PAID, InvoiceStatus.OVERDUE],
+            [Op.in]: [
+              InvoiceStatus.PENDING,
+              InvoiceStatus.DRAFT,
+              InvoiceStatus.PARTIALLY_PAID,
+              InvoiceStatus.OVERDUE,
+              InvoiceStatus.PAID,
+            ],
           },
         },
       }),
@@ -210,9 +216,11 @@ export async function getDashboardStats(req: Request, res: Response): Promise<vo
     let totalPendingAmount = 0
     let grandTotalSum = 0
     for (const inv of invoicesAgg) {
-      totalCollected += Number(inv.amountPaid || 0)
-      totalPendingAmount += Number(inv.amountDue || 0)
-      grandTotalSum += Number(inv.grandTotal || 0)
+      const totalVal = Number(inv.total || 0)
+      const paidVal = Number(inv.paidAmount || 0)
+      totalCollected += paidVal
+      totalPendingAmount += Math.max(0, totalVal - paidVal)
+      grandTotalSum += totalVal
     }
 
     const collectionEfficiency =

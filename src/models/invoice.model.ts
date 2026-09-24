@@ -1,129 +1,130 @@
-import { DataTypes, Model, Optional } from 'sequelize'
+import { DataTypes, Optional } from 'sequelize'
 import sequelize from '../config/db/index.js'
-import { InvoiceStatus, InvoiceType } from '../enums/billing.enum.js'
-
-import type { BillingAccount } from './billingAccount.model.js'
-import type { PropertyUnit } from './propertyUnit.model.js'
+import { BaseAttributes, BaseModel } from './base.model.js'
+import type { ServicesInvoice } from './servicesInvoice.model.js'
+import type { MiscellaneousBilling } from './miscellaneousBilling.model.js'
+import type { Receipt } from './receipt.model.js'
 import type { Resident } from './resident.model.js'
-import type { InvoiceLine } from './invoiceLine.model.js'
-import type { PaymentAllocation } from './paymentAllocation.model.js'
+import type { PropertyUnit } from './propertyUnit.model.js'
 
-export interface InvoiceAttributes {
-  id: string
+export enum InvoiceStatus {
+  DRAFT = 'DRAFT',
+  PENDING = 'PENDING',
+  PAID = 'PAID',
+  PARTIALLY_PAID = 'PARTIALLY_PAID',
+  CANCELLED = 'CANCELLED',
+  OVERDUE = 'OVERDUE',
+  OBSOLETE = 'OBSOLETE',
+  CARRY_FORWARDED = 'CARRY_FORWARDED',
+}
+
+export enum PaymentMethod {
+  CASH = 'CASH',
+  UPI = 'UPI',
+  CHEQUE = 'CHEQUE',
+  CARD = 'CARD',
+  NET_BANKING = 'NET_BANKING',
+  OTHER = 'OTHER',
+}
+
+export interface InvoiceAttributes extends BaseAttributes {
   invoiceNumber: string
-  billingAccountId: string
-  unitId: string
   residentId?: string | null
-  propertyId: string
-  companyId: string
-  invoiceType: InvoiceType
-  referenceInvoiceId?: string | null
-
-  // Bill-To Snapshot
-  billToName: string
-  billToEmail?: string | null
-  billToPhone?: string | null
-  billToAddress?: string | null
-  billToGstin?: string | null
-
-  periodStart: Date | string
-  periodEnd: Date | string
-  issueDate: Date | string
-  dueDate: Date | string
-
+  unitId?: string | null
+  loc_id: string
+  startDate: Date | string
+  endDate: Date | string
   subtotal: number
-  discountTotal: number
-  discountNote?: string | null
-  taxableAmount: number
-  taxTotal: number
-  roundingAdjustment: number
-  grandTotal: number
-  amountPaid: number
-  amountDue: number
-
-  status: InvoiceStatus
-  finalizedAt?: Date | null
-  paidAt?: Date | null
-
+  tax: number
+  discount: number
+  discountPercentage?: number | null
+  discountAmount?: number | null
+  total: number
+  discountedAmount: number
   currency: string
-  pdfUrl?: string | null
-  isDeleted?: boolean
-  createdAt?: Date
-  updatedAt?: Date
+  status: InvoiceStatus | string
+  billingMode: 'MONTHLY'
+  dueDate?: Date | string | null
+  paidAmount: number
+  paymentMethod?: PaymentMethod | string | null
+  paymentReference?: string | null
+  notes?: string | null
+  invoiceData?: Record<string, unknown> | null
+  isFinalBill: boolean
+  depositDeduction: number
+  advanceDeduction: number
+  refundAmount: number
+  netRefundDue: number
+  refundNote?: string | null
+  banking_on: 'location' | 'company'
 }
 
 export type InvoiceCreationAttributes = Optional<
   InvoiceAttributes,
   | 'id'
   | 'residentId'
-  | 'invoiceType'
-  | 'referenceInvoiceId'
-  | 'billToEmail'
-  | 'billToPhone'
-  | 'billToAddress'
-  | 'billToGstin'
+  | 'unitId'
   | 'subtotal'
-  | 'discountTotal'
-  | 'discountNote'
-  | 'taxableAmount'
-  | 'taxTotal'
-  | 'roundingAdjustment'
-  | 'grandTotal'
-  | 'amountPaid'
-  | 'amountDue'
-  | 'status'
-  | 'finalizedAt'
-  | 'paidAt'
+  | 'tax'
+  | 'discount'
+  | 'discountPercentage'
+  | 'discountAmount'
+  | 'total'
+  | 'discountedAmount'
   | 'currency'
-  | 'pdfUrl'
-  | 'isDeleted'
-  | 'createdAt'
-  | 'updatedAt'
+  | 'status'
+  | 'billingMode'
+  | 'dueDate'
+  | 'paidAmount'
+  | 'paymentMethod'
+  | 'paymentReference'
+  | 'notes'
+  | 'invoiceData'
+  | 'isFinalBill'
+  | 'depositDeduction'
+  | 'advanceDeduction'
+  | 'refundAmount'
+  | 'netRefundDue'
+  | 'refundNote'
+  | 'banking_on'
 >
 
-export class Invoice extends Model<InvoiceAttributes, InvoiceCreationAttributes> implements InvoiceAttributes {
-  declare id: string
+export class Invoice extends BaseModel<InvoiceAttributes, InvoiceCreationAttributes> implements InvoiceAttributes {
   declare invoiceNumber: string
-  declare billingAccountId: string
-  declare unitId: string
   declare residentId: string | null
-  declare propertyId: string
-  declare companyId: string
-  declare invoiceType: InvoiceType
-  declare referenceInvoiceId: string | null
-  declare billToName: string
-  declare billToEmail: string | null
-  declare billToPhone: string | null
-  declare billToAddress: string | null
-  declare billToGstin: string | null
-  declare periodStart: Date | string
-  declare periodEnd: Date | string
-  declare issueDate: Date | string
-  declare dueDate: Date | string
+  declare unitId: string | null
+  declare loc_id: string
+  declare startDate: Date
+  declare endDate: Date
   declare subtotal: number
-  declare discountTotal: number
-  declare discountNote: string | null
-  declare taxableAmount: number
-  declare taxTotal: number
-  declare roundingAdjustment: number
-  declare grandTotal: number
-  declare amountPaid: number
-  declare amountDue: number
-  declare status: InvoiceStatus
-  declare finalizedAt: Date | null
-  declare paidAt: Date | null
+  declare tax: number
+  declare discount: number
+  declare discountPercentage: number | null
+  declare discountAmount: number | null
+  declare total: number
+  declare discountedAmount: number
   declare currency: string
-  declare pdfUrl: string | null
-  declare isDeleted: boolean
-  declare readonly createdAt: Date
-  declare readonly updatedAt: Date
+  declare status: InvoiceStatus | string
+  declare billingMode: 'MONTHLY'
+  declare dueDate: Date | null
+  declare paidAmount: number
+  declare paymentMethod: PaymentMethod | string | null
+  declare paymentReference: string | null
+  declare notes: string | null
+  declare invoiceData: Record<string, unknown> | null
+  declare isFinalBill: boolean
+  declare depositDeduction: number
+  declare advanceDeduction: number
+  declare refundAmount: number
+  declare netRefundDue: number
+  declare refundNote: string | null
+  declare banking_on: 'location' | 'company'
 
-  // Associations
-  declare billingAccount?: BillingAccount
-  declare unit?: PropertyUnit
+  declare services?: ServicesInvoice[]
+  declare miscellaneousItems?: MiscellaneousBilling[]
+  declare receipts?: Receipt[]
   declare resident?: Resident
-  declare lines?: InvoiceLine[]
-  declare paymentAllocations?: PaymentAllocation[]
+  declare unit?: PropertyUnit
 }
 
 Invoice.init(
@@ -134,57 +135,149 @@ Invoice.init(
       primaryKey: true,
     },
     invoiceNumber: {
-      type: DataTypes.STRING(50),
+      type: DataTypes.STRING,
       allowNull: false,
-      unique: true,
     },
-    billingAccountId: { type: DataTypes.UUID, allowNull: false },
-    unitId: { type: DataTypes.UUID, allowNull: false },
-    residentId: { type: DataTypes.UUID, allowNull: true },
-    propertyId: { type: DataTypes.UUID, allowNull: false },
-    companyId: { type: DataTypes.UUID, allowNull: false },
-    invoiceType: {
-      type: DataTypes.ENUM('INVOICE', 'CREDIT_NOTE', 'DEBIT_NOTE'),
+    residentId: {
+      type: DataTypes.UUID,
+      allowNull: true,
+    },
+    unitId: {
+      type: DataTypes.UUID,
+      allowNull: true,
+    },
+    loc_id: {
+      type: DataTypes.UUID,
       allowNull: false,
-      defaultValue: InvoiceType.INVOICE,
     },
-    referenceInvoiceId: { type: DataTypes.UUID, allowNull: true },
-    billToName: { type: DataTypes.STRING(255), allowNull: false },
-    billToEmail: { type: DataTypes.STRING(150), allowNull: true },
-    billToPhone: { type: DataTypes.STRING(30), allowNull: true },
-    billToAddress: { type: DataTypes.TEXT, allowNull: true },
-    billToGstin: { type: DataTypes.STRING(50), allowNull: true },
-    periodStart: { type: DataTypes.DATEONLY, allowNull: false },
-    periodEnd: { type: DataTypes.DATEONLY, allowNull: false },
-    issueDate: { type: DataTypes.DATEONLY, allowNull: false },
-    dueDate: { type: DataTypes.DATEONLY, allowNull: false },
-    subtotal: { type: DataTypes.DECIMAL(14, 2), allowNull: false, defaultValue: 0.0 },
-    discountTotal: { type: DataTypes.DECIMAL(14, 2), allowNull: false, defaultValue: 0.0 },
-    discountNote: { type: DataTypes.STRING(500), allowNull: true },
-    taxableAmount: { type: DataTypes.DECIMAL(14, 2), allowNull: false, defaultValue: 0.0 },
-    taxTotal: { type: DataTypes.DECIMAL(14, 2), allowNull: false, defaultValue: 0.0 },
-    roundingAdjustment: { type: DataTypes.DECIMAL(6, 2), allowNull: false, defaultValue: 0.0 },
-    grandTotal: { type: DataTypes.DECIMAL(14, 2), allowNull: false, defaultValue: 0.0 },
-    amountPaid: { type: DataTypes.DECIMAL(14, 2), allowNull: false, defaultValue: 0.0 },
-    amountDue: { type: DataTypes.DECIMAL(14, 2), allowNull: false, defaultValue: 0.0 },
+    startDate: {
+      type: DataTypes.DATEONLY,
+      allowNull: false,
+    },
+    endDate: {
+      type: DataTypes.DATEONLY,
+      allowNull: false,
+    },
+    subtotal: {
+      type: DataTypes.DECIMAL(12, 2),
+      defaultValue: 0,
+      allowNull: false,
+    },
+    tax: {
+      type: DataTypes.DECIMAL(12, 2),
+      defaultValue: 0,
+      allowNull: false,
+    },
+    discount: {
+      type: DataTypes.DECIMAL(12, 2),
+      defaultValue: 0,
+      allowNull: false,
+    },
+    discountPercentage: {
+      type: DataTypes.DECIMAL(5, 2),
+      allowNull: true,
+    },
+    discountAmount: {
+      type: DataTypes.DECIMAL(12, 2),
+      allowNull: true,
+    },
+    total: {
+      type: DataTypes.DECIMAL(12, 2),
+      defaultValue: 0,
+      allowNull: false,
+    },
+    discountedAmount: {
+      type: DataTypes.DECIMAL(12, 2),
+      defaultValue: 0,
+      allowNull: false,
+    },
+    currency: {
+      type: DataTypes.STRING(3),
+      defaultValue: 'INR',
+      allowNull: false,
+    },
     status: {
-      type: DataTypes.ENUM('DRAFT', 'PREVIEW', 'FINALIZED', 'SENT', 'PARTIALLY_PAID', 'PAID', 'CANCELLED', 'OVERDUE'),
+      type: DataTypes.ENUM(
+        'DRAFT',
+        'PENDING',
+        'PAID',
+        'PARTIALLY_PAID',
+        'CANCELLED',
+        'OVERDUE',
+        'OBSOLETE',
+        'CARRY_FORWARDED',
+      ),
+      defaultValue: 'DRAFT',
       allowNull: false,
-      defaultValue: InvoiceStatus.DRAFT,
     },
-    finalizedAt: { type: DataTypes.DATE, allowNull: true },
-    paidAt: { type: DataTypes.DATE, allowNull: true },
-    currency: { type: DataTypes.STRING(10), allowNull: false, defaultValue: 'INR' },
-    pdfUrl: { type: DataTypes.TEXT, allowNull: true },
-    isDeleted: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: false },
-    createdAt: { type: DataTypes.DATE, allowNull: false, defaultValue: DataTypes.NOW },
-    updatedAt: { type: DataTypes.DATE, allowNull: false, defaultValue: DataTypes.NOW },
+    billingMode: {
+      type: DataTypes.ENUM('MONTHLY'),
+      defaultValue: 'MONTHLY',
+      allowNull: false,
+    },
+    dueDate: {
+      type: DataTypes.DATEONLY,
+      allowNull: true,
+    },
+    paidAmount: {
+      type: DataTypes.DECIMAL(12, 2),
+      defaultValue: 0,
+      allowNull: false,
+    },
+    paymentMethod: {
+      type: DataTypes.ENUM('CASH', 'UPI', 'CHEQUE', 'CARD', 'NET_BANKING', 'OTHER'),
+      allowNull: true,
+    },
+    paymentReference: {
+      type: DataTypes.STRING,
+      allowNull: true,
+    },
+    notes: {
+      type: DataTypes.TEXT,
+      allowNull: true,
+    },
+    invoiceData: {
+      type: DataTypes.JSON,
+      allowNull: true,
+    },
+    isFinalBill: {
+      type: DataTypes.BOOLEAN,
+      defaultValue: false,
+      allowNull: false,
+    },
+    depositDeduction: {
+      type: DataTypes.DECIMAL(12, 2),
+      defaultValue: 0,
+      allowNull: false,
+    },
+    advanceDeduction: {
+      type: DataTypes.DECIMAL(12, 2),
+      defaultValue: 0,
+      allowNull: false,
+    },
+    refundAmount: {
+      type: DataTypes.DECIMAL(12, 2),
+      defaultValue: 0,
+      allowNull: false,
+    },
+    netRefundDue: {
+      type: DataTypes.DECIMAL(12, 2),
+      defaultValue: 0,
+      allowNull: false,
+    },
+    refundNote: {
+      type: DataTypes.TEXT,
+      allowNull: true,
+    },
+    banking_on: {
+      type: DataTypes.ENUM('location', 'company'),
+      defaultValue: 'company',
+      allowNull: false,
+    },
   },
   {
     sequelize,
-    tableName: 'billing_invoices',
+    tableName: 'invoices',
     timestamps: true,
   },
 )
-
-export default Invoice
