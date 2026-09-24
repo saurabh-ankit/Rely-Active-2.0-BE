@@ -270,7 +270,6 @@ export async function getAssignableEmployees(req: Request, res: Response): Promi
 
     // Fallback: If no location filter matched, fetch active staff users
     if (userMap.size === 0) {
-       
       const allUsers = (await User.findAll({
         limit: 20,
         attributes: ['id', 'email', 'username'],

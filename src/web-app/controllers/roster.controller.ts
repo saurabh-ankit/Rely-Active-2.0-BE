@@ -1217,17 +1217,15 @@ export const bulkCreateEmployeeShifts = async (req: AuthenticatedRequest, res: R
     const employeesWeekOffs = employees.map((emp: any) => (emp.profile?.weekOffDays as string[] | null) || null)
     const unavailableForAll = getDaysUnavailableForAllEmployees(workingDays, employeesWeekOffs)
     if (unavailableForAll.length > 0) {
-      return res
-        .status(400)
-        .json(
-          errorResponse(`Cannot create roster: no selected employee is available on ${unavailableForAll.join(', ')}`, {
-            conflicts: unavailableForAll,
-          }),
-        )
+      return res.status(400).json(
+        errorResponse(`Cannot create roster: no selected employee is available on ${unavailableForAll.join(', ')}`, {
+          conflicts: unavailableForAll,
+        }),
+      )
     }
 
     // Per-employee working days = selected days minus that employee's weekoffs
-     
+
     const effectiveWorkingDaysByEmployee: Record<string, string[]> = {}
     for (const emp of employees) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
