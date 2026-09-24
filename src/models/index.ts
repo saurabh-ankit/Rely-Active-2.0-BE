@@ -192,7 +192,6 @@ import { BillingProduct } from './billingProduct.model.js'
 import { BillingPricePlan } from './billingPricePlan.model.js'
 import { BillingAccount } from './billingAccount.model.js'
 import { BillingParty } from './billingParty.model.js'
-import { BillingContract } from './billingContract.model.js'
 import { BillingSubscription } from './billingSubscription.model.js'
 import { BillingEvent } from './billingEvent.model.js'
 import { Invoice } from './invoice.model.js'
@@ -740,19 +739,9 @@ BillingParty.belongsTo(Resident, { foreignKey: 'residentId', as: 'resident' })
 ResidentFamilyMember.hasMany(BillingParty, { foreignKey: 'familyMemberId', as: 'billingParties' })
 BillingParty.belongsTo(ResidentFamilyMember, { foreignKey: 'familyMemberId', as: 'familyMember' })
 
-// ── Billing Contracts ─────────────────────────────────────────────────────────
-BillingAccount.hasMany(BillingContract, { foreignKey: 'billingAccountId', as: 'contracts' })
-BillingContract.belongsTo(BillingAccount, { foreignKey: 'billingAccountId', as: 'billingAccount' })
-
-PropertyUnit.hasMany(BillingContract, { foreignKey: 'unitId', as: 'billingContracts' })
-BillingContract.belongsTo(PropertyUnit, { foreignKey: 'unitId', as: 'unit' })
-
 // ── Billing Subscriptions ─────────────────────────────────────────────────────
 BillingAccount.hasMany(BillingSubscription, { foreignKey: 'billingAccountId', as: 'subscriptions' })
 BillingSubscription.belongsTo(BillingAccount, { foreignKey: 'billingAccountId', as: 'billingAccount' })
-
-BillingContract.hasMany(BillingSubscription, { foreignKey: 'contractId', as: 'subscriptions' })
-BillingSubscription.belongsTo(BillingContract, { foreignKey: 'contractId', as: 'contract' })
 
 BillingProduct.hasMany(BillingSubscription, { foreignKey: 'productId', as: 'subscriptions' })
 BillingSubscription.belongsTo(BillingProduct, { foreignKey: 'productId', as: 'product' })
@@ -1083,7 +1072,6 @@ export {
   BillingPricePlan,
   BillingAccount,
   BillingParty,
-  BillingContract,
   BillingSubscription,
   BillingEvent,
   Invoice,

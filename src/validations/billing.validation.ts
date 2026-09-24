@@ -75,7 +75,6 @@ export const updateBillingPartySchema = z
 export const createSubscriptionSchema = z
   .object({
     billingAccountId: z.string().uuid('Valid billing account ID is required'),
-    contractId: z.string().uuid('Valid contract ID required').optional().nullable(),
     unitId: z.string().uuid('Valid unit ID is required'),
     productId: z.string().uuid('Valid product ID is required'),
     pricePlanId: z.string().uuid('Valid price plan ID required').optional().nullable(),
