@@ -216,19 +216,23 @@ async function getShiftInfoForEmployees(
 }
 
 /**
- * Fetch employees matching department & job category with workload metrics
+ * Fetch staff that can take this ticket, tagged with how well they match its
+ * department / job category so the UI can group them:
+ *   JOB_CATEGORY - same department *and* same job category as the ticket
+ *   DEPARTMENT   - same department, different job category
+ *   OTHER        - everyone else at the property
+ * The whole roster is still returned so an admin can override the grouping.
  */
 export async function getAssignableEmployees(req: Request, res: Response): Promise<void> {
   try {
     const locId = (req.query.locId || req.query.locationId || req.params.locationId) as string | undefined
-    const { departmentId, jobCategoryId } = req.query
+    const departmentId = (req.query.departmentId as string | undefined) || undefined
+    const jobCategoryId = (req.query.jobCategoryId as string | undefined) || undefined
 
-    const userLocWhere: Record<string, unknown> = {}
+    const userLocWhere: Record<string, unknown> = { isDeleted: false }
     if (locId) userLocWhere.locId = locId
-    if (departmentId) userLocWhere.departmentId = departmentId
-    if (jobCategoryId) userLocWhere.jobCategoryId = jobCategoryId
 
-    // Find users associated with the given property/department/jobCategory
+    // Find every staff member at the property, with their posting
     const userInclude = [
       {
         model: User,
@@ -236,6 +240,8 @@ export async function getAssignableEmployees(req: Request, res: Response): Promi
         attributes: ['id', 'email', 'username'],
         include: [{ model: UserDetail, as: 'profile', attributes: ['firstName', 'lastName'], required: false }],
       },
+      { model: Department, as: 'department', attributes: ['id', 'name', 'code'], required: false },
+      { model: JobCategory, as: 'jobCategory', attributes: ['id', 'name'], required: false },
     ]
 
     const userLocations = (await UserLocation.findAll({
@@ -244,33 +250,63 @@ export async function getAssignableEmployees(req: Request, res: Response): Promi
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
     })) as any[]
 
-    // Deduplicate user list
-    const userMap = new Map<
-      string,
-      { id: string; email: string; username?: string | undefined; fullName?: string | undefined }
-    >()
-    const addUser = (u: {
+    type MatchLevel = 'JOB_CATEGORY' | 'DEPARTMENT' | 'OTHER'
+    const matchRank: Record<MatchLevel, number> = { JOB_CATEGORY: 0, DEPARTMENT: 1, OTHER: 2 }
+
+    interface Candidate {
       id: string
-      email: string | null
-      username?: string | null
-      profile?: { firstName?: string | null; lastName?: string | null } | null
-    }) => {
+      email: string
+      username?: string | undefined
+      fullName?: string | undefined
+      department: { id: string; name: string } | null
+      jobCategory: { id: string; name: string } | null
+      matchLevel: MatchLevel
+    }
+
+    // A user can hold several postings at the same property; keep the best match.
+    const userMap = new Map<string, Candidate>()
+
+    const addUser = (
+      u: {
+        id: string
+        email: string | null
+        username?: string | null
+        profile?: { firstName?: string | null; lastName?: string | null } | null
+      },
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      department?: any,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      jobCategory?: any,
+    ) => {
       const fullName = `${u.profile?.firstName || ''} ${u.profile?.lastName || ''}`.trim()
-      userMap.set(u.id, {
+
+      let matchLevel: MatchLevel = 'OTHER'
+      if (departmentId && department?.id === departmentId) {
+        matchLevel = jobCategoryId && jobCategory?.id === jobCategoryId ? 'JOB_CATEGORY' : 'DEPARTMENT'
+      }
+
+      const candidate: Candidate = {
         id: u.id,
         email: u.email || 'user@rely.com',
         username: u.username || undefined,
         fullName: fullName || undefined,
-      })
+        department: department ? { id: department.id, name: department.name } : null,
+        jobCategory: jobCategory ? { id: jobCategory.id, name: jobCategory.name } : null,
+        matchLevel,
+      }
+
+      const existing = userMap.get(u.id)
+      if (!existing || matchRank[matchLevel] < matchRank[existing.matchLevel]) {
+        userMap.set(u.id, candidate)
+      }
     }
 
     for (const ul of userLocations) {
-      if (ul.user) addUser(ul.user)
+      if (ul.user) addUser(ul.user, ul.department, ul.jobCategory)
     }
 
-    // Fallback: If no location filter matched, fetch active staff users
+    // Fallback: no postings at all for this property, so offer recent staff users
     if (userMap.size === 0) {
-       
       const allUsers = (await User.findAll({
         limit: 20,
         attributes: ['id', 'email', 'username'],
@@ -310,9 +346,21 @@ export async function getAssignableEmployees(req: Request, res: Response): Promi
           openCount,
           closedCount,
           shift: shiftByEmployee[u.id] || null,
+          department: u.department,
+          jobCategory: u.jobCategory,
+          matchLevel: u.matchLevel,
         }
       }),
     )
+
+    // Best match first, then whoever is free-est within each group
+    employeesWithMetrics.sort((a, b) => {
+      const byMatch = matchRank[a.matchLevel] - matchRank[b.matchLevel]
+      if (byMatch !== 0) return byMatch
+      if (a.shift?.isOnShift !== b.shift?.isOnShift) return a.shift?.isOnShift ? -1 : 1
+      if (a.openCount !== b.openCount) return a.openCount - b.openCount
+      return a.name.localeCompare(b.name)
+    })
 
     res.status(200).json({
       success: true,
@@ -589,15 +637,27 @@ export async function createTicket(req: AuthenticatedRequest, res: Response): Pr
     const userId = req.user?.id || null
     const userName = req.user?.email || 'User'
 
-    let finalAttachments: string[] = []
-    if (Array.isArray(attachments)) {
-      finalAttachments = attachments
-    }
+    // Store the same shape the resident app writes ({ audioUrl, photos, notes }) so
+    // every client can tell a voice note apart from a photo.
+    const photoUrls: string[] = Array.isArray(attachments)
+      ? attachments.filter((a: unknown): a is string => typeof a === 'string' && a.trim() !== '')
+      : []
+    let audioUrl: string | null = null
 
     if (req.file) {
-      const s3Res = await uploadFileToS3(req.file, 'tickets')
-      finalAttachments.push(s3Res.location)
+      const isAudio =
+        (req.file.mimetype || '').startsWith('audio/') ||
+        /\.(webm|mp3|m4a|wav|ogg|aac)$/i.test(req.file.originalname || '')
+      const s3Res = await uploadFileToS3(req.file, isAudio ? 'tickets/audio' : 'tickets')
+      if (isAudio) {
+        audioUrl = s3Res.location
+      } else {
+        photoUrls.push(s3Res.location)
+      }
     }
+
+    const hasAttachments = Boolean(audioUrl) || photoUrls.length > 0
+    const finalAttachments = hasAttachments ? { audioUrl, photos: photoUrls } : null
 
     const monthDay = `${String(new Date().getMonth() + 1).padStart(2, '0')}${String(new Date().getDate()).padStart(2, '0')}`
     const randomSuffix = Math.floor(1000 + Math.random() * 9000)
@@ -646,7 +706,7 @@ export async function createTicket(req: AuthenticatedRequest, res: Response): Pr
       vendorId: vendorId || null,
       assetId: assetId || null,
       dueDate: dueDate ? new Date(dueDate) : null,
-      attachments: finalAttachments.length > 0 ? finalAttachments : null,
+      attachments: finalAttachments,
       createdBy: userId,
     })
 
@@ -657,7 +717,7 @@ export async function createTicket(req: AuthenticatedRequest, res: Response): Pr
       activityType: TicketActivityType.CREATED,
       toStatus: TicketStatus.OPEN,
       comment: `Ticket created with number ${ticketNumber}`,
-      attachments: finalAttachments.length > 0 ? finalAttachments : null,
+      attachments: finalAttachments,
       createdBy: userId,
     })
 
