@@ -223,38 +223,29 @@ export async function getAssignableEmployees(req: Request, res: Response): Promi
     const locId = (req.query.locId || req.query.locationId || req.params.locationId) as string | undefined
     const { departmentId, jobCategoryId } = req.query
 
-    const userLocWhere: Record<string, unknown> = {}
-    if (locId) userLocWhere.locId = locId
-    if (departmentId) userLocWhere.departmentId = departmentId
-    if (jobCategoryId) userLocWhere.jobCategoryId = jobCategoryId
-
-    // Find users associated with the given property/department/jobCategory
     const userInclude = [
       {
         model: User,
         as: 'user',
         attributes: ['id', 'email', 'username'],
+        where: { isDeleted: false },
+        required: true,
         include: [{ model: UserDetail, as: 'profile', attributes: ['firstName', 'lastName'], required: false }],
       },
     ]
 
-    const userLocations = (await UserLocation.findAll({
-      where: userLocWhere,
-      include: userInclude,
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    })) as any[]
-
-    // Deduplicate user list
     const userMap = new Map<
       string,
       { id: string; email: string; username?: string | undefined; fullName?: string | undefined }
     >()
+
     const addUser = (u: {
       id: string
       email: string | null
       username?: string | null
       profile?: { firstName?: string | null; lastName?: string | null } | null
     }) => {
+      if (!u || !u.id) return
       const fullName = `${u.profile?.firstName || ''} ${u.profile?.lastName || ''}`.trim()
       userMap.set(u.id, {
         id: u.id,
@@ -264,19 +255,106 @@ export async function getAssignableEmployees(req: Request, res: Response): Promi
       })
     }
 
-    for (const ul of userLocations) {
-      if (ul.user) addUser(ul.user)
-    }
+    if (locId && locId !== 'ALL' && locId !== 'all') {
+      // Step 1: Try strict match on location + department (+ optional jobCategory)
+      const strictWhere: Record<string, unknown> = { locId, isDeleted: false }
+      if (departmentId) strictWhere.departmentId = departmentId
+      if (jobCategoryId) strictWhere.jobCategoryId = jobCategoryId
 
-    // Fallback: If no location filter matched, fetch active staff users
-    if (userMap.size === 0) {
-      const allUsers = (await User.findAll({
-        limit: 20,
-        attributes: ['id', 'email', 'username'],
-        include: [{ model: UserDetail, as: 'profile', attributes: ['firstName', 'lastName'], required: false }],
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      })) as any[]
-      for (const u of allUsers) addUser(u)
+      const strictUserLocs = (await UserLocation.findAll({
+        where: strictWhere,
+        include: userInclude,
+      })) as unknown as Record<string, unknown>[]
+
+      for (const ul of strictUserLocs) {
+        if (ul.user)
+          addUser(
+            ul.user as {
+              id: string
+              email: string
+              username?: string
+              profile?: { firstName?: string; lastName?: string }
+            },
+          )
+      }
+
+      // Step 2: If strict match yielded no users, try matching location + department
+      if (userMap.size === 0 && (departmentId || jobCategoryId)) {
+        const deptWhere: Record<string, unknown> = { locId, isDeleted: false }
+        if (departmentId) deptWhere.departmentId = departmentId
+        const deptUserLocs = (await UserLocation.findAll({
+          where: deptWhere,
+          include: userInclude,
+        })) as unknown as Record<string, unknown>[]
+
+        for (const ul of deptUserLocs) {
+          if (ul.user)
+            addUser(
+              ul.user as {
+                id: string
+                email: string
+                username?: string
+                profile?: { firstName?: string; lastName?: string }
+              },
+            )
+        }
+      }
+
+      // Step 3: Location fallback: Fetch ALL active employees assigned to this location (STRICTLY THIS LOCATION ONLY)
+      if (userMap.size === 0) {
+        const locUserLocs = (await UserLocation.findAll({
+          where: { locId, isDeleted: false },
+          include: userInclude,
+        })) as unknown as Record<string, unknown>[]
+
+        for (const ul of locUserLocs) {
+          if (ul.user)
+            addUser(
+              ul.user as {
+                id: string
+                email: string
+                username?: string
+                profile?: { firstName?: string; lastName?: string }
+              },
+            )
+        }
+      }
+    } else {
+      // Global fallback (only when no locId specified or locId === 'all')
+      const globalWhere: Record<string, unknown> = { isDeleted: false }
+      if (departmentId) globalWhere.departmentId = departmentId
+      if (jobCategoryId) globalWhere.jobCategoryId = jobCategoryId
+
+      const globalUserLocs = (await UserLocation.findAll({
+        where: globalWhere,
+        include: userInclude,
+        limit: 50,
+      })) as unknown as Record<string, unknown>[]
+
+      for (const ul of globalUserLocs) {
+        if (ul.user)
+          addUser(
+            ul.user as {
+              id: string
+              email: string
+              username?: string
+              profile?: { firstName?: string; lastName?: string }
+            },
+          )
+      }
+
+      if (userMap.size === 0) {
+        const allUsers = (await User.findAll({
+          where: { isDeleted: false },
+          limit: 30,
+          attributes: ['id', 'email', 'username'],
+          include: [{ model: UserDetail, as: 'profile', attributes: ['firstName', 'lastName'], required: false }],
+        })) as unknown as Record<string, unknown>[]
+        for (const u of allUsers)
+          addUser(
+            u as { id: string; email: string; username?: string; profile?: { firstName?: string; lastName?: string } },
+          )
+      }
     }
 
     const shiftByEmployee = await getShiftInfoForEmployees(Array.from(userMap.keys()), locId)
@@ -418,8 +496,41 @@ export async function getTickets(req: Request, res: Response): Promise<void> {
         { model: JobCategory, as: 'jobCategory', required: false },
         { model: TicketCategory, as: 'categoryObj', required: false },
         { model: TicketSubCategory, as: 'subCategoryObj', required: false },
-        { model: User, as: 'assignedToUser', attributes: ['id', 'email'], required: false },
-        { model: User, as: 'raisedByUser', attributes: ['id', 'email'], required: false },
+        {
+          model: User,
+          as: 'assignedToUser',
+          attributes: ['id', 'email', 'username'],
+          include: [{ model: UserDetail, as: 'profile', attributes: ['firstName', 'lastName'], required: false }],
+          required: false,
+        },
+        {
+          model: User,
+          as: 'raisedByUser',
+          attributes: ['id', 'email', 'username'],
+          include: [{ model: UserDetail, as: 'profile', attributes: ['firstName', 'lastName'], required: false }],
+          required: false,
+        },
+        {
+          model: User,
+          as: 'completedByUser',
+          attributes: ['id', 'email', 'username'],
+          include: [{ model: UserDetail, as: 'profile', attributes: ['firstName', 'lastName'], required: false }],
+          required: false,
+        },
+        {
+          model: User,
+          as: 'workStartedByUser',
+          attributes: ['id', 'email', 'username'],
+          include: [{ model: UserDetail, as: 'profile', attributes: ['firstName', 'lastName'], required: false }],
+          required: false,
+        },
+        {
+          model: User,
+          as: 'verifiedByUser',
+          attributes: ['id', 'email', 'username'],
+          include: [{ model: UserDetail, as: 'profile', attributes: ['firstName', 'lastName'], required: false }],
+          required: false,
+        },
         { model: AssetVendor, as: 'vendor', required: false },
         { model: Asset, as: 'asset', required: false },
       ],
@@ -510,8 +621,20 @@ export async function getTicketById(req: Request, res: Response): Promise<void> 
         { model: JobCategory, as: 'jobCategory' },
         { model: TicketCategory, as: 'categoryObj' },
         { model: TicketSubCategory, as: 'subCategoryObj' },
-        { model: User, as: 'assignedToUser', attributes: ['id', 'email'] },
-        { model: User, as: 'raisedByUser', attributes: ['id', 'email'] },
+        {
+          model: User,
+          as: 'assignedToUser',
+          attributes: ['id', 'email', 'username'],
+          include: [{ model: UserDetail, as: 'profile', attributes: ['firstName', 'lastName'], required: false }],
+          required: false,
+        },
+        {
+          model: User,
+          as: 'raisedByUser',
+          attributes: ['id', 'email', 'username'],
+          include: [{ model: UserDetail, as: 'profile', attributes: ['firstName', 'lastName'], required: false }],
+          required: false,
+        },
         {
           model: User,
           as: 'workStartedByUser',

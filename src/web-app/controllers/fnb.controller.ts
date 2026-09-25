@@ -1692,14 +1692,14 @@ export async function getResidentOrdersForProperty(req: Request, res: Response):
         {
           model: FnbGlobalMealSlot,
           as: 'globalMealSlot',
-          attributes: ['id', 'name', 'code'],
+          attributes: ['id', 'name', 'startTime', 'endTime'],
         },
         {
           model: FnbResidentOrderDetail,
           as: 'details',
           include: [
             { model: FnbDish, as: 'dish', attributes: ['id', 'name', 'category', 'basePrice', 'imageUrl'] },
-            { model: FnbGlobalMealSlot, as: 'globalMealSlot', attributes: ['id', 'name', 'code'] },
+            { model: FnbGlobalMealSlot, as: 'globalMealSlot', attributes: ['id', 'name', 'startTime', 'endTime'] },
             { model: FnbPropertySpecialSlot, as: 'specialMealSlot', attributes: ['id', 'name'] },
           ],
         },
