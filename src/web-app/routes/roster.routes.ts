@@ -3,6 +3,7 @@ import { authenticate } from '../../middlewares/authenticate.js'
 import { validateBody } from '../../middlewares/validate/index.js'
 import {
   bulkCreateEmployeeShiftSchema,
+  bulkDeleteShiftEmployeeDatesSchema,
   coverShiftEmployeeDateSchema,
   createEmployeeShiftSchema,
   createRosterAreaSchema,
@@ -20,6 +21,7 @@ import {
 } from '../../validations/roster.validation.js'
 import {
   bulkCreateEmployeeShifts,
+  bulkDeleteShiftEmployeeDates,
   coverShiftEmployeeDate,
   createArea,
   createEmployeeShift,
@@ -83,6 +85,12 @@ shiftEmployeeDateRouter.use(authenticate)
 shiftEmployeeDateRouter.get('/', listShiftEmployeeDates)
 shiftEmployeeDateRouter.post('/', validateBody(createShiftEmployeeDateSchema), createShiftEmployeeDate)
 shiftEmployeeDateRouter.post('/generate', validateBody(generateShiftEmployeeDatesSchema), generateShiftEmployeeDates)
+shiftEmployeeDateRouter.delete('/bulk', validateBody(bulkDeleteShiftEmployeeDatesSchema), bulkDeleteShiftEmployeeDates)
+shiftEmployeeDateRouter.post(
+  '/bulk-delete',
+  validateBody(bulkDeleteShiftEmployeeDatesSchema),
+  bulkDeleteShiftEmployeeDates,
+)
 shiftEmployeeDateRouter.put('/:dateId/day-off', validateBody(markDayOffSchema), markDayOff)
 shiftEmployeeDateRouter.delete('/:dateId/day-off', unmarkDayOff)
 shiftEmployeeDateRouter.put('/:dateId/cover', validateBody(coverShiftEmployeeDateSchema), coverShiftEmployeeDate)

@@ -4,7 +4,6 @@ import { BaseAttributes, BaseModel, baseModelColumns } from './base.model.js'
 import { BillingCycle, ProrationPolicy, SubscriptionStatus } from '../enums/billing.enum.js'
 
 import type { BillingAccount } from './billingAccount.model.js'
-import type { BillingContract } from './billingContract.model.js'
 import type { BillingProduct } from './billingProduct.model.js'
 import type { BillingPricePlan } from './billingPricePlan.model.js'
 import type { PropertyUnit } from './propertyUnit.model.js'
@@ -12,7 +11,6 @@ import type { FnbResidentPackage } from './fnbResidentPackage.model.js'
 
 export interface BillingSubscriptionAttributes extends BaseAttributes {
   billingAccountId: string
-  contractId?: string | null
   unitId: string
   productId: string
   pricePlanId?: string | null
@@ -33,7 +31,6 @@ export interface BillingSubscriptionAttributes extends BaseAttributes {
 export type BillingSubscriptionCreationAttributes = Optional<
   BillingSubscriptionAttributes,
   | 'id'
-  | 'contractId'
   | 'pricePlanId'
   | 'description'
   | 'quantity'
@@ -56,7 +53,6 @@ export class BillingSubscription
   implements BillingSubscriptionAttributes
 {
   declare billingAccountId: string
-  declare contractId: string | null
   declare unitId: string
   declare productId: string
   declare pricePlanId: string | null
@@ -75,7 +71,6 @@ export class BillingSubscription
 
   // Associations
   declare billingAccount?: BillingAccount
-  declare contract?: BillingContract
   declare product?: BillingProduct
   declare pricePlan?: BillingPricePlan
   declare unit?: PropertyUnit
@@ -88,10 +83,6 @@ BillingSubscription.init(
     billingAccountId: {
       type: DataTypes.UUID,
       allowNull: false,
-    },
-    contractId: {
-      type: DataTypes.UUID,
-      allowNull: true,
     },
     unitId: {
       type: DataTypes.UUID,

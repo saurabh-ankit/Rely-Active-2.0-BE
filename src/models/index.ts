@@ -74,6 +74,7 @@ import { EventGlobalServiceProperty } from './eventGlobalServiceProperty.model.j
 import { Shift, ShiftV2 } from './shift.model.js'
 import { ShiftAssignment, EmployeeShiftAssignmentV2 } from './shiftAssignment.model.js'
 import { ShiftDate, ShiftEmployeeDate } from './shiftDate.model.js'
+import { DoctorAppointment } from './doctorAppointment.model.js'
 import { ShiftResidentPool } from './shiftResidentPool.model.js'
 import { ShiftSetting, RosterSetting } from './shiftSetting.model.js'
 import { ShiftRolePolicy, RosterRolePolicy } from './shiftRolePolicy.model.js'
@@ -132,6 +133,58 @@ import {
   type ResidentCareTeamCreationAttributes,
   type CareTeamRole,
 } from './residentCareTeam.model.js'
+import {
+  ResidentAllergy,
+  type ResidentAllergyAttributes,
+  type ResidentAllergyCreationAttributes,
+} from './residentAllergy.model.js'
+import {
+  ResidentVital,
+  type ResidentVitalAttributes,
+  type ResidentVitalCreationAttributes,
+} from './residentVital.model.js'
+import {
+  Consultant,
+  type ConsultantAttributes,
+  type ConsultantCreationAttributes,
+  type ConsultantAllergyEntry,
+  type ConsultantVitalEntry,
+  type ConsultantMedicationEntry,
+  type ConsultantInsulinEntry,
+} from './consultant.model.js'
+import {
+  ResidentMedication,
+  type ResidentMedicationAttributes,
+  type ResidentMedicationCreationAttributes,
+  type MedicationTiming,
+  type MedicationTimeOfDay,
+  type MedicationRoute,
+  type MedicationMealTiming,
+} from './residentMedication.model.js'
+import {
+  ResidentInsulin,
+  type ResidentInsulinAttributes,
+  type ResidentInsulinCreationAttributes,
+} from './residentInsulin.model.js'
+import {
+  VitalSetting,
+  type VitalSettingAttributes,
+  type VitalSettingCreationAttributes,
+  type VitalInputType,
+  VITAL_INPUT_TYPES,
+} from './vitalSetting.model.js'
+import {
+  LabTestSetting,
+  type LabTestSettingAttributes,
+  type LabTestSettingCreationAttributes,
+} from './labTestSetting.model.js'
+import {
+  ResidentLabReport,
+  type ResidentLabReportAttributes,
+  type ResidentLabReportCreationAttributes,
+  type LabReportSeverity,
+  LAB_REPORT_SEVERITIES,
+} from './residentLabReport.model.js'
 
 // ── Billing & Revenue Management Module ──────────────────────────────────────
 import { UnitResident } from './unitResident.model.js'
@@ -139,7 +192,6 @@ import { BillingProduct } from './billingProduct.model.js'
 import { BillingPricePlan } from './billingPricePlan.model.js'
 import { BillingAccount } from './billingAccount.model.js'
 import { BillingParty } from './billingParty.model.js'
-import { BillingContract } from './billingContract.model.js'
 import { BillingSubscription } from './billingSubscription.model.js'
 import { BillingEvent } from './billingEvent.model.js'
 import { Invoice } from './invoice.model.js'
@@ -197,6 +249,63 @@ User.hasMany(ResidentCareTeam, { foreignKey: 'userId', as: 'careTeamAssignments'
 ResidentCareTeam.belongsTo(User, { foreignKey: 'userId', as: 'user' })
 Property.hasMany(ResidentCareTeam, { foreignKey: 'locId', as: 'careTeamMembers' })
 ResidentCareTeam.belongsTo(Property, { foreignKey: 'locId', as: 'property' })
+
+// ── Resident Allergy / Vital associations ───────────────────────────────────
+Resident.hasMany(ResidentAllergy, { foreignKey: 'residentId', as: 'allergies' })
+ResidentAllergy.belongsTo(Resident, { foreignKey: 'residentId', as: 'resident' })
+Property.hasMany(ResidentAllergy, { foreignKey: 'locationId', as: 'residentAllergies' })
+ResidentAllergy.belongsTo(Property, { foreignKey: 'locationId', as: 'location' })
+DoctorAppointment.hasMany(ResidentAllergy, { foreignKey: 'appointmentId', as: 'allergies' })
+ResidentAllergy.belongsTo(DoctorAppointment, { foreignKey: 'appointmentId', as: 'appointment' })
+
+Resident.hasMany(ResidentVital, { foreignKey: 'residentId', as: 'vitals' })
+ResidentVital.belongsTo(Resident, { foreignKey: 'residentId', as: 'resident' })
+Property.hasMany(ResidentVital, { foreignKey: 'locationId', as: 'residentVitals' })
+ResidentVital.belongsTo(Property, { foreignKey: 'locationId', as: 'location' })
+DoctorAppointment.hasMany(ResidentVital, { foreignKey: 'appointmentId', as: 'vitals' })
+ResidentVital.belongsTo(DoctorAppointment, { foreignKey: 'appointmentId', as: 'appointment' })
+ResidentVital.belongsTo(VitalSetting, { foreignKey: 'vitalSettingId', as: 'vitalSetting' })
+VitalSetting.hasMany(ResidentVital, { foreignKey: 'vitalSettingId', as: 'residentVitals' })
+
+// ── Resident Lab Report associations ────────────────────────────────────────
+Resident.hasMany(ResidentLabReport, { foreignKey: 'residentId', as: 'labReports' })
+ResidentLabReport.belongsTo(Resident, { foreignKey: 'residentId', as: 'resident' })
+Property.hasMany(ResidentLabReport, { foreignKey: 'locationId', as: 'residentLabReports' })
+ResidentLabReport.belongsTo(Property, { foreignKey: 'locationId', as: 'location' })
+DoctorAppointment.hasMany(ResidentLabReport, { foreignKey: 'appointmentId', as: 'labReports' })
+ResidentLabReport.belongsTo(DoctorAppointment, { foreignKey: 'appointmentId', as: 'appointment' })
+ResidentLabReport.belongsTo(LabTestSetting, { foreignKey: 'labTestSettingId', as: 'labTestSetting' })
+LabTestSetting.hasMany(ResidentLabReport, { foreignKey: 'labTestSettingId', as: 'residentLabReports' })
+
+// ── Consultant (appointment diagnosis chart) ────────────────────────────────
+Resident.hasMany(Consultant, { foreignKey: 'residentId', as: 'consultants' })
+Consultant.belongsTo(Resident, { foreignKey: 'residentId', as: 'resident' })
+Property.hasMany(Consultant, { foreignKey: 'locationId', as: 'consultants' })
+Consultant.belongsTo(Property, { foreignKey: 'locationId', as: 'location' })
+DoctorAppointment.hasOne(Consultant, { foreignKey: 'appointmentId', as: 'consultant' })
+Consultant.belongsTo(DoctorAppointment, { foreignKey: 'appointmentId', as: 'appointment' })
+User.hasMany(Consultant, { foreignKey: 'doctorId', as: 'consultants' })
+Consultant.belongsTo(User, { foreignKey: 'doctorId', as: 'doctor' })
+
+// ── Resident Medication associations ────────────────────────────────────────
+Resident.hasMany(ResidentMedication, { foreignKey: 'residentId', as: 'medications' })
+ResidentMedication.belongsTo(Resident, { foreignKey: 'residentId', as: 'resident' })
+Property.hasMany(ResidentMedication, { foreignKey: 'locationId', as: 'residentMedications' })
+ResidentMedication.belongsTo(Property, { foreignKey: 'locationId', as: 'location' })
+ResidentMedication.belongsTo(InventoryItem, { foreignKey: 'inventoryItemId', as: 'inventoryItem' })
+InventoryItem.hasMany(ResidentMedication, { foreignKey: 'inventoryItemId', as: 'residentMedications' })
+DoctorAppointment.hasMany(ResidentMedication, { foreignKey: 'appointmentId', as: 'medications' })
+ResidentMedication.belongsTo(DoctorAppointment, { foreignKey: 'appointmentId', as: 'appointment' })
+
+// ── Resident Insulin associations ───────────────────────────────────────────
+Resident.hasMany(ResidentInsulin, { foreignKey: 'residentId', as: 'insulin' })
+ResidentInsulin.belongsTo(Resident, { foreignKey: 'residentId', as: 'resident' })
+Property.hasMany(ResidentInsulin, { foreignKey: 'locationId', as: 'residentInsulin' })
+ResidentInsulin.belongsTo(Property, { foreignKey: 'locationId', as: 'location' })
+ResidentInsulin.belongsTo(InventoryItem, { foreignKey: 'inventoryItemId', as: 'inventoryItem' })
+InventoryItem.hasMany(ResidentInsulin, { foreignKey: 'inventoryItemId', as: 'residentInsulin' })
+DoctorAppointment.hasMany(ResidentInsulin, { foreignKey: 'appointmentId', as: 'insulin' })
+ResidentInsulin.belongsTo(DoctorAppointment, { foreignKey: 'appointmentId', as: 'appointment' })
 
 // ── User & Detail ───────────────────────────────────────────────────────────
 User.hasOne(UserDetail, { foreignKey: 'userId', as: 'profile' })
@@ -566,6 +675,18 @@ ShiftResidentPool.belongsTo(PropertyUnit, { foreignKey: 'unitId', as: 'unit' })
 PropertyUnit.hasMany(ShiftResidentPool, { foreignKey: 'unitId', as: 'shiftResidentPools' })
 ShiftResidentPool.belongsTo(Property, { foreignKey: 'locationId', as: 'location' })
 
+// Doctor appointments (visiting-doctor shift day bookings)
+ShiftDate.hasMany(DoctorAppointment, { foreignKey: 'shiftEmployeeDateId', as: 'appointments' })
+DoctorAppointment.belongsTo(ShiftDate, { foreignKey: 'shiftEmployeeDateId', as: 'shiftEmployeeDate' })
+Resident.hasMany(DoctorAppointment, { foreignKey: 'residentId', as: 'doctorAppointments' })
+DoctorAppointment.belongsTo(Resident, { foreignKey: 'residentId', as: 'resident' })
+ResidentFamilyMember.hasMany(DoctorAppointment, { foreignKey: 'familyMemberId', as: 'doctorAppointments' })
+DoctorAppointment.belongsTo(ResidentFamilyMember, { foreignKey: 'familyMemberId', as: 'familyMember' })
+User.hasMany(DoctorAppointment, { foreignKey: 'doctorId', as: 'doctorAppointments' })
+DoctorAppointment.belongsTo(User, { foreignKey: 'doctorId', as: 'doctor' })
+Property.hasMany(DoctorAppointment, { foreignKey: 'locationId', as: 'doctorAppointments' })
+DoctorAppointment.belongsTo(Property, { foreignKey: 'locationId', as: 'location' })
+
 Property.hasMany(ShiftSetting, { foreignKey: 'locationId', as: 'shiftSettings' })
 ShiftSetting.belongsTo(Property, { foreignKey: 'locationId', as: 'location' })
 Property.hasMany(ShiftRolePolicy, { foreignKey: 'locationId', as: 'shiftRolePolicies' })
@@ -618,19 +739,9 @@ BillingParty.belongsTo(Resident, { foreignKey: 'residentId', as: 'resident' })
 ResidentFamilyMember.hasMany(BillingParty, { foreignKey: 'familyMemberId', as: 'billingParties' })
 BillingParty.belongsTo(ResidentFamilyMember, { foreignKey: 'familyMemberId', as: 'familyMember' })
 
-// ── Billing Contracts ─────────────────────────────────────────────────────────
-BillingAccount.hasMany(BillingContract, { foreignKey: 'billingAccountId', as: 'contracts' })
-BillingContract.belongsTo(BillingAccount, { foreignKey: 'billingAccountId', as: 'billingAccount' })
-
-PropertyUnit.hasMany(BillingContract, { foreignKey: 'unitId', as: 'billingContracts' })
-BillingContract.belongsTo(PropertyUnit, { foreignKey: 'unitId', as: 'unit' })
-
 // ── Billing Subscriptions ─────────────────────────────────────────────────────
 BillingAccount.hasMany(BillingSubscription, { foreignKey: 'billingAccountId', as: 'subscriptions' })
 BillingSubscription.belongsTo(BillingAccount, { foreignKey: 'billingAccountId', as: 'billingAccount' })
-
-BillingContract.hasMany(BillingSubscription, { foreignKey: 'contractId', as: 'subscriptions' })
-BillingSubscription.belongsTo(BillingContract, { foreignKey: 'contractId', as: 'contract' })
 
 BillingProduct.hasMany(BillingSubscription, { foreignKey: 'productId', as: 'subscriptions' })
 BillingSubscription.belongsTo(BillingProduct, { foreignKey: 'productId', as: 'product' })
@@ -946,6 +1057,7 @@ export {
   EmployeeShiftAssignmentV2,
   ShiftDate,
   ShiftEmployeeDate,
+  DoctorAppointment,
   ShiftResidentPool,
   ShiftSetting,
   RosterSetting,
@@ -960,7 +1072,6 @@ export {
   BillingPricePlan,
   BillingAccount,
   BillingParty,
-  BillingContract,
   BillingSubscription,
   BillingEvent,
   Invoice,
@@ -1005,6 +1116,42 @@ export {
   type ResidentCareTeamAttributes,
   type ResidentCareTeamCreationAttributes,
   type CareTeamRole,
+  ResidentAllergy,
+  type ResidentAllergyAttributes,
+  type ResidentAllergyCreationAttributes,
+  ResidentVital,
+  type ResidentVitalAttributes,
+  type ResidentVitalCreationAttributes,
+  Consultant,
+  type ConsultantAttributes,
+  type ConsultantCreationAttributes,
+  type ConsultantAllergyEntry,
+  type ConsultantVitalEntry,
+  type ConsultantMedicationEntry,
+  type ConsultantInsulinEntry,
+  ResidentMedication,
+  type ResidentMedicationAttributes,
+  type ResidentMedicationCreationAttributes,
+  type MedicationTiming,
+  type MedicationTimeOfDay,
+  type MedicationRoute,
+  type MedicationMealTiming,
+  ResidentInsulin,
+  type ResidentInsulinAttributes,
+  type ResidentInsulinCreationAttributes,
+  VitalSetting,
+  type VitalSettingAttributes,
+  type VitalSettingCreationAttributes,
+  type VitalInputType,
+  VITAL_INPUT_TYPES,
+  LabTestSetting,
+  type LabTestSettingAttributes,
+  type LabTestSettingCreationAttributes,
+  ResidentLabReport,
+  type ResidentLabReportAttributes,
+  type ResidentLabReportCreationAttributes,
+  type LabReportSeverity,
+  LAB_REPORT_SEVERITIES,
 }
 
 InventoryItem.belongsTo(InventoryCategory, { foreignKey: 'categoryId', as: 'category' })

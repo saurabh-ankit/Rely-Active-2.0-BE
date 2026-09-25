@@ -368,7 +368,6 @@ export async function createSubscription(req: AuthenticatedRequest, res: Respons
 
     const subscription = await BillingSubscription.create({
       billingAccountId: data.billingAccountId,
-      contractId: data.contractId || null,
       unitId: data.unitId,
       productId: data.productId,
       pricePlanId: data.pricePlanId || null,

@@ -22,12 +22,29 @@ import {
   syncDoctorSpecializations,
 } from '../../services/doctorSpecialization.service.js'
 import { HttpError } from '../../middlewares/error/http-error.js'
+import type { WeekDay } from '../../enums/roster.enum.js'
 
 function sanitizeUuid(id: string | null | undefined): string | null {
   if (!id || typeof id !== 'string') return null
   const trimmed = id.trim()
   if (!trimmed || trimmed === '00000000-0000-0000-0000-000000000000') return null
   return trimmed
+}
+
+/** Normalize weekOffDays / week_off_days from request body into a unique weekday array or null. */
+function normalizeWeekOffDays(body: Record<string, unknown>): WeekDay[] | null | undefined {
+  const hasCamel = Object.prototype.hasOwnProperty.call(body, 'weekOffDays')
+  const hasSnake = Object.prototype.hasOwnProperty.call(body, 'week_off_days')
+  if (!hasCamel && !hasSnake) return undefined
+  const raw = hasCamel ? body.weekOffDays : body.week_off_days
+  if (raw === null) return null
+  if (!Array.isArray(raw)) return null
+  const days = Array.from(
+    new Set(
+      raw.filter((d): d is string => typeof d === 'string' && d.trim() !== '').map((d) => d.trim().toLowerCase()),
+    ),
+  ) as WeekDay[]
+  return days.length > 0 ? days : null
 }
 
 interface RoleDeptJobCatValidationResult {
@@ -131,6 +148,49 @@ async function validateAndSanitizeRoleDeptJobCat(
     cleanDeptId,
     cleanJobCatId,
   }
+}
+
+function parseConsultantFee(raw: unknown): number | null {
+  if (raw === undefined || raw === null || raw === '') return null
+  const n = typeof raw === 'number' ? raw : Number(String(raw).trim())
+  if (!Number.isFinite(n)) return null
+  return n
+}
+
+async function isVisitingJobCategory(jobCatId: string | null): Promise<boolean> {
+  if (!jobCatId) return false
+  const jc = await JobCategory.findByPk(jobCatId)
+  if (!jc) return false
+  return (jc.code || '').toUpperCase() === 'MED_VISITING' || jc.name.toLowerCase().includes('visiting')
+}
+
+/**
+ * Visiting doctors require a positive consultant fee; all other job categories clear it.
+ * When `feeProvided` is false (update without the field), keep an existing positive fee.
+ */
+async function resolveConsultantFeeForJobCat(
+  jobCatId: string | null,
+  rawFee: unknown,
+  options?: { feeProvided?: boolean; existingFee?: unknown },
+): Promise<{ ok: true; value: number | null } | { ok: false; error: string }> {
+  const visiting = await isVisitingJobCategory(jobCatId)
+  if (!visiting) {
+    return { ok: true, value: null }
+  }
+
+  if (options?.feeProvided === false) {
+    const existing = parseConsultantFee(options.existingFee)
+    if (existing === null || existing <= 0) {
+      return { ok: false, error: 'Consultant fee is required for Visiting doctors' }
+    }
+    return { ok: true, value: existing }
+  }
+
+  const fee = parseConsultantFee(rawFee)
+  if (fee === null || fee <= 0) {
+    return { ok: false, error: 'Consultant fee is required for Visiting doctors' }
+  }
+  return { ok: true, value: fee }
 }
 
 function formatUserResponse(user: unknown): Record<string, unknown> | null {
@@ -450,6 +510,7 @@ export async function createUser(req: AuthenticatedRequest, res: Response): Prom
       experience: req.body.experience || null,
       address: req.body.address || null,
       photoUrl: photoUrl || null,
+      weekOffDays: normalizeWeekOffDays(req.body as Record<string, unknown>) ?? null,
       createdBy: operatingUserId,
       updatedBy: operatingUserId,
     })
@@ -463,6 +524,19 @@ export async function createUser(req: AuthenticatedRequest, res: Response): Prom
 
     const cleanDeptId = roleDeptValidation.cleanDeptId
     const cleanJobCatId = roleDeptValidation.cleanJobCatId
+
+    const feeResult = await resolveConsultantFeeForJobCat(
+      cleanJobCatId,
+      req.body.consultantFee ?? req.body.consultant_fee,
+    )
+    if (!feeResult.ok) {
+      res.status(400).json({ success: false, message: feeResult.error })
+      return
+    }
+    await UserDetail.update(
+      { consultantFee: feeResult.value, updatedBy: operatingUserId },
+      { where: { userId: user.id } },
+    )
 
     let targetRoleId: string | null = null
     if (roleCode) {
@@ -914,6 +988,8 @@ export async function updateUser(req: Request, res: Response): Promise<void> {
     if (req.body.qualification !== undefined) detailUpdatePayload.qualification = req.body.qualification || null
     if (req.body.experience !== undefined) detailUpdatePayload.experience = req.body.experience || null
     if (req.body.address !== undefined) detailUpdatePayload.address = req.body.address || null
+    const weekOffDaysUpdate = normalizeWeekOffDays(req.body as Record<string, unknown>)
+    if (weekOffDaysUpdate !== undefined) detailUpdatePayload.weekOffDays = weekOffDaysUpdate
     const uploadedFile =
       req.file ||
       (req.files && typeof req.files === 'object' && ('photo' in req.files || 'avatar' in req.files)
@@ -948,6 +1024,7 @@ export async function updateUser(req: Request, res: Response): Promise<void> {
         experience: req.body.experience || null,
         address: req.body.address || null,
         photoUrl: (detailUpdatePayload.photoUrl as string) || null,
+        weekOffDays: normalizeWeekOffDays(req.body as Record<string, unknown>) ?? null,
         createdBy: operatingUserId,
         updatedBy: operatingUserId,
       })
@@ -988,6 +1065,24 @@ export async function updateUser(req: Request, res: Response): Promise<void> {
     const cleanJobCatId = roleDeptValidation.cleanJobCatId
     const cleanMgrId =
       managerId !== undefined || manager_id !== undefined ? sanitizeUuid(managerId || manager_id) : null
+
+    const feeProvided =
+      Object.prototype.hasOwnProperty.call(req.body, 'consultantFee') ||
+      Object.prototype.hasOwnProperty.call(req.body, 'consultant_fee')
+    const existingDetailForFee = await UserDetail.findOne({ where: { userId: user.id } })
+    const feeResult = await resolveConsultantFeeForJobCat(
+      cleanJobCatId,
+      req.body.consultantFee ?? req.body.consultant_fee,
+      { feeProvided, existingFee: existingDetailForFee?.consultantFee },
+    )
+    if (!feeResult.ok) {
+      res.status(400).json({ success: false, message: feeResult.error })
+      return
+    }
+    await UserDetail.update(
+      { consultantFee: feeResult.value, updatedBy: operatingUserId },
+      { where: { userId: user.id } },
+    )
 
     // Extract target single propertyId/locId strictly from req.body
     const targetSinglePropId = sanitizeUuid(

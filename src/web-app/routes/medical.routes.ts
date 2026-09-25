@@ -3,6 +3,7 @@ import { authenticate } from '../../middlewares/authenticate.js'
 import { careTaskRouter, packageRouter } from './globalSettings.js'
 import packageSubscriptionRouter from './packageSubscription.routes.js'
 import careTaskAssignmentRouter from './careTaskAssignment.routes.js'
+import appointmentRouter from './appointment.routes.js'
 import { getCareTaskCompletions } from '../controllers/careTaskAssignment.controller.js'
 
 /**
@@ -13,6 +14,7 @@ import { getCareTaskCompletions } from '../controllers/careTaskAssignment.contro
  *  3. Subscriptions:        /medical/subscriptions
  *  4. Care Task Assignments / Complete: /medical/assignments & /medical/care-task-assignments
  *  5. Care Task Completions: /medical/completions & /medical/assignments/completions
+ *  6. Appointments:         /medical/appointments
  *
  * All controllers are served directly from src/web-app/controllers/globalSettings.controller.ts
  * and src/web-app/controllers/careTaskAssignment.controller.ts,
@@ -36,6 +38,9 @@ medicalRouter.get('/completions', getCareTaskCompletions)
 // 5. Care Task Assignments & Complete Task
 medicalRouter.use('/assignments', careTaskAssignmentRouter)
 medicalRouter.use('/care-task-assignments', careTaskAssignmentRouter)
+
+// 6. Visiting doctor appointment bookings
+medicalRouter.use('/appointments', appointmentRouter)
 
 export { careTaskRouter, packageRouter, careTaskAssignmentRouter }
 export default medicalRouter

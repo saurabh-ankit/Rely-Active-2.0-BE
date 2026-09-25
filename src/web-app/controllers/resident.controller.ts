@@ -23,7 +23,7 @@ import {
   Role,
   ResidentCareTeam,
 } from '../../models/index.js'
-import { OwnershipType, ResidentStatus, ResidentType } from '../../enums/resident.enum.js'
+import { CareLevel, OwnershipType, ResidentStatus, ResidentType } from '../../enums/resident.enum.js'
 import { SubscriptionStatus } from '../../enums/packageSubscription.enum.js'
 import { OccupancyStatus } from '../../enums/propertyUnit.enum.js'
 import { uploadFileToS3, uploadBase64ToS3 } from '../../middlewares/s3/index.js'
@@ -53,6 +53,7 @@ export async function createResident(req: AuthenticatedRequest, res: Response): 
       moveInDate,
       rentAmount,
       payRentToCompany,
+      careLevel,
       carePackageId,
       taskSchedules,
       familyMembers,
@@ -213,6 +214,7 @@ export async function createResident(req: AuthenticatedRequest, res: Response): 
       moveInDate: moveInDate || null,
       rentAmount: rentAmount !== undefined && rentAmount !== null && rentAmount !== '' ? Number(rentAmount) : null,
       payRentToCompany: payRentToCompany !== undefined ? Boolean(payRentToCompany) : false,
+      careLevel: careLevel ? (careLevel as CareLevel) : CareLevel.STABLE,
       status: ResidentStatus.ACTIVE,
       isActive: true,
       createdBy: operatorId,
@@ -473,6 +475,7 @@ export async function updateResident(req: Request, res: Response): Promise<void>
       moveOutDate,
       rentAmount,
       payRentToCompany,
+      careLevel,
       status,
       isResiding,
       carePackageId,
@@ -764,6 +767,7 @@ export async function updateResident(req: Request, res: Response): Promise<void>
           : resident.rentAmount,
       payRentToCompany: payRentToCompany !== undefined ? Boolean(payRentToCompany) : resident.payRentToCompany,
       status: status || resident.status,
+      careLevel: careLevel !== undefined ? (careLevel as CareLevel) : resident.careLevel,
       isResiding: updatedResiding,
       carePackageId: updatedCarePackageId,
       updatedBy: operatorId,
