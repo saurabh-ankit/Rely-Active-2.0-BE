@@ -21,3 +21,9 @@ export enum Gender {
   FEMALE = 'FEMALE',
   OTHER = 'OTHER',
 }
+
+export enum CareLevel {
+  STABLE = 'STABLE',
+  MODERATE = 'MODERATE',
+  CRITICAL = 'CRITICAL',
+}
