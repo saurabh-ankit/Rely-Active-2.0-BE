@@ -7,6 +7,7 @@ import {
   getResidentTicketById,
   getResidentTickets,
   getResidentTicketDepartments,
+  submitTicketFeedback,
   updateTicketTat,
 } from '../controllers/ticketMobile.controller.js'
 
@@ -32,5 +33,6 @@ router.post(
 router.get('/:id', getResidentTicketById)
 router.patch('/:id/tat', updateTicketTat)
 router.patch('/:id/escalate', escalateTicket)
+router.post('/:id/feedback', submitTicketFeedback)
 
 export default router

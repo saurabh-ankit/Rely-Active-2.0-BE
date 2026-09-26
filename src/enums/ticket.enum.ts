@@ -33,3 +33,10 @@ export enum TicketActivityType {
   PRIORITY_CHANGE = 'PRIORITY_CHANGE',
   UPDATED = 'UPDATED',
 }
+
+/** How a resident rated the work after a ticket was completed. */
+export enum TicketFeedbackRating {
+  GOOD = 'GOOD',
+  AVERAGE = 'AVERAGE',
+  POOR = 'POOR',
+}

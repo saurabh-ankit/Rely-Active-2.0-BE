@@ -17,6 +17,7 @@ import {
 } from '../../../models/index.js'
 import { FnbMealSlot, FnbOrderStatus } from '../../../enums/fnb.enum.js'
 import type { AuthenticatedRequest } from '../../../middlewares/authenticate.js'
+import { resolveHousehold } from '../../../utils/household.util.js'
 
 export async function getResidentDailyMenu(req: AuthenticatedRequest, res: Response): Promise<void> {
   try {
@@ -484,8 +485,18 @@ export async function placeMealOrder(req: AuthenticatedRequest, res: Response): 
 
 export async function getResidentOrdersHistory(req: AuthenticatedRequest, res: Response): Promise<void> {
   try {
+    const household = resolveHousehold(req)
+    if (!household) {
+      res.status(401).json({ success: false, message: 'Authentication required' })
+      return
+    }
+
+    // Meals are personal, not shared with the flat: a family member sees only
+    // their own orders, and the resident only theirs (familyMemberId IS NULL).
     const orders = await FnbResidentOrder.findAll({
-      where: { residentId: req.user?.id },
+      where: household.familyMemberId
+        ? { familyMemberId: household.familyMemberId }
+        : { residentId: household.residentId, familyMemberId: null },
       order: [['createdAt', 'DESC']],
       limit: 50,
     })

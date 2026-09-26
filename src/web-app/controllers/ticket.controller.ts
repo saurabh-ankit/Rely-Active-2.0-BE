@@ -5,6 +5,7 @@ import type { AuthenticatedRequest } from '../../middlewares/authenticate.js'
 import {
   Ticket,
   TicketActivityLog,
+  TicketFeedback,
   TicketCategory,
   TicketSubCategory,
   Property,
@@ -12,6 +13,7 @@ import {
   PropertyFloor,
   PropertyUnit,
   Resident,
+  ResidentFamilyMember,
   Department,
   JobCategory,
   User,
@@ -471,6 +473,7 @@ export async function getTickets(req: Request, res: Response): Promise<void> {
         { model: User, as: 'raisedByUser', attributes: ['id', 'email'], required: false },
         { model: AssetVendor, as: 'vendor', required: false },
         { model: Asset, as: 'asset', required: false },
+        { model: TicketFeedback, as: 'feedback', required: false },
       ],
       // Escalated tickets first (newest escalation on top), then the rest by recency.
       order: [
@@ -584,6 +587,20 @@ export async function getTicketById(req: Request, res: Response): Promise<void> 
         },
         { model: AssetVendor, as: 'vendor' },
         { model: Asset, as: 'asset' },
+        {
+          model: TicketFeedback,
+          as: 'feedback',
+          required: false,
+          include: [
+            { model: Resident, as: 'resident', attributes: ['id', 'firstName', 'lastName'], required: false },
+            {
+              model: ResidentFamilyMember,
+              as: 'familyMember',
+              attributes: ['id', 'firstName', 'lastName', 'relation'],
+              required: false,
+            },
+          ],
+        },
         {
           model: TicketActivityLog,
           as: 'activityLogs',

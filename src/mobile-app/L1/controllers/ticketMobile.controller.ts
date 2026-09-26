@@ -1,9 +1,71 @@
 import type { Response } from 'express'
 import { Op } from 'sequelize'
-import { Department, JobCategory, PropertyUnit, Resident, Ticket, User } from '../../../models/index.js'
+import {
+  Department,
+  JobCategory,
+  PropertyUnit,
+  Resident,
+  ResidentFamilyMember,
+  Ticket,
+  TicketActivityLog,
+  TicketFeedback,
+  User,
+} from '../../../models/index.js'
+import { TicketActivityType, TicketFeedbackRating } from '../../../enums/ticket.enum.js'
 import { TicketPriority, TicketStatus } from '../../../enums/ticket.enum.js'
 import type { AuthenticatedRequest } from '../../../middlewares/authenticate.js'
 import { uploadFileToS3, uploadBase64ToS3 } from '../../../middlewares/s3/index.js'
+import { resolveHousehold } from '../../../utils/household.util.js'
+
+/**
+ * Tickets have no `assignedAt` column, so the moment a ticket was handed to a
+ * staff member is read back from its activity log. Returns the earliest
+ * ASSIGNED entry per ticket id, which is what the resident timeline shows.
+ */
+async function getAssignedAtByTicket(ticketIds: string[]): Promise<Record<string, string>> {
+  if (ticketIds.length === 0) return {}
+
+  const logs = (await TicketActivityLog.findAll({
+    where: { ticketId: { [Op.in]: ticketIds }, activityType: TicketActivityType.ASSIGNED },
+    order: [['createdAt', 'ASC']],
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  })) as any[]
+
+  const byTicket: Record<string, string> = {}
+  for (const log of logs) {
+    if (!byTicket[log.ticketId]) byTicket[log.ticketId] = log.createdAt
+  }
+  return byTicket
+}
+
+/** Marks the activity-log entries written when a resident changes the TAT. */
+const TAT_LOG_PREFIX = 'TAT updated:'
+
+/**
+ * Latest TAT change per ticket id, read from the activity log, so the resident
+ * timeline can show when the turnaround time was last revised and by whom.
+ */
+async function getTatUpdatesByTicket(ticketIds: string[]): Promise<Record<string, { at: string; by: string | null }>> {
+  if (ticketIds.length === 0) return {}
+
+  const logs = (await TicketActivityLog.findAll({
+    where: {
+      ticketId: { [Op.in]: ticketIds },
+      activityType: TicketActivityType.UPDATED,
+      comment: { [Op.like]: `${TAT_LOG_PREFIX}%` },
+    },
+    order: [['createdAt', 'DESC']],
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  })) as any[]
+
+  const byTicket: Record<string, { at: string; by: string | null }> = {}
+  for (const log of logs) {
+    if (!byTicket[log.ticketId]) {
+      byTicket[log.ticketId] = { at: log.createdAt, by: log.performedByName || null }
+    }
+  }
+  return byTicket
+}
 
 /**
  * Sanitizes stored attachments for API responses:
@@ -16,6 +78,12 @@ function sanitizeAttachments(atts: any): any {
   if (typeof atts !== 'object') return null
 
   const isBase64 = (v: unknown) => typeof v === 'string' && (v.startsWith('data:') || v.startsWith('base64,'))
+
+  // Older tickets store attachments as a bare array of URLs. Object.entries()
+  // would turn that into {"0": url}, so keep the array shape intact.
+  if (Array.isArray(atts)) {
+    return atts.filter((v) => !isBase64(v))
+  }
 
   const sanitized: Record<string, unknown> = {}
 
@@ -111,11 +179,14 @@ export async function getResidentTicketDepartments(_req: AuthenticatedRequest, r
  */
 export async function getResidentTickets(req: AuthenticatedRequest, res: Response): Promise<void> {
   try {
-    const residentId = req.user?.id
-    if (!residentId) {
+    // Tickets are shared across the flat, so a family member reads the parent
+    // resident's household rather than their own (non-existent) resident row.
+    const household = resolveHousehold(req)
+    if (!household) {
       res.status(401).json({ success: false, message: 'Authentication required' })
       return
     }
+    const residentId = household.residentId
 
     const resident = await Resident.findByPk(residentId, {
       include: [{ model: PropertyUnit, as: 'unit', required: false }],
@@ -183,6 +254,7 @@ export async function getResidentTickets(req: AuthenticatedRequest, res: Respons
       include: [
         { model: PropertyUnit, as: 'unit', required: false },
         { model: User, as: 'assignedToUser', attributes: ['id', 'email'], required: false },
+        { model: TicketFeedback, as: 'feedback', required: false },
       ],
       order: [['createdAt', 'DESC']],
     })
@@ -190,6 +262,19 @@ export async function getResidentTickets(req: AuthenticatedRequest, res: Respons
     const residentName = resident.firstName
       ? `${resident.firstName} ${resident.lastName || ''}`.trim()
       : resident.email?.split('@')[0] || 'Resident'
+
+    const ticketIds = tickets.map((t) => t.id)
+    const assignedAtByTicket = await getAssignedAtByTicket(ticketIds)
+    const tatUpdatesByTicket = await getTatUpdatesByTicket(ticketIds)
+
+    // A ticket is owned by the flat but raised by one person in it, so the
+    // household's family members are resolved once for attribution.
+    const householdMembers = (await ResidentFamilyMember.findAll({
+      where: { residentId: resident.id, isDeleted: false },
+      attributes: ['id', 'firstName', 'lastName', 'relation'],
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    })) as any[]
+    const memberById = new Map(householdMembers.map((fm) => [fm.id, fm]))
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const formattedTickets = tickets.map((t: any) => {
@@ -205,6 +290,8 @@ export async function getResidentTickets(req: AuthenticatedRequest, res: Respons
       const isEscalated =
         Boolean(t.escalatedAt) || Boolean(resolutionNotesStr && resolutionNotesStr.includes('[ESCALATED'))
 
+      const raisedByMember = t.familyMemberId ? memberById.get(t.familyMemberId) : null
+
       return {
         id: t.id,
         ticketNumber: t.ticketNumber,
@@ -215,13 +302,29 @@ export async function getResidentTickets(req: AuthenticatedRequest, res: Respons
         priority: t.priority,
         status: t.status,
         createdAt: t.createdAt,
+        assignedAt: assignedAtByTicket[t.id] || null,
+        tatUpdatedAt: tatUpdatesByTicket[t.id]?.at || null,
+        feedback: t.feedback
+          ? {
+              rating: t.feedback.rating,
+              comment: t.feedback.comment,
+              submittedAt: t.feedback.createdAt,
+            }
+          : null,
+        workStartedAt: t.workStartedAt || null,
+        completedAt: t.completedAt || t.resolvedAt || null,
+        closedAt: t.closedAt || t.verifiedAt || null,
         unitId: t.unitId || resident.unitId || null,
         unitNumber: t.unitId ? (uNum ? (uNum.includes('-') ? uNum : `A, A-${uNum}`) : 'A, A-101') : 'Common Area',
         areaType: t.unitId ? 'IN_FLAT' : 'COMMON_AREA',
         assignedTo: assigneeName,
-        raisedBy: residentName,
+        raisedBy: raisedByMember
+          ? `${raisedByMember.firstName || ''} ${raisedByMember.lastName || ''}`.trim()
+          : residentName,
+        raisedByRelation: raisedByMember?.relation || null,
+        raisedByFamilyMemberId: t.familyMemberId || null,
         completedBy: completedBy || (isClosed ? 'Self' : null),
-        tatUpdatedBy: t.tatOption ? residentName : null,
+        tatUpdatedBy: tatUpdatesByTicket[t.id]?.by || (t.tatOption ? residentName : null),
         escalatedBy: isEscalated ? t.escalatedByName || residentName : null,
         escalatedAt: t.escalatedAt || null,
         escalationReason: t.escalationReason || null,
@@ -249,11 +352,12 @@ export async function getResidentTickets(req: AuthenticatedRequest, res: Respons
  */
 export async function createResidentTicket(req: AuthenticatedRequest, res: Response): Promise<void> {
   try {
-    const residentId = req.user?.id
-    if (!residentId) {
+    const household = resolveHousehold(req)
+    if (!household) {
       res.status(401).json({ success: false, message: 'Authentication required' })
       return
     }
+    const residentId = household.residentId
 
     const resident = await Resident.findByPk(residentId, {
       include: [{ model: PropertyUnit, as: 'unit', required: false }],
@@ -417,6 +521,7 @@ export async function createResidentTicket(req: AuthenticatedRequest, res: Respo
       locId: resident.locId,
       unitId: targetUnitId,
       residentId: resident.id,
+      familyMemberId: household.familyMemberId,
       tatOption: '1-2 hour',
       attachments: ticketAttachments,
     })
@@ -470,6 +575,7 @@ export async function getResidentTicketById(req: AuthenticatedRequest, res: Resp
         include: [
           { model: PropertyUnit, as: 'unit', required: false },
           { model: User, as: 'assignedToUser', attributes: ['id', 'email'], required: false },
+          { model: TicketFeedback, as: 'feedback', required: false },
         ],
       })
     }
@@ -480,6 +586,7 @@ export async function getResidentTicketById(req: AuthenticatedRequest, res: Resp
         include: [
           { model: PropertyUnit, as: 'unit', required: false },
           { model: User, as: 'assignedToUser', attributes: ['id', 'email'], required: false },
+          { model: TicketFeedback, as: 'feedback', required: false },
         ],
       })
     }
@@ -489,9 +596,19 @@ export async function getResidentTicketById(req: AuthenticatedRequest, res: Resp
       return
     }
 
+    const assignedAtByTicket = await getAssignedAtByTicket([ticket.id])
+    const tatUpdatesByTicket = await getTatUpdatesByTicket([ticket.id])
+
     res.status(200).json({
       success: true,
-      data: ticket,
+      data: {
+        ...(typeof ticket.toJSON === 'function' ? ticket.toJSON() : ticket),
+        assignedAt: assignedAtByTicket[ticket.id] || null,
+        tatUpdatedAt: tatUpdatesByTicket[ticket.id]?.at || null,
+        tatUpdatedBy: tatUpdatesByTicket[ticket.id]?.by || null,
+        completedAt: ticket.completedAt || ticket.resolvedAt || null,
+        closedAt: ticket.closedAt || ticket.verifiedAt || null,
+      },
     })
   } catch (err) {
     console.error('Error fetching ticket by id:', err)
@@ -514,10 +631,39 @@ export async function updateTicketTat(req: AuthenticatedRequest, res: Response):
       return
     }
 
+    const previousTat = ticket.tatOption
+
     if (tatOption) ticket.tatOption = tatOption
-    if (customTatDeadline) ticket.customTatDeadline = new Date(customTatDeadline)
+    if (customTatDeadline) {
+      ticket.customTatDeadline = new Date(customTatDeadline)
+    } else if (customTatDeadline === null) {
+      // Switching back to a preset window clears any exact deadline.
+      ticket.customTatDeadline = null
+    }
 
     await ticket.save()
+
+    // Tickets have no `tatUpdatedAt` column, so the change is journalled here
+    // and read back for the resident's progress timeline. `performedByUserId`
+    // is a foreign key to `users`, and a resident is not a user, so only the
+    // staff id is ever written there — residents are recorded by name.
+    const staffUserId = req.user?.residentId ? null : req.user?.id || null
+    let updatedByName: string | null = req.user?.email || null
+    if (req.user?.residentId) {
+      const resident = await Resident.findByPk(req.user.residentId)
+      if (resident) {
+        updatedByName = `${resident.firstName || ''} ${resident.lastName || ''}`.trim() || updatedByName
+      }
+    }
+
+    await TicketActivityLog.create({
+      ticketId: ticket.id,
+      performedByUserId: staffUserId,
+      performedByName: updatedByName,
+      activityType: TicketActivityType.UPDATED,
+      comment: `${TAT_LOG_PREFIX} ${previousTat || 'not set'} -> ${ticket.tatOption || 'not set'}`,
+      ...(staffUserId ? { createdBy: staffUserId } : {}),
+    })
 
     res.status(200).json({
       success: true,
@@ -583,5 +729,72 @@ export async function escalateTicket(req: AuthenticatedRequest, res: Response): 
   } catch (err) {
     console.error('Error escalating ticket:', err)
     res.status(500).json({ success: false, message: 'Failed to escalate ticket' })
+  }
+}
+
+/**
+ * POST /api/v1/mobile/l1/tickets/:id/feedback
+ * Resident feedback on a finished ticket. Re-submitting replaces the previous
+ * feedback rather than adding a second one.
+ */
+export async function submitTicketFeedback(req: AuthenticatedRequest, res: Response): Promise<void> {
+  try {
+    const household = resolveHousehold(req)
+    if (!household) {
+      res.status(401).json({ success: false, message: 'Authentication required' })
+      return
+    }
+
+    const rating = String(req.body.rating || '').toUpperCase()
+    const comment = typeof req.body.comment === 'string' ? req.body.comment.trim() : ''
+
+    if (!Object.values(TicketFeedbackRating).includes(rating as TicketFeedbackRating)) {
+      res.status(400).json({
+        success: false,
+        message: `Rating must be one of ${Object.values(TicketFeedbackRating).join(', ')}`,
+      })
+      return
+    }
+
+    const idStr = String(req.params.id)
+    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(idStr)
+    const ticket = isUuid ? await Ticket.findByPk(idStr) : await Ticket.findOne({ where: { ticketNumber: idStr } })
+
+    if (!ticket) {
+      res.status(404).json({ success: false, message: 'Ticket not found' })
+      return
+    }
+
+    // Feedback is about finished work, so it only opens once the ticket is done.
+    if (ticket.status !== TicketStatus.RESOLVED && ticket.status !== TicketStatus.CLOSED) {
+      res.status(409).json({
+        success: false,
+        message: 'Feedback can only be given once the ticket is completed',
+      })
+      return
+    }
+
+    const existing = await TicketFeedback.findOne({ where: { ticketId: ticket.id } })
+
+    if (existing) {
+      existing.rating = rating
+      existing.comment = comment || null
+      await existing.save()
+      res.status(200).json({ success: true, message: 'Feedback updated', data: existing })
+      return
+    }
+
+    const feedback = await TicketFeedback.create({
+      ticketId: ticket.id,
+      residentId: household.residentId,
+      familyMemberId: household.familyMemberId,
+      rating,
+      comment: comment || null,
+    })
+
+    res.status(201).json({ success: true, message: 'Thanks for your feedback', data: feedback })
+  } catch (err) {
+    console.error('Error submitting ticket feedback:', err)
+    res.status(500).json({ success: false, message: 'Failed to submit feedback' })
   }
 }

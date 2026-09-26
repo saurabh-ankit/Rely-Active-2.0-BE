@@ -3,6 +3,8 @@ import { GatePreapproved, GateEntry, Resident, GuestMaster, PropertyUnit } from 
 import { Op } from 'sequelize'
 import QRCode from 'qrcode'
 import { uploadBase64ToS3 } from '../../../middlewares/s3/index.js'
+import type { AuthenticatedRequest } from '../../../middlewares/authenticate.js'
+import { resolveHousehold } from '../../../utils/household.util.js'
 
 export const createPreapproved = async (req: Request, res: Response) => {
   try {
@@ -25,7 +27,7 @@ export const createPreapproved = async (req: Request, res: Response) => {
       additionalVisitors,
     } = req.body
 
-    const activeResidentId = residentId || (req as Request & { user?: { id: string } }).user?.id
+    const activeResidentId = residentId || resolveHousehold(req as AuthenticatedRequest)?.residentId
 
     let activeUnitId = req.body.unitId
     let finalLocId = locId
@@ -113,9 +115,15 @@ export const createPreapproved = async (req: Request, res: Response) => {
 
 export const getPreapproved = async (req: Request, res: Response) => {
   try {
-    const residentId = (req as Request & { user?: { id: string } }).user?.id
-    const resident = await Resident.findByPk(residentId)
+    const residentId = resolveHousehold(req as AuthenticatedRequest)?.residentId
+    const resident = residentId ? await Resident.findByPk(residentId) : null
     const unitId = resident?.unitId
+
+    // Without a flat there is nothing to scope by, and an unscoped query would
+    // return every unit's visitors — fail closed instead.
+    if (!unitId) {
+      return res.status(200).json({ success: true, data: [] })
+    }
 
     const dateFilterVal = (req.query.date as string) || ''
 
@@ -254,15 +262,20 @@ export const getPreapproved = async (req: Request, res: Response) => {
 
 export const getWalkins = async (req: Request, res: Response) => {
   try {
-    const residentId = (req as Request & { user?: { id: string } }).user?.id
-    const resident = await Resident.findByPk(residentId)
+    const residentId = resolveHousehold(req as AuthenticatedRequest)?.residentId
+    const resident = residentId ? await Resident.findByPk(residentId) : null
     const unitId = resident?.unitId
+
+    // Same guard as getPreapproved: no flat, no list.
+    if (!unitId) {
+      return res.status(200).json({ success: true, data: [] })
+    }
 
     const dateFilterVal = (req.query.date as string) || ''
 
     const whereClause: Record<string, unknown> = {
       status: 'PendingApproval',
-      ...(unitId && { unitId }),
+      unitId,
     }
 
     if (dateFilterVal) {
@@ -361,7 +374,7 @@ export const deletePreapproved = async (req: Request, res: Response) => {
 
 export const getGuestMasterList = async (req: Request, res: Response) => {
   try {
-    const residentId = (req as Request & { user?: { id: string } }).user?.id
+    const residentId = resolveHousehold(req as AuthenticatedRequest)?.residentId
     const resident = await Resident.findByPk(residentId)
     const unitId = resident?.unitId
 
@@ -383,7 +396,7 @@ export const getGuestMasterList = async (req: Request, res: Response) => {
 
 export const createGuestMaster = async (req: Request, res: Response) => {
   try {
-    const residentId = (req as Request & { user?: { id: string } }).user?.id
+    const residentId = resolveHousehold(req as AuthenticatedRequest)?.residentId
     const resident = await Resident.findByPk(residentId)
     const unitId = resident?.unitId
     const locId = resident?.locId
@@ -447,7 +460,7 @@ export const deleteGuestMaster = async (req: Request, res: Response) => {
 
 export const getResidentEntries = async (req: Request, res: Response) => {
   try {
-    const residentId = (req as Request & { user?: { id: string } }).user?.id
+    const residentId = resolveHousehold(req as AuthenticatedRequest)?.residentId
     const resident = await Resident.findByPk(residentId)
     const unitId = resident?.unitId
     const locId = resident?.locId || (req.query.locId as string)

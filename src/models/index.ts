@@ -53,6 +53,7 @@ import { TicketCategory } from './ticketCategory.model.js'
 import { TicketSubCategory } from './ticketSubCategory.model.js'
 import { Ticket } from './ticket.model.js'
 import { TicketActivityLog } from './ticketActivityLog.model.js'
+import { TicketFeedback } from './ticketFeedback.model.js'
 import { TicketTatHistory } from './ticketTatHistory.model.js'
 import { Specialization } from './specialization.model.js'
 import { DoctorSpecialization } from './doctorSpecialization.model.js'
@@ -540,6 +541,12 @@ Asset.hasMany(Ticket, { foreignKey: 'assetId', as: 'tickets' })
 Ticket.belongsTo(Asset, { foreignKey: 'assetId', as: 'asset' })
 
 Ticket.hasMany(TicketActivityLog, { foreignKey: 'ticketId', as: 'activityLogs' })
+
+// Resident feedback left after the work is complete — one per ticket.
+Ticket.hasOne(TicketFeedback, { foreignKey: 'ticketId', as: 'feedback' })
+TicketFeedback.belongsTo(Ticket, { foreignKey: 'ticketId', as: 'ticket' })
+TicketFeedback.belongsTo(Resident, { foreignKey: 'residentId', as: 'resident' })
+TicketFeedback.belongsTo(ResidentFamilyMember, { foreignKey: 'familyMemberId', as: 'familyMember' })
 TicketActivityLog.belongsTo(Ticket, { foreignKey: 'ticketId', as: 'ticket' })
 TicketActivityLog.belongsTo(User, { foreignKey: 'performedByUserId', as: 'performedByUser' })
 
@@ -1033,6 +1040,7 @@ export {
   TicketSubCategory,
   Ticket,
   TicketActivityLog,
+  TicketFeedback,
   TicketTatHistory,
   Specialization,
   DoctorSpecialization,
