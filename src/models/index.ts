@@ -207,6 +207,11 @@ import {
   InventoryStockTransaction,
   InventoryStockTransactionLine,
 } from './inventoryStock.model.js'
+import {
+  AiInteractionLog,
+  type AiInteractionLogAttributes,
+  type AiInteractionLogCreationAttributes,
+} from './aiInteractionLog.model.js'
 
 // ── F&B Meal Slot associations ──────────────────────────────────────────────
 FnbGlobalMealSlot.hasMany(FnbPropertyMealSlot, { foreignKey: 'globalMealSlotId', as: 'propertyMealSlots' })
@@ -241,6 +246,12 @@ Resident.belongsTo(Property, { foreignKey: 'locId', as: 'property' })
 
 Resident.hasMany(ResidentFamilyMember, { foreignKey: 'residentId', as: 'familyMembers' })
 ResidentFamilyMember.belongsTo(Resident, { foreignKey: 'residentId', as: 'resident' })
+
+// ── AiInteractionLog associations ──────────────────────────────────────────
+Resident.hasMany(AiInteractionLog, { foreignKey: 'residentId', as: 'aiInteractionLogs' })
+AiInteractionLog.belongsTo(Resident, { foreignKey: 'residentId', as: 'resident' })
+ResidentFamilyMember.hasMany(AiInteractionLog, { foreignKey: 'familyMemberId', as: 'aiInteractionLogs' })
+AiInteractionLog.belongsTo(ResidentFamilyMember, { foreignKey: 'familyMemberId', as: 'familyMember' })
 
 // ── ResidentCareTeam associations ───────────────────────────────────────────
 Resident.hasMany(ResidentCareTeam, { foreignKey: 'residentId', as: 'careTeam' })
@@ -1034,6 +1045,9 @@ export {
   Ticket,
   TicketActivityLog,
   TicketTatHistory,
+  AiInteractionLog,
+  type AiInteractionLogAttributes,
+  type AiInteractionLogCreationAttributes,
   Specialization,
   DoctorSpecialization,
   GatePreapproved,

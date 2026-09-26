@@ -9,8 +9,12 @@ import {
   getResidentTicketDepartments,
   updateTicketTat,
 } from '../controllers/ticketMobile.controller.js'
+import { categorizeTicketWithAI } from '../controllers/assistantMobile.controller.js'
 
 const router = Router()
+
+// Public / AI categorization helper
+router.post('/categorize', upload.fields([{ name: 'audio', maxCount: 1 }]), categorizeTicketWithAI)
 
 router.use(authenticate)
 
