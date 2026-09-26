@@ -404,13 +404,68 @@ export async function createResidentTicket(req: AuthenticatedRequest, res: Respo
     const randomNum = Math.floor(1000 + Math.random() * 9000)
     const ticketNumber = `${monthDay}-${randomNum}-RME${Math.floor(1000 + Math.random() * 9000)}-1`
 
+    // Validate / Resolve departmentId against Department model
+    let resolvedDepartmentId: string | null = null
+    const isDeptUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+      String(departmentId || ''),
+    )
+    if (isDeptUuid) {
+      const deptExists = await Department.findByPk(departmentId)
+      if (deptExists) resolvedDepartmentId = deptExists.id
+    }
+    if (!resolvedDepartmentId && department) {
+      const matchedDept = await Department.findOne({
+        where: {
+          [Op.or]: [
+            { name: department },
+            { code: department },
+            ...(department.toLowerCase().includes('repair') ? [{ code: 'RNM' }, { name: 'Repair & Maintenance' }] : []),
+            ...(department.toLowerCase().includes('concierge') || department.toLowerCase().includes('personal')
+              ? [{ code: 'CON' }, { name: 'Concierge' }]
+              : []),
+          ],
+        },
+      })
+      if (matchedDept) resolvedDepartmentId = matchedDept.id
+    }
+
+    // Validate / Resolve jobCategoryId against JobCategory model
+    let resolvedJobCategoryId: string | null = null
+    const isJobCatUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+      String(jobCategoryId || ''),
+    )
+    if (isJobCatUuid) {
+      const jobCatExists = await JobCategory.findByPk(jobCategoryId)
+      if (jobCatExists) resolvedJobCategoryId = jobCatExists.id
+    }
+    if (!resolvedJobCategoryId && category) {
+      const catLower = category.toLowerCase()
+      const matchedJobCat = await JobCategory.findOne({
+        where: {
+          [Op.or]: [
+            { name: category },
+            ...(catLower.includes('electric') ? [{ name: 'Electrical' }] : []),
+            ...(catLower.includes('plumb') ? [{ name: 'Plumbing' }] : []),
+            ...(catLower.includes('carpent') ? [{ name: 'Carpentry' }] : []),
+            ...(catLower.includes('misc') ? [{ name: 'Miscellaneous' }] : []),
+            ...(catLower.includes('house') ? [{ name: 'Housekeeping' }] : []),
+            ...(catLower.includes('laund') ? [{ name: 'Laundry' }] : []),
+            ...(catLower.includes('online') || catLower.includes('service') ? [{ name: 'Customer Support' }] : []),
+            ...(catLower.includes('visit') || catLower.includes('cab') ? [{ name: 'Transportation' }] : []),
+          ],
+          ...(resolvedDepartmentId ? { departmentId: resolvedDepartmentId } : {}),
+        },
+      })
+      if (matchedJobCat) resolvedJobCategoryId = matchedJobCat.id
+    }
+
     const newTicket = await Ticket.create({
       ticketNumber,
       title: generatedTitle,
       description: finalDescription,
       category: formattedCategory,
-      departmentId: departmentId || null,
-      jobCategoryId: jobCategoryId || null,
+      departmentId: resolvedDepartmentId || null,
+      jobCategoryId: resolvedJobCategoryId || null,
       subCategoryId: subCategoryId || null,
       priority: priority || TicketPriority.MEDIUM,
       status: TicketStatus.OPEN,
@@ -429,16 +484,18 @@ export async function createResidentTicket(req: AuthenticatedRequest, res: Respo
       data: {
         id: newTicket.id,
         ticketNumber: newTicket.ticketNumber,
-        title: newTicket.title,
+        areaType: isCommonArea ? 'COMMON_AREA' : 'IN_FLAT',
+        department: department || (resolvedDepartmentId ? 'Repair & Maintenance' : null),
+        category: category || newTicket.category,
         description: newTicket.description,
-        category: newTicket.category,
-        subCategory: subCategory || category || 'General Service',
         priority: newTicket.priority,
+        cameraPhoto: photoUrls,
+        title: newTicket.title,
+        subCategory: subCategory || category || 'General Service',
         status: newTicket.status,
         createdAt: newTicket.createdAt,
         unitId: targetUnitId,
         unitNumber: isCommonArea ? 'Common Area' : uNum.includes('-') ? uNum : `A, A-${uNum}`,
-        areaType: isCommonArea ? 'COMMON_AREA' : 'IN_FLAT',
         assignedTo: 'Unassigned',
         raisedBy: residentName,
         completedBy: null,
