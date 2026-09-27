@@ -6,6 +6,7 @@ import ticketMobileRouter from './ticketMobile.routes.js'
 import gnsRouter from './gns.routes.js'
 import eventMobileRouter, { eventVenueMobileRouter, eventRequestMobileRouter } from './eventMobile.routes.js'
 import appointmentMobileRouter from './appointmentMobile.routes.js'
+import assistantMobileRouter from './assistantMobile.routes.js'
 
 export const l1MobileRouter = Router()
 
@@ -13,6 +14,10 @@ export const l1MobileRouter = Router()
 l1MobileRouter.get('/health', (_req, res) => {
   res.json({ status: 'ok', service: 'rely-active-L1-mobile-app' })
 })
+
+// ── Voice Assistant Module (/api/v1/mobile/l1/assistant) ──
+l1MobileRouter.use('/assistant', assistantMobileRouter)
+l1MobileRouter.use('/voice-assistant', assistantMobileRouter)
 
 // ── Auth & Resident Module (/api/v1/mobile/l1/auth, /api/v1/mobile/l1/resident) ──
 l1MobileRouter.use('/resident/auth', residentAuthRouter)
