@@ -177,6 +177,23 @@ const TAT_UPDATE_ALLOWED: TicketStatus[] = [TicketStatus.OPEN, TicketStatus.IN_P
 const WORK_DETAILS_ALLOWED: TicketStatus[] = [TicketStatus.IN_PROGRESS]
 const COMPLETE_FROM: TicketStatus[] = [TicketStatus.IN_PROGRESS]
 
+/**
+ * Tickets assigned before the staff start step existed were moved straight to
+ * IN_PROGRESS on assignment, without a start time. They still need "Start Work".
+ */
+function isAwaitingStart(ticket: Ticket): boolean {
+  return ticket.status === TicketStatus.IN_PROGRESS && !ticket.workStartedAt
+}
+
+/** Work details and completion are only accepted after the staff member has started the work. */
+function assertWorkStarted(ticket: Ticket): void {
+  if (isAwaitingStart(ticket)) {
+    throw new HttpError(409, 'Start work on this ticket before completing it', {
+      currentStatus: ticket.status,
+    })
+  }
+}
+
 function assertStatus(ticket: Ticket, allowed: TicketStatus[], action: string): void {
   if (!allowed.includes(ticket.status)) {
     throw new HttpError(409, `Cannot ${action} a ticket that is ${ticket.status}`, {
@@ -469,7 +486,9 @@ export async function startWork(req: AuthenticatedRequest, res: Response): Promi
 
     const ticket = await sequelize.transaction(async (transaction) => {
       const t = await findAssignedTicketForUpdate(id, ctx, transaction)
-      assertStatus(t, START_WORK_FROM, 'start work on')
+      if (!isAwaitingStart(t)) {
+        assertStatus(t, START_WORK_FROM, 'start work on')
+      }
 
       const previousStatus = t.status
       const startedAt = new Date()
@@ -669,6 +688,7 @@ async function uploadWorkDetailFiles(
   }
   assertTicketAccess(existing, ctx)
   assertStatus(existing, allowed, action)
+  assertWorkStarted(existing)
 
   const [photos, voiceNotes] = await Promise.all([
     uploadWorkFiles(photoFiles, `tickets/${id}/photos`, ctx),
@@ -780,6 +800,7 @@ export async function completeTicket(req: AuthenticatedRequest, res: Response): 
     const ticket = await sequelize.transaction(async (transaction) => {
       const t = await findAssignedTicketForUpdate(id, ctx, transaction)
       assertStatus(t, COMPLETE_FROM, 'complete')
+      assertWorkStarted(t)
 
       await applyWorkDetails(t, ctx, { invoiceAmount, ...uploaded }, transaction)
 

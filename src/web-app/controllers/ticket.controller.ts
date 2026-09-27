@@ -471,6 +471,13 @@ export async function getTickets(req: Request, res: Response): Promise<void> {
         { model: TicketSubCategory, as: 'subCategoryObj', required: false },
         { model: User, as: 'assignedToUser', attributes: ['id', 'email'], required: false },
         { model: User, as: 'raisedByUser', attributes: ['id', 'email'], required: false },
+        {
+          model: User,
+          as: 'workStartedByUser',
+          attributes: ['id', 'email'],
+          include: [{ model: UserDetail, as: 'profile', attributes: ['firstName', 'lastName'] }],
+          required: false,
+        },
         { model: AssetVendor, as: 'vendor', required: false },
         { model: Asset, as: 'asset', required: false },
         { model: TicketFeedback, as: 'feedback', required: false },
@@ -515,9 +522,17 @@ export async function getTicketStats(req: Request, res: Response): Promise<void>
     }
 
     const total = await Ticket.count({ where })
-    const open = await Ticket.count({ where: { ...where, status: TicketStatus.OPEN } })
+    // Same split as the list tabs: an assigned ticket waiting for the staff
+    // member to start work counts as In Progress, not Open.
+    const open = await Ticket.count({ where: { ...where, status: TicketStatus.OPEN, assignedToUserId: null } })
     const inProgress = await Ticket.count({
-      where: { ...where, status: { [Op.in]: [TicketStatus.IN_PROGRESS, TicketStatus.ON_HOLD] } },
+      where: {
+        ...where,
+        [Op.or]: [
+          { status: { [Op.in]: [TicketStatus.IN_PROGRESS, TicketStatus.ON_HOLD] } },
+          { status: TicketStatus.OPEN, assignedToUserId: { [Op.ne]: null } },
+        ],
+      },
     })
     const closed = await Ticket.count({
       where: { ...where, status: { [Op.in]: [TicketStatus.RESOLVED, TicketStatus.CLOSED, TicketStatus.CANCELLED] } },
@@ -883,7 +898,10 @@ export async function assignTicket(req: AuthenticatedRequest, res: Response): Pr
     const userName = req.user?.email || 'User'
 
     const assignTarget = assignedToUserId || userId
+    const previousStatus = ticket.status
 
+    // Assigning does not start the work: the ticket stays OPEN until the
+    // assigned staff member taps "Start Work" in the L3 app.
     await ticket.update({
       assignedToUserId: assignTarget,
       approvedByUserId: userId,
@@ -891,7 +909,6 @@ export async function assignTicket(req: AuthenticatedRequest, res: Response): Pr
       departmentId: departmentId !== undefined ? departmentId : ticket.departmentId,
       jobCategoryId: jobCategoryId !== undefined ? jobCategoryId : ticket.jobCategoryId,
       vendorId: vendorId !== undefined ? vendorId : ticket.vendorId,
-      status: ticket.status === TicketStatus.OPEN ? TicketStatus.IN_PROGRESS : ticket.status,
       updatedBy: userId,
     })
 
@@ -900,8 +917,8 @@ export async function assignTicket(req: AuthenticatedRequest, res: Response): Pr
       performedByUserId: userId,
       performedByName: userName,
       activityType: TicketActivityType.ASSIGNED,
-      fromStatus: ticket.status,
-      toStatus: TicketStatus.IN_PROGRESS,
+      fromStatus: previousStatus,
+      toStatus: ticket.status,
       comment: `Ticket assigned to employee`,
       createdBy: userId,
     })

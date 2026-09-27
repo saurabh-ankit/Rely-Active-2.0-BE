@@ -10,6 +10,7 @@ import {
   TicketActivityLog,
   TicketFeedback,
   User,
+  UserDetail,
 } from '../../../models/index.js'
 import { TicketActivityType, TicketFeedbackRating } from '../../../enums/ticket.enum.js'
 import { TicketPriority, TicketStatus } from '../../../enums/ticket.enum.js'
@@ -65,6 +66,42 @@ async function getTatUpdatesByTicket(ticketIds: string[]): Promise<Record<string
     }
   }
   return byTicket
+}
+
+/**
+ * Staff shown on the resident timeline: who the ticket is assigned to, who
+ * started the work from the L3 app and who completed it.
+ */
+const staffIncludes = [
+  {
+    model: User,
+    as: 'assignedToUser',
+    attributes: ['id', 'email', 'username'],
+    include: [{ model: UserDetail, as: 'profile', attributes: ['firstName', 'lastName'] }],
+    required: false,
+  },
+  {
+    model: User,
+    as: 'workStartedByUser',
+    attributes: ['id', 'email', 'username'],
+    include: [{ model: UserDetail, as: 'profile', attributes: ['firstName', 'lastName'] }],
+    required: false,
+  },
+  {
+    model: User,
+    as: 'completedByUser',
+    attributes: ['id', 'email', 'username'],
+    include: [{ model: UserDetail, as: 'profile', attributes: ['firstName', 'lastName'] }],
+    required: false,
+  },
+]
+
+/** Full name from the staff profile, falling back to username / email prefix. */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function getStaffName(user: any): string | null {
+  if (!user) return null
+  const fullName = `${user.profile?.firstName || ''} ${user.profile?.lastName || ''}`.trim()
+  return fullName || user.username || user.email?.split('@')[0] || null
 }
 
 /**
@@ -253,7 +290,7 @@ export async function getResidentTickets(req: AuthenticatedRequest, res: Respons
       where: whereCondition,
       include: [
         { model: PropertyUnit, as: 'unit', required: false },
-        { model: User, as: 'assignedToUser', attributes: ['id', 'email'], required: false },
+        ...staffIncludes,
         { model: TicketFeedback, as: 'feedback', required: false },
       ],
       order: [['createdAt', 'DESC']],
@@ -279,13 +316,15 @@ export async function getResidentTickets(req: AuthenticatedRequest, res: Respons
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const formattedTickets = tickets.map((t: any) => {
       const uNum = t.unit?.unit_number || t.unit?.unitNumber || resident.unit?.unit_number
-      const assigneeName = t.assignedToUser?.email?.split('@')[0] || (t.assignedToUserId ? 'Technician' : 'Unassigned')
+      const assigneeName = getStaffName(t.assignedToUser) || (t.assignedToUserId ? 'Technician' : 'Unassigned')
       const isClosed = t.status === TicketStatus.CLOSED || t.status === TicketStatus.RESOLVED
 
       // Audit tracking logic
       const isAssignedToSelf =
         t.assignedToUserId === resident.id || assigneeName.toLowerCase() === residentName.toLowerCase()
-      const completedBy = isClosed ? (isAssignedToSelf ? 'Self' : assigneeName) : null
+      const completedBy = isClosed
+        ? getStaffName(t.completedByUser) || (isAssignedToSelf ? 'Self' : assigneeName)
+        : null
       const resolutionNotesStr = String(t.resolutionNotes || '')
       const isEscalated =
         Boolean(t.escalatedAt) || Boolean(resolutionNotesStr && resolutionNotesStr.includes('[ESCALATED'))
@@ -314,8 +353,10 @@ export async function getResidentTickets(req: AuthenticatedRequest, res: Respons
             }
           : null,
         workStartedAt: t.workStartedAt || null,
+        workStartedBy: getStaffName(t.workStartedByUser),
         completedAt: t.completedAt || t.resolvedAt || null,
         closedAt: t.closedAt || t.verifiedAt || null,
+        invoiceAmount: t.invoiceAmount !== null && t.invoiceAmount !== undefined ? Number(t.invoiceAmount) : null,
         unitId: t.unitId || resident.unitId || null,
         unitNumber: t.unitId ? (uNum ? (uNum.includes('-') ? uNum : `A, A-${uNum}`) : 'A, A-101') : 'Common Area',
         areaType: t.unitId ? 'IN_FLAT' : 'COMMON_AREA',
@@ -637,7 +678,7 @@ export async function getResidentTicketById(req: AuthenticatedRequest, res: Resp
       ticket = await Ticket.findByPk(idStr, {
         include: [
           { model: PropertyUnit, as: 'unit', required: false },
-          { model: User, as: 'assignedToUser', attributes: ['id', 'email'], required: false },
+          ...staffIncludes,
           { model: TicketFeedback, as: 'feedback', required: false },
         ],
       })
@@ -648,7 +689,7 @@ export async function getResidentTicketById(req: AuthenticatedRequest, res: Resp
         where: { ticketNumber: idStr },
         include: [
           { model: PropertyUnit, as: 'unit', required: false },
-          { model: User, as: 'assignedToUser', attributes: ['id', 'email'], required: false },
+          ...staffIncludes,
           { model: TicketFeedback, as: 'feedback', required: false },
         ],
       })
@@ -669,8 +710,14 @@ export async function getResidentTicketById(req: AuthenticatedRequest, res: Resp
         assignedAt: assignedAtByTicket[ticket.id] || null,
         tatUpdatedAt: tatUpdatesByTicket[ticket.id]?.at || null,
         tatUpdatedBy: tatUpdatesByTicket[ticket.id]?.by || null,
+        assignedTo: getStaffName(ticket.assignedToUser) || (ticket.assignedToUserId ? 'Technician' : 'Unassigned'),
+        workStartedAt: ticket.workStartedAt || null,
+        workStartedBy: getStaffName(ticket.workStartedByUser),
         completedAt: ticket.completedAt || ticket.resolvedAt || null,
+        completedBy: getStaffName(ticket.completedByUser),
         closedAt: ticket.closedAt || ticket.verifiedAt || null,
+        invoiceAmount:
+          ticket.invoiceAmount !== null && ticket.invoiceAmount !== undefined ? Number(ticket.invoiceAmount) : null,
       },
     })
   } catch (err) {
