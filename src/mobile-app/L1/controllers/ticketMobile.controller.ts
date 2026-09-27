@@ -298,6 +298,8 @@ export async function getResidentTickets(req: AuthenticatedRequest, res: Respons
         title: t.title,
         description: t.description,
         category: t.category,
+        departmentId: t.departmentId || null,
+        jobCategoryId: t.jobCategoryId || null,
         subCategory: t.subCategoryId || 'General Service',
         priority: t.priority,
         status: t.status,
@@ -591,6 +593,10 @@ export async function createResidentTicket(req: AuthenticatedRequest, res: Respo
         ticketNumber: newTicket.ticketNumber,
         areaType: isCommonArea ? 'COMMON_AREA' : 'IN_FLAT',
         department: department || (resolvedDepartmentId ? 'Repair & Maintenance' : null),
+        // Returned so the caller can confirm the ticket was routed to a
+        // department — without these it looks as though none was sent.
+        departmentId: resolvedDepartmentId,
+        jobCategoryId: resolvedJobCategoryId,
         category: category || newTicket.category,
         description: newTicket.description,
         priority: newTicket.priority,
