@@ -233,6 +233,54 @@ function getWorkDetails(attachments: Ticket['attachments']): WorkDetails {
   }
 }
 
+interface RequestMedia {
+  notes: string | null
+  photos: string[]
+  voiceNotes: string[]
+}
+
+const AUDIO_URL = /\.(m4a|aac|mp3|wav|ogg|oga|opus|3gp|amr|webm|caf)(\?|$)/i
+const VOICE_PATH = /voice[-_]?note|\/audio\/|recording/i
+
+/**
+ * What the resident attached when raising the ticket. Attachments come in
+ * several shapes across app versions: a bare array of URLs, `{photos, audioUrl,
+ * notes}`, or voice notes mixed in with photos (older web tickets). The staff
+ * member's own `workDetails` are left out.
+ */
+function getRequestMedia(attachments: Ticket['attachments']): RequestMedia {
+  const media: RequestMedia = { notes: null, photos: [], voiceNotes: [] }
+  const raw = normalizeAttachments(attachments)
+
+  const add = (value: unknown, audioHint: boolean): void => {
+    if (!value) return
+    if (Array.isArray(value)) {
+      value.forEach((v) => add(v, audioHint))
+      return
+    }
+    if (typeof value === 'object') {
+      add((value as { url?: unknown }).url, audioHint)
+      return
+    }
+    if (typeof value !== 'string') return
+    const url = value.trim()
+    if (!/^https?:\/\//i.test(url)) return
+    const isAudio = audioHint || AUDIO_URL.test(url) || (/\.mp4(\?|$)/i.test(url) && VOICE_PATH.test(url))
+    const list = isAudio ? media.voiceNotes : media.photos
+    if (!list.includes(url)) list.push(url)
+  }
+
+  for (const [key, value] of Object.entries(raw)) {
+    if (key === 'workDetails' || key === 'completion') continue
+    if (key === 'notes' && typeof value === 'string') {
+      media.notes = value.trim() || null
+      continue
+    }
+    add(value, /audio|voice/i.test(key))
+  }
+  return media
+}
+
 function toAmount(value: string | number | null | undefined): number | null {
   if (value === null || value === undefined || value === '') return null
   const amount = Number(value)
@@ -304,6 +352,7 @@ function formatStaffTicket(t: any) {
       : null,
     invoiceAmount: toAmount(t.invoiceAmount),
     workDetails: getWorkDetails(t.attachments),
+    requestMedia: getRequestMedia(t.attachments),
     resolvedAt: t.resolvedAt || null,
     resolutionNotes: t.resolutionNotes || null,
     createdAt: t.createdAt,
@@ -718,7 +767,14 @@ async function applyWorkDetails(
   }
 
   const changes: string[] = []
-  if (invoiceAmount !== undefined) changes.push(`invoice amount ${previousInvoiceAmount ?? 'N/A'} → ${invoiceAmount}`)
+  if (invoiceAmount !== undefined) {
+    // First invoice: just the amount; a change: previous → new.
+    changes.push(
+      previousInvoiceAmount === null
+        ? `invoice amount ${invoiceAmount}`
+        : `invoice amount ${previousInvoiceAmount} → ${invoiceAmount}`,
+    )
+  }
   if (photos.length) changes.push(`${photos.length} photo(s)`)
   if (voiceNotes.length) changes.push(`${voiceNotes.length} voice note(s)`)
 
