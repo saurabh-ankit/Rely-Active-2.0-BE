@@ -377,11 +377,11 @@ export async function processVoiceAssistantQuery(req: AuthenticatedRequest, res:
       let includedSlotsList: string[] = []
       if (effectiveResidentId || effectiveFamilyMemberId) {
         const foundPkg = await FnbResidentPackage.findOne({
+          // The person's own package only: a family member never uses the owner's.
           where: {
-            [Op.or]: [
-              ...(effectiveResidentId ? [{ residentId: effectiveResidentId }] : []),
-              ...(effectiveFamilyMemberId ? [{ familyMemberId: effectiveFamilyMemberId }] : []),
-            ],
+            ...(effectiveFamilyMemberId
+              ? { familyMemberId: effectiveFamilyMemberId }
+              : { residentId: effectiveResidentId, familyMemberId: null }),
             status: ['active', 'ACTIVE'],
           },
           include: [

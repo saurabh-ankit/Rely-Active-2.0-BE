@@ -860,6 +860,11 @@ export async function completeTicket(req: AuthenticatedRequest, res: Response): 
 
       await applyWorkDetails(t, ctx, { invoiceAmount, ...uploaded }, transaction)
 
+      // A resolution is required: written notes, or a voice note (sent now or added earlier).
+      if (!notes?.trim() && getWorkDetails(t.attachments).voiceNotes.length === 0) {
+        throw new HttpError(400, 'Add resolution notes or a voice note describing the work done')
+      }
+
       const previousStatus = t.status
       const completedAt = new Date()
 

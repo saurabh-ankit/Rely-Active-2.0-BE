@@ -19,6 +19,13 @@ import { FnbMealSlot, FnbOrderStatus } from '../../../enums/fnb.enum.js'
 import type { AuthenticatedRequest } from '../../../middlewares/authenticate.js'
 import { resolveHousehold } from '../../../utils/household.util.js'
 
+/** Where clause for the signed-in person's own package (owner: no familyMemberId). */
+function personalPackageScope(who: { residentId: string; familyMemberId: string | null }) {
+  return who.familyMemberId
+    ? { familyMemberId: who.familyMemberId }
+    : { residentId: who.residentId, familyMemberId: null }
+}
+
 export async function getResidentDailyMenu(req: AuthenticatedRequest, res: Response): Promise<void> {
   try {
     const locId = (req.query.locationId as string) || (req.query.locId as string) || req.user?.defaultLocationId
@@ -120,23 +127,15 @@ export async function getResidentDailyMenu(req: AuthenticatedRequest, res: Respo
       include: [{ model: FnbGlobalMealSlot, as: 'globalMealSlot' }],
     })
 
-    // Fetch resident's active package if authenticated
-    const userId = req.user?.id
-    let activePkg: FnbResidentPackage | null | undefined = null
+    // The signed-in person's own active package. Packages are personal: a
+    // family member never falls back to the owner's package, and vice versa.
+    const household = resolveHousehold(req)
+    let activePkg: FnbResidentPackage | null = null
 
-    if (userId) {
-      let primaryResId = userId
-      let famMemberId: string | null = null
-
-      const fm = await ResidentFamilyMember.findByPk(userId)
-      if (fm) {
-        famMemberId = fm.id
-        primaryResId = fm.residentId
-      }
-
-      const foundPkgs = await FnbResidentPackage.findAll({
+    if (household) {
+      activePkg = await FnbResidentPackage.findOne({
         where: {
-          [Op.or]: [{ residentId: primaryResId }, ...(famMemberId ? [{ familyMemberId: famMemberId }] : [])],
+          ...personalPackageScope(household),
           status: ['active', 'ACTIVE', 'paused', 'PAUSED'],
         },
         include: [
@@ -146,17 +145,8 @@ export async function getResidentDailyMenu(req: AuthenticatedRequest, res: Respo
             include: [{ model: FnbGlobalPackage, as: 'globalPackage' }],
           },
         ],
+        order: [['createdAt', 'DESC']],
       })
-
-      if (famMemberId) {
-        activePkg =
-          foundPkgs.find((p) => p.familyMemberId === famMemberId) ||
-          foundPkgs.find((p) => p.residentId === primaryResId && !p.familyMemberId) ||
-          foundPkgs[0] ||
-          null
-      } else {
-        activePkg = foundPkgs.find((p) => p.residentId === primaryResId && !p.familyMemberId) || foundPkgs[0] || null
-      }
     }
 
     const globalSlots = await FnbGlobalMealSlot.findAll()
@@ -283,10 +273,10 @@ export async function placeMealOrder(req: AuthenticatedRequest, res: Response): 
       return
     }
 
-    // Check if resident has active package
+    // Only the orderer's own package covers the meal, never the owner's or a family member's.
     const activePkg = await FnbResidentPackage.findOne({
       where: {
-        [Op.or]: [{ residentId: resident.id }, ...(familyMemberId ? [{ familyMemberId }] : [])],
+        ...personalPackageScope({ residentId: resident.id, familyMemberId }),
         status: ['active', 'ACTIVE'],
       },
       include: [

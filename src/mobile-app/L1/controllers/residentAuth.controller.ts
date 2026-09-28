@@ -338,7 +338,8 @@ export async function getResidentProfile(req: Request, res: Response): Promise<v
         }
       })
 
-      const familyMemberPkg = familyPackageMap.get(familyMember.id) || primaryResidentPackage
+      // Packages are personal: a family member without one has none, not the owner's.
+      const familyMemberPkg = familyPackageMap.get(familyMember.id) || null
 
       res.status(200).json({
         success: true,
@@ -380,7 +381,7 @@ export async function getResidentProfile(req: Request, res: Response): Promise<v
               email: fm.email,
               username: fm.username,
               bloodGroup: fm.bloodGroup,
-              foodPackage: formatSinglePackage(familyPackageMap.get(fm.id) || primaryResidentPackage, slotNameMap),
+              foodPackage: formatSinglePackage(familyPackageMap.get(fm.id) || null, slotNameMap),
             })),
         },
       })
@@ -482,7 +483,7 @@ export async function getResidentProfile(req: Request, res: Response): Promise<v
             username: fm.username,
             bloodGroup: fm.bloodGroup,
             photoUrl: fm.photoUrl || null,
-            foodPackage: formatSinglePackage(familyPackageMap.get(fm.id) || primaryResidentPackage, slotNameMap),
+            foodPackage: formatSinglePackage(familyPackageMap.get(fm.id) || null, slotNameMap),
           })),
       },
     })

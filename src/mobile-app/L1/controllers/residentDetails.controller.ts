@@ -268,7 +268,7 @@ export async function getResidentDetails(req: Request, res: Response): Promise<v
             photoUrl: familyMemberRecord.photoUrl,
             username: familyMemberRecord.username,
             isResiding: familyMemberRecord.isResiding,
-            foodPackage: formatFoodPackage(familyPkgMap.get(familyMemberRecord.id) || primaryPackage, slotMap),
+            foodPackage: formatFoodPackage(familyPkgMap.get(familyMemberRecord.id) || null, slotMap),
           }
         : {
             id: parentResident.id,
@@ -338,7 +338,7 @@ export async function getResidentDetails(req: Request, res: Response): Promise<v
           username: fm.username,
           bloodGroup: fm.bloodGroup,
           photoUrl: fm.photoUrl,
-          foodPackage: formatFoodPackage(familyPkgMap.get(fm.id) || primaryPackage, slotMap),
+          foodPackage: formatFoodPackage(familyPkgMap.get(fm.id) || null, slotMap),
         })),
 
         /* ── Recent tickets (last 10) ── */
