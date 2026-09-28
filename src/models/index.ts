@@ -431,28 +431,27 @@ AssetAssignment.belongsTo(User, { foreignKey: 'assignedBy', as: 'assigner' })
 Asset.hasMany(AssetServiceLog, { foreignKey: 'assetId', as: 'serviceLogs' })
 AssetServiceLog.belongsTo(Asset, { foreignKey: 'assetId', as: 'asset' })
 AssetServiceLog.belongsTo(AssetVendor, { foreignKey: 'vendorId', as: 'vendor' })
-AssetServiceLog.belongsTo(User, { foreignKey: 'performedByUserId', as: 'performedByUser' })
+// Note: performedByUserId column does not exist in DB; performedBy is a plain text field
 
 Asset.hasMany(AssetWarranty, { foreignKey: 'assetId', as: 'warranties' })
 AssetWarranty.belongsTo(Asset, { foreignKey: 'assetId', as: 'asset' })
-AssetWarranty.belongsTo(AssetVendor, { foreignKey: 'providerVendorId', as: 'providerVendor' })
+AssetWarranty.belongsTo(AssetVendor, { foreignKey: 'vendorId', as: 'vendor' })
 
 Asset.hasMany(AssetCalibration, { foreignKey: 'assetId', as: 'calibrations' })
 AssetCalibration.belongsTo(Asset, { foreignKey: 'assetId', as: 'asset' })
-AssetCalibration.belongsTo(AssetVendor, { foreignKey: 'agencyVendorId', as: 'agencyVendor' })
+// Note: agencyVendorId column does not exist in asset_calibrations table
 
 Asset.hasMany(AssetComplianceInspection, { foreignKey: 'assetId', as: 'complianceInspections' })
 AssetComplianceInspection.belongsTo(Asset, { foreignKey: 'assetId', as: 'asset' })
-AssetComplianceInspection.belongsTo(AssetVendor, { foreignKey: 'agencyVendorId', as: 'agencyVendor' })
-AssetComplianceInspection.belongsTo(User, { foreignKey: 'inspectorUserId', as: 'inspectorUser' })
+// Note: agencyVendorId and inspectorUserId columns do not exist in asset_compliance_inspections table
 
 Asset.hasMany(AssetComplianceCertification, { foreignKey: 'assetId', as: 'complianceCertifications' })
 AssetComplianceCertification.belongsTo(Asset, { foreignKey: 'assetId', as: 'asset' })
-AssetComplianceCertification.belongsTo(AssetVendor, { foreignKey: 'agencyVendorId', as: 'agencyVendor' })
+// Note: agencyVendorId column does not exist in asset_compliance_certifications table
 
 Asset.hasMany(AssetComplianceTraining, { foreignKey: 'assetId', as: 'complianceTrainings' })
 AssetComplianceTraining.belongsTo(Asset, { foreignKey: 'assetId', as: 'asset' })
-AssetComplianceTraining.belongsTo(User, { foreignKey: 'trainerUserId', as: 'trainerUser' })
+// Note: asset_compliance_trainings table does not exist in DB; trainerUserId removed
 
 // ── F&B Package & Order associations ─────────────────────────────────────
 FnbPropertyPackage.belongsTo(FnbGlobalPackage, { foreignKey: 'globalPackageId', as: 'globalPackage' })
