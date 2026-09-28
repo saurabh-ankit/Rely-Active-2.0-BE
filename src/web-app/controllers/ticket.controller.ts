@@ -708,14 +708,18 @@ export async function createTicket(req: AuthenticatedRequest, res: Response): Pr
       : []
     let audioUrl: string | null = null
 
-    if (req.file) {
-      const isAudio =
-        (req.file.mimetype || '').startsWith('audio/') ||
-        /\.(webm|mp3|m4a|wav|ogg|aac)$/i.test(req.file.originalname || '')
-      const s3Res = await uploadFileToS3(req.file, isAudio ? 'tickets/audio' : 'tickets')
-      if (isAudio) {
+    const files = (req.files || {}) as { [field: string]: Express.Multer.File[] }
+    const isAudioFile = (f: Express.Multer.File) =>
+      (f.mimetype || '').startsWith('audio/') || /\.(webm|mp3|m4a|wav|ogg|aac)$/i.test(f.originalname || '')
+
+    // `attachment` (older clients) may hold either a voice note or a photo.
+    const uploads = [...(files.audio || []), ...(files.attachment || []), ...(files.photos || [])]
+    for (const file of uploads) {
+      const isAudio = isAudioFile(file)
+      const s3Res = await uploadFileToS3(file, isAudio ? 'tickets/audio' : 'tickets/photos')
+      if (isAudio && !audioUrl) {
         audioUrl = s3Res.location
-      } else {
+      } else if (!isAudio) {
         photoUrls.push(s3Res.location)
       }
     }

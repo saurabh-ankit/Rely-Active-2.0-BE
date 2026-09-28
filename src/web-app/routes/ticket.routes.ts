@@ -25,7 +25,16 @@ ticketRouter.get('/units', getPropertyUnitsForLocation)
 ticketRouter.get('/assignable-employees', getAssignableEmployees)
 ticketRouter.get('/stats', getTicketStats)
 ticketRouter.get('/', getTickets)
-ticketRouter.post('/', upload.single('attachment'), createTicket)
+// A voice note (`audio`) plus up to 10 `photos`; `attachment` is the older single-file field.
+ticketRouter.post(
+  '/',
+  upload.fields([
+    { name: 'attachment', maxCount: 1 },
+    { name: 'audio', maxCount: 1 },
+    { name: 'photos', maxCount: 10 },
+  ]),
+  createTicket,
+)
 ticketRouter.get('/:id', getTicketById)
 ticketRouter.patch('/:id/options', updateTicketOptions)
 ticketRouter.patch('/:id/assign', assignTicket)

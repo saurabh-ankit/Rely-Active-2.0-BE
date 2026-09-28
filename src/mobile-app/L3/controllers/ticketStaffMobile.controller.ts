@@ -757,11 +757,17 @@ async function applyWorkDetails(
   if (invoiceAmount === undefined && photos.length === 0 && voiceNotes.length === 0) return
 
   const previousInvoiceAmount = toAmount(t.invoiceAmount)
-  const workDetails = getWorkDetails(t.attachments)
-  workDetails.photos.push(...photos)
-  workDetails.voiceNotes.push(...voiceNotes)
+  // Build new arrays instead of pushing onto the stored ones: mutating them in
+  // place also changes Sequelize's previous value, so the JSON column looks
+  // unchanged and every upload after the first was silently not saved.
+  const existing = getWorkDetails(t.attachments)
+  const workDetails: WorkDetails = {
+    photos: [...existing.photos, ...photos],
+    voiceNotes: [...existing.voiceNotes, ...voiceNotes],
+  }
 
   t.attachments = { ...normalizeAttachments(t.attachments), workDetails }
+  t.changed('attachments', true)
   if (invoiceAmount !== undefined) {
     t.invoiceAmount = invoiceAmount
   }
@@ -860,9 +866,9 @@ export async function completeTicket(req: AuthenticatedRequest, res: Response): 
 
       await applyWorkDetails(t, ctx, { invoiceAmount, ...uploaded }, transaction)
 
-      // A resolution is required: written notes, or a voice note (sent now or added earlier).
-      if (!notes?.trim() && getWorkDetails(t.attachments).voiceNotes.length === 0) {
-        throw new HttpError(400, 'Add resolution notes or a voice note describing the work done')
+      // Written resolution notes are required; voice notes are optional.
+      if (!notes?.trim()) {
+        throw new HttpError(400, 'Resolution notes are required to complete the ticket')
       }
 
       const previousStatus = t.status
