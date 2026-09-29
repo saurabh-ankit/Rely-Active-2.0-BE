@@ -346,20 +346,34 @@ UserLocation.belongsTo(Department, { foreignKey: 'departmentId', as: 'department
 JobCategory.hasMany(UserLocation, { foreignKey: 'jobCategoryId', as: 'userLocations' })
 UserLocation.belongsTo(JobCategory, { foreignKey: 'jobCategoryId', as: 'jobCategory' })
 
-User.belongsToMany(Role, { through: UserLocation, foreignKey: 'userId', otherKey: 'roleId', as: 'roles' })
-Role.belongsToMany(User, { through: UserLocation, foreignKey: 'roleId', otherKey: 'userId', as: 'users' })
+User.belongsToMany(Role, {
+  through: UserLocation,
+  foreignKey: 'userId',
+  otherKey: 'roleId',
+  as: 'roles',
+  unique: false,
+})
+Role.belongsToMany(User, {
+  through: UserLocation,
+  foreignKey: 'roleId',
+  otherKey: 'userId',
+  as: 'users',
+  unique: false,
+})
 
 User.belongsToMany(Property, {
   through: UserLocation,
   foreignKey: 'userId',
   otherKey: 'locId',
   as: 'assignedProperties',
+  unique: false,
 })
 Property.belongsToMany(User, {
   through: UserLocation,
   foreignKey: 'locId',
   otherKey: 'userId',
   as: 'assignedUsers',
+  unique: false,
 })
 
 // ── EmployeeManager associations ───────────────────────────────────────────
