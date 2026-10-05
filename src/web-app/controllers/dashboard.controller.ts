@@ -32,7 +32,25 @@ import { AppointmentStatus } from '../../enums/appointment.enum.js'
 // dashboard always shows meaningful demo data. Real values always win.
 // ---------------------------------------------------------------------------
 const MOCK = {
-  occupancy: { booked: 12 },
+  occupancy: {
+    booked: 20,
+    totalRooms: 320,
+    occupiedRooms: 268,
+    ownerOccupied: 184,
+    tenantOccupied: 84,
+    availableVacancies: 52,
+    vacant: 32,
+    totalBlocks: 4,
+    totalFloors: 12,
+    residingResidents: 268,
+    occupancyRate: 83.8,
+    unitTypeBreakdown: {
+      '1BHK': 110,
+      '2BHK': 95,
+      '3BHK': 75,
+      '4BHK': 40,
+    },
+  },
   billing: {
     totalBilled: 485000,
     totalCollected: 312500,
@@ -104,11 +122,88 @@ const MOCK = {
       { vitalName: 'Temperature', residentName: 'Vijay Kumar', room: 'Room 301', value: '39.4 °C', severity: 'RISKY' },
     ],
   },
+  ticketsOverview: {
+    total: 12,
+    resolved: 7,
+    pending: 3,
+    inProgress: 2,
+    percentage: 58,
+  },
+  feedbackAnalysis: {
+    total: 15,
+    good: 11,
+    average: 3,
+    poor: 1,
+    rating: 4.7,
+  },
+  visitorTypes: {
+    total: 28,
+    delivery: 15,
+    cabs: 8,
+    visitors: 5,
+  },
+  employeeAttendance: {
+    total: 35,
+    present: 31,
+    absent: 4,
+    attendanceRate: 88.5,
+  },
+  performanceMetrics: {
+    ticketResolutionRate: 58,
+    employeeAttendanceRate: 88.5,
+    propertyOccupancyRate: 83.8,
+  },
+  recentActivities: [
+    {
+      id: '1',
+      action: 'New ticket created',
+      description: 'Plumbing issue reported in Block A',
+      time: '2 minutes ago',
+      priority: 'HIGH',
+    },
+    {
+      id: '2',
+      action: 'Employee check-in',
+      description: 'Rajesh Kumar checked in at Main Gate',
+      time: '5 minutes ago',
+    },
+    {
+      id: '3',
+      action: 'Visitor registered',
+      description: 'Delivery person registered (Amazon)',
+      time: '10 minutes ago',
+    },
+    {
+      id: '4',
+      action: 'New feedback received',
+      description: '5-star rating for maintenance service',
+      time: '15 minutes ago',
+    },
+    { id: '5', action: 'Property status updated', description: 'Unit 2B marked as occupied', time: '1 hour ago' },
+  ],
+  medicalOverview: {
+    doctors: 4,
+    nurses: 12,
+    appointments: { today: 9, completed: 5, upcoming: 4 },
+  },
+  eventsOverview: {
+    total: 8,
+    upcoming: 3,
+    completed: 5,
+    foodItems: 24,
+    foodOrdersToday: 12,
+    attendance: 45,
+  },
 }
 
 /** Return `real` if > 0, otherwise `fallback` */
 function orMock(real: number, fallback: number): number {
   return real > 0 ? real : fallback
+}
+
+/** Return `real` if >= threshold, otherwise `fallback` */
+function orMockThreshold(real: number, threshold: number, fallback: number): number {
+  return real >= threshold ? real : fallback
 }
 
 export async function getDashboardStats(req: Request, res: Response): Promise<void> {
@@ -230,29 +325,49 @@ export async function getDashboardStats(req: Request, res: Response): Promise<vo
         : PropertyFloor.count({ where: { isDeleted: false } }),
     ])
 
-    const totalRooms = allUnits.length
-    let ownerOccupied = 0
-    let tenantOccupied = 0
-    let vacantRooms = 0
-    let bookedRooms = 0
-    const unitTypeBreakdown: Record<string, number> = {}
+    const totalRoomsRaw = allUnits.length
+    let ownerOccupiedRaw = 0
+    let tenantOccupiedRaw = 0
+    let vacantRoomsRaw = 0
+    let bookedRoomsRaw = 0
+    const unitTypeBreakdownRaw: Record<string, number> = {}
 
     for (const u of allUnits) {
-      if (u.occupancyStatus === OccupancyStatus.OWNER_OCCUPIED) ownerOccupied++
-      else if (u.occupancyStatus === OccupancyStatus.TENANT_OCCUPIED) tenantOccupied++
-      else vacantRooms++
+      if (u.occupancyStatus === OccupancyStatus.OWNER_OCCUPIED) ownerOccupiedRaw++
+      else if (u.occupancyStatus === OccupancyStatus.TENANT_OCCUPIED) tenantOccupiedRaw++
+      else vacantRoomsRaw++
 
-      if (u.status === UnitStatus.BOOKED || u.status === UnitStatus.ON_HOLD) bookedRooms++
+      if (u.status === UnitStatus.BOOKED || u.status === UnitStatus.ON_HOLD) bookedRoomsRaw++
 
       const typeKey = (u.unit_type || 'Other').toUpperCase()
-      unitTypeBreakdown[typeKey] = (unitTypeBreakdown[typeKey] || 0) + 1
+      unitTypeBreakdownRaw[typeKey] = (unitTypeBreakdownRaw[typeKey] || 0) + 1
     }
 
-    const finalBooked = orMock(bookedRooms, MOCK.occupancy.booked)
-    const finalVacant = vacantRooms > finalBooked ? vacantRooms - finalBooked : vacantRooms
-    const occupiedRooms = ownerOccupied + tenantOccupied
-    const availableVacancies = vacantRooms
-    const occupancyRate = totalRooms > 0 ? Number(((occupiedRooms / totalRooms) * 100).toFixed(1)) : 0
+    // When real DB property units count is less than 250, use high-capacity mock (>250)
+    const hasSufficientOccupancyData = totalRoomsRaw >= 250
+
+    const totalRooms = hasSufficientOccupancyData ? totalRoomsRaw : MOCK.occupancy.totalRooms
+    const ownerOccupied = hasSufficientOccupancyData ? ownerOccupiedRaw : MOCK.occupancy.ownerOccupied
+    const tenantOccupied = hasSufficientOccupancyData ? tenantOccupiedRaw : MOCK.occupancy.tenantOccupied
+    const occupiedRooms = hasSufficientOccupancyData
+      ? ownerOccupiedRaw + tenantOccupiedRaw
+      : MOCK.occupancy.occupiedRooms
+    const finalBooked = hasSufficientOccupancyData ? bookedRoomsRaw : MOCK.occupancy.booked
+    const finalVacant = hasSufficientOccupancyData
+      ? vacantRoomsRaw > finalBooked
+        ? vacantRoomsRaw - finalBooked
+        : vacantRoomsRaw
+      : MOCK.occupancy.vacant
+    const availableVacancies = hasSufficientOccupancyData ? vacantRoomsRaw : MOCK.occupancy.availableVacancies
+    const occupancyRate =
+      totalRooms > 0 ? Number(((occupiedRooms / totalRooms) * 100).toFixed(1)) : MOCK.occupancy.occupancyRate
+    const finalBlocks = hasSufficientOccupancyData ? totalBlocks : MOCK.occupancy.totalBlocks
+    const finalFloors = hasSufficientOccupancyData ? totalFloors : MOCK.occupancy.totalFloors
+    const unitTypeBreakdown =
+      hasSufficientOccupancyData && Object.keys(unitTypeBreakdownRaw).length > 0
+        ? unitTypeBreakdownRaw
+        : MOCK.occupancy.unitTypeBreakdown
+    const residingResidents = activeResidents >= 250 ? activeResidents : MOCK.occupancy.residingResidents
 
     // 4. Monthly Revenue & Billing Summary
     const invoiceWhere: Record<string, unknown> = { isDeleted: false }
@@ -533,19 +648,19 @@ export async function getDashboardStats(req: Request, res: Response): Promise<vo
       success: true,
       data: {
         residentStatus: {
-          activeResidents,
-          todayAdmissions: orMock(todayAdmissions, 2),
-          todayDischarges: orMock(todayDischarges, 1),
-          totalResidents,
-          totalOutResidents: orMock(totalOutResidents, 2),
-          registeredPreAssessed: orMock(registeredPreAssessed, 3),
-          totalDischarged: orMock(totalDischarged, 5),
-          notAdmitted: orMock(notAdmitted, 1),
-          hospitalizationPending: orMock(hospitalizationPending, 1),
+          activeResidents: residingResidents,
+          todayAdmissions: orMock(todayAdmissions, 4),
+          todayDischarges: orMock(todayDischarges, 2),
+          totalResidents: orMockThreshold(totalResidents, 250, 312),
+          totalOutResidents: orMock(totalOutResidents, 12),
+          registeredPreAssessed: orMock(registeredPreAssessed, 18),
+          totalDischarged: orMock(totalDischarged, 24),
+          notAdmitted: orMock(notAdmitted, 6),
+          hospitalizationPending: orMock(hospitalizationPending, 8),
           careLevelBreakdown: {
-            stable: orMock(stableResidentsCount, 8),
-            moderate: orMock(moderateResidentsCount, 2),
-            critical: orMock(criticalResidentsAcuityCount, 1),
+            stable: orMockThreshold(stableResidentsCount, 150, 210),
+            moderate: orMock(moderateResidentsCount, 45),
+            critical: orMock(criticalResidentsAcuityCount, 13),
           },
         },
         criticalResidents: {
@@ -560,9 +675,9 @@ export async function getDashboardStats(req: Request, res: Response): Promise<vo
           occupiedRooms,
           availableVacancies,
           occupancyRate,
-          totalBlocks,
-          totalFloors,
-          residingResidents: activeResidents,
+          totalBlocks: finalBlocks,
+          totalFloors: finalFloors,
+          residingResidents,
           statusBreakdown: { ownerOccupied, tenantOccupied, vacant: finalVacant, booked: finalBooked },
           unitTypeBreakdown,
         },
@@ -597,6 +712,18 @@ export async function getDashboardStats(req: Request, res: Response): Promise<vo
           todayPending: orMock(todayPendingAppointmentsCount, MOCK.clinical.todayPending),
         },
         vitalsRisk: vitalsRiskOut,
+        ticketsOverview: MOCK.ticketsOverview,
+        feedbackAnalysis: MOCK.feedbackAnalysis,
+        visitorTypes: MOCK.visitorTypes,
+        employeeAttendance: MOCK.employeeAttendance,
+        performanceMetrics: {
+          ticketResolutionRate: MOCK.ticketsOverview.percentage,
+          employeeAttendanceRate: MOCK.employeeAttendance.attendanceRate,
+          propertyOccupancyRate: occupancyRate,
+        },
+        recentActivities: MOCK.recentActivities,
+        medicalOverview: MOCK.medicalOverview,
+        eventsOverview: MOCK.eventsOverview,
       },
     })
   } catch (err: unknown) {
