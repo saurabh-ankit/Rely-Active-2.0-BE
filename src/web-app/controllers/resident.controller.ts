@@ -2,6 +2,7 @@ import type { Request, Response } from 'express'
 import type { AuthenticatedRequest } from '../../middlewares/authenticate.js'
 import bcrypt from 'bcryptjs'
 import { Op, type WhereOptions } from 'sequelize'
+import { checkUsernameAvailability } from '../../utils/usernameValidation.js'
 import {
   Property,
   PropertyFloor,
@@ -139,25 +140,49 @@ export async function createResident(req: AuthenticatedRequest, res: Response): 
       }
     }
 
-    // 2. Check username uniqueness if provided for primary mobile login
+    // 2. Check username uniqueness if provided for primary resident and family members
     let hashedPassword: string | null = null
-    if (username) {
-      const trimmedUsername = username.trim()
-      const existingUser = await Resident.findOne({
-        where: { username: trimmedUsername, isDeleted: false },
-      })
-      const existingFm = await ResidentFamilyMember.findOne({
-        where: { username: trimmedUsername, isDeleted: false },
-      })
-      if (existingUser || existingFm) {
+    const seenUsernames = new Set<string>()
+
+    if (username && String(username).trim()) {
+      const trimmedUsername = String(username).trim()
+      seenUsernames.add(trimmedUsername.toLowerCase())
+      const taken = await checkUsernameAvailability(trimmedUsername)
+      if (taken) {
         res.status(400).json({
           success: false,
-          message: 'Username is already taken by another resident or family member.',
+          message: 'Username is already existing',
         })
         return
       }
       const defaultPassword = password || 'Resident@123'
       hashedPassword = await bcrypt.hash(defaultPassword, 10)
+    }
+
+    if (Array.isArray(familyMembers) && familyMembers.length > 0) {
+      for (const fm of familyMembers) {
+        if (fm.username && String(fm.username).trim()) {
+          const fmUser = String(fm.username).trim()
+          const fmLower = fmUser.toLowerCase()
+          if (seenUsernames.has(fmLower)) {
+            res.status(400).json({
+              success: false,
+              message: 'Username is already existing',
+            })
+            return
+          }
+          seenUsernames.add(fmLower)
+
+          const taken = await checkUsernameAvailability(fmUser)
+          if (taken) {
+            res.status(400).json({
+              success: false,
+              message: 'Username is already existing',
+            })
+            return
+          }
+        }
+      }
     }
 
     // 3. Single Residing Constraint: If new resident is residing, flip previous residing status for flat
@@ -523,29 +548,58 @@ export async function updateResident(req: Request, res: Response): Promise<void>
     const stoppedByUserId = validUserId
     const updatedResiding = isResiding !== undefined ? Boolean(isResiding) : resident.isResiding
 
-    // Handle username uniqueness and password hashing for resident
+    // Handle username uniqueness for primary resident and family members
     let updatedUsername = resident.username
     let updatedPasswordHash = resident.passwordHash
+    const seenUsernames = new Set<string>()
 
     if (username !== undefined) {
       const trimmedUsername = username ? String(username).trim() : null
       if (trimmedUsername && trimmedUsername !== resident.username) {
-        const existingUser = await Resident.findOne({
-          where: { username: trimmedUsername, isDeleted: false, id: { [Op.ne]: resident.id } },
-        })
-        const existingFm = await ResidentFamilyMember.findOne({
-          where: { username: trimmedUsername, isDeleted: false },
-        })
-        if (existingUser || existingFm) {
+        const taken = await checkUsernameAvailability(trimmedUsername, { excludeResidentId: resident.id })
+        if (taken) {
           res.status(400).json({
             success: false,
-            message: 'Username is already taken by another resident or family member.',
+            message: 'Username is already existing',
           })
           return
         }
         updatedUsername = trimmedUsername
       } else if (!trimmedUsername) {
         updatedUsername = null
+      }
+    }
+
+    if (updatedUsername && updatedUsername.trim()) {
+      seenUsernames.add(updatedUsername.trim().toLowerCase())
+    }
+
+    if (Array.isArray(familyMembers) && familyMembers.length > 0) {
+      for (const fm of familyMembers) {
+        if (fm.username && String(fm.username).trim()) {
+          const fmUser = String(fm.username).trim()
+          const fmLower = fmUser.toLowerCase()
+          if (seenUsernames.has(fmLower)) {
+            res.status(400).json({
+              success: false,
+              message: 'Username is already existing',
+            })
+            return
+          }
+          seenUsernames.add(fmLower)
+
+          const taken = await checkUsernameAvailability(fmUser, {
+            excludeResidentId: resident.id,
+            excludeFamilyMemberId: fm.id ? String(fm.id) : null,
+          })
+          if (taken) {
+            res.status(400).json({
+              success: false,
+              message: 'Username is already existing',
+            })
+            return
+          }
+        }
       }
     }
 

@@ -2,6 +2,7 @@ import type { Request, Response } from 'express'
 import type { AuthenticatedRequest } from '../../middlewares/authenticate.js'
 import bcrypt from 'bcryptjs'
 import { Op } from 'sequelize'
+import { checkUsernameAvailability } from '../../utils/usernameValidation.js'
 import {
   Department,
   EmployeeManager,
@@ -443,11 +444,11 @@ export async function createUser(req: AuthenticatedRequest, res: Response): Prom
     }
 
     if (uName) {
-      const existingUser = await User.findOne({ where: { username: uName } })
-      if (existingUser) {
+      const taken = await checkUsernameAvailability(uName)
+      if (taken) {
         res.status(400).json({
           success: false,
-          message: 'Username is already taken.',
+          message: 'Username is already existing',
         })
         return
       }
@@ -949,9 +950,9 @@ export async function updateUser(req: Request, res: Response): Promise<void> {
     void mgrId
 
     if (uName && uName !== user.username) {
-      const existingUser = await User.findOne({ where: { username: uName } })
-      if (existingUser && existingUser.id !== user.id) {
-        res.status(400).json({ success: false, message: 'Username is already taken' })
+      const taken = await checkUsernameAvailability(uName, { excludeUserId: user.id })
+      if (taken) {
+        res.status(400).json({ success: false, message: 'Username is already existing' })
         return
       }
     }
