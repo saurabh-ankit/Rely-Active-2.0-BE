@@ -365,7 +365,14 @@ export async function getAllResidents(req: Request, res: Response): Promise<void
     if (locId) whereClause.locId = locId
     if (unitId) whereClause.unitId = unitId
     if (residentType && residentType !== 'ALL') whereClause.residentType = residentType
-    if (isResiding !== undefined && isResiding !== 'ALL') whereClause.isResiding = isResiding === 'true'
+    if (isResiding !== undefined && isResiding !== 'ALL' && isResiding !== '') {
+      const residingStr = String(isResiding).toUpperCase()
+      if (residingStr === 'TRUE' || residingStr === 'RESIDING' || residingStr === '1') {
+        whereClause.isResiding = true
+      } else if (residingStr === 'FALSE' || residingStr === 'OFFSITE' || residingStr === '0') {
+        whereClause.isResiding = false
+      }
+    }
 
     if (search && typeof search === 'string' && search.trim().length > 0) {
       const q = `%${search.trim()}%`
