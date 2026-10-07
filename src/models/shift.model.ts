@@ -5,6 +5,7 @@ import { BaseAttributes, BaseModel, baseModelColumns } from './base.model.js'
 
 export interface ShiftAttributes extends BaseAttributes {
   name: string
+  shiftCode: string
   description: string
   startTime: string
   endTime: string
@@ -32,6 +33,7 @@ export type ShiftCreationAttributes = Optional<
 
 export class Shift extends BaseModel<ShiftAttributes, ShiftCreationAttributes> implements ShiftAttributes {
   declare name: string
+  declare shiftCode: string
   declare description: string
   declare startTime: string
   declare endTime: string
@@ -47,6 +49,7 @@ Shift.init(
   {
     ...baseModelColumns,
     name: { type: DataTypes.STRING(255), allowNull: false },
+    shiftCode: { type: DataTypes.STRING(20), allowNull: false },
     description: { type: DataTypes.STRING(500), allowNull: false },
     startTime: { type: DataTypes.STRING(5), allowNull: false },
     endTime: { type: DataTypes.STRING(5), allowNull: false },
