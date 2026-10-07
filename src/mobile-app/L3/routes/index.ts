@@ -4,6 +4,7 @@ import ticketStaffMobileRouter from './ticketStaffMobile.routes.js'
 import gnsRouter from './gns.routes.js'
 import fnbEmployeeRouter from './fnbEmployee.routes.js'
 import medicalRouter from './medical.routes.js'
+import feedbackStaffRouter, { advertisementStaffRouter } from './feedbackStaff.routes.js'
 
 export const l3MobileRouter = Router()
 
@@ -30,5 +31,9 @@ l3MobileRouter.use('/gate', gnsRouter)
 
 // Medical / Nurse Care Tasks (/api/v1/mobile/l3/medical)
 l3MobileRouter.use('/medical', medicalRouter)
+
+// ── Feedback Forms (/api/v1/mobile/l3/feedback-forms) ──
+l3MobileRouter.use('/feedback-forms', feedbackStaffRouter)
+l3MobileRouter.use('/advertisements', advertisementStaffRouter)
 
 export default l3MobileRouter

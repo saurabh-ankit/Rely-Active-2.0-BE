@@ -95,6 +95,11 @@ export async function seedRbacData() {
       name: 'Events',
       description: 'Community events & activities',
     },
+    {
+      key: 'SETTINGS',
+      name: 'Settings',
+      description: 'Property settings, feedback forms & advertisements',
+    },
   ]
 
   for (const resItem of resourcesData) {

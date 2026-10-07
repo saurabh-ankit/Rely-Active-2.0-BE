@@ -7,6 +7,7 @@ import gnsRouter from './gns.routes.js'
 import eventMobileRouter, { eventVenueMobileRouter, eventRequestMobileRouter } from './eventMobile.routes.js'
 import appointmentMobileRouter from './appointmentMobile.routes.js'
 import assistantMobileRouter from './assistantMobile.routes.js'
+import feedbackMobileRouter, { advertisementMobileRouter } from './feedbackMobile.routes.js'
 
 export const l1MobileRouter = Router()
 
@@ -57,5 +58,9 @@ l1MobileRouter.use('/event-requests', eventRequestMobileRouter)
 // ── Medical Appointments (/api/v1/mobile/l1/medical/appointments) ──
 l1MobileRouter.use('/medical/appointments', appointmentMobileRouter)
 l1MobileRouter.use('/appointments', appointmentMobileRouter)
+
+// ── Feedback & Advertisements (/api/v1/mobile/l1/feedback-forms, /advertisements) ──
+l1MobileRouter.use('/feedback-forms', feedbackMobileRouter)
+l1MobileRouter.use('/advertisements', advertisementMobileRouter)
 
 export default l1MobileRouter

@@ -54,6 +54,11 @@ import { TicketSubCategory } from './ticketSubCategory.model.js'
 import { Ticket } from './ticket.model.js'
 import { TicketActivityLog } from './ticketActivityLog.model.js'
 import { TicketFeedback } from './ticketFeedback.model.js'
+import { Advertisement } from './advertisement.model.js'
+import { FeedbackForm } from './feedbackForm.model.js'
+import { FeedbackQuestion } from './feedbackQuestion.model.js'
+import { FeedbackFormRecipient } from './feedbackFormRecipient.model.js'
+import { FeedbackAnswer } from './feedbackAnswer.model.js'
 import { TicketTatHistory } from './ticketTatHistory.model.js'
 import { Specialization } from './specialization.model.js'
 import { DoctorSpecialization } from './doctorSpecialization.model.js'
@@ -1217,3 +1222,20 @@ export {
   InventoryStockTransaction,
   InventoryStockTransactionLine,
 }
+
+// ── Feedback & Advertisements ────────────────────────────────────────────────
+Property.hasMany(Advertisement, { foreignKey: 'locationId', as: 'advertisements' })
+Advertisement.belongsTo(Property, { foreignKey: 'locationId', as: 'location' })
+Property.hasMany(FeedbackForm, { foreignKey: 'locationId', as: 'feedbackForms' })
+FeedbackForm.belongsTo(Property, { foreignKey: 'locationId', as: 'location' })
+FeedbackForm.hasMany(FeedbackQuestion, { foreignKey: 'formId', as: 'questions' })
+FeedbackQuestion.belongsTo(FeedbackForm, { foreignKey: 'formId', as: 'form' })
+FeedbackForm.hasMany(FeedbackFormRecipient, { foreignKey: 'formId', as: 'recipients' })
+FeedbackFormRecipient.belongsTo(FeedbackForm, { foreignKey: 'formId', as: 'form' })
+FeedbackFormRecipient.belongsTo(Resident, { foreignKey: 'residentId', as: 'resident' })
+FeedbackFormRecipient.belongsTo(User, { foreignKey: 'userId', as: 'user' })
+FeedbackFormRecipient.hasMany(FeedbackAnswer, { foreignKey: 'recipientId', as: 'answers' })
+FeedbackAnswer.belongsTo(FeedbackFormRecipient, { foreignKey: 'recipientId', as: 'recipient' })
+FeedbackAnswer.belongsTo(FeedbackQuestion, { foreignKey: 'questionId', as: 'question' })
+
+export { Advertisement, FeedbackForm, FeedbackQuestion, FeedbackFormRecipient, FeedbackAnswer }

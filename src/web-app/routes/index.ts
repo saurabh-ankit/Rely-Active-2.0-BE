@@ -29,6 +29,8 @@ import { eventRouter, venueRouter, globalServiceRouter, eventRequestRouter } fro
 import globalSettingsRouter from './globalSettings.js'
 import medicalRouter from './medical.routes.js'
 import dashboardRouter from './dashboard.routes.js'
+import advertisementRouter from './advertisement.routes.js'
+import feedbackFormRouter from './feedback.routes.js'
 
 export const apiRouter = Router()
 
@@ -85,5 +87,9 @@ apiRouter.use('/location/:locationId/billing', billingRouter)
 
 apiRouter.use('/dashboard', dashboardRouter)
 apiRouter.use('/location/:locationId/dashboard', dashboardRouter)
+
+// Feedback & Advertisements
+apiRouter.use('/location/:locationId/advertisements', advertisementRouter)
+apiRouter.use('/location/:locationId/feedback-forms', feedbackFormRouter)
 
 export default apiRouter
