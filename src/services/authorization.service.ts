@@ -1,4 +1,4 @@
-import { Role, User, UserLocation } from '../models/index.js'
+import { Department, Role, User, UserLocation } from '../models/index.js'
 
 export interface UserAuthorizationContext {
   userId: string
@@ -7,14 +7,17 @@ export interface UserAuthorizationContext {
   permissions: string[]
   scopes: Array<{
     roleCode: string
+    roleName?: string
     companyId?: string | null
     locationId?: string | null
     departmentId?: string | null
+    departmentCode?: string | null
+    departmentName?: string | null
   }>
 }
 
 type UserWithRelations = User & {
-  userLocations?: Array<UserLocation & { role?: Role }>
+  userLocations?: Array<UserLocation & { role?: Role; department?: Department }>
 }
 
 export class AuthorizationService {
@@ -27,7 +30,10 @@ export class AuthorizationService {
           as: 'userLocations',
           where: { isActive: true, isDeleted: false },
           required: false,
-          include: [{ model: Role, as: 'role' }],
+          include: [
+            { model: Role, as: 'role' },
+            { model: Department, as: 'department' },
+          ],
         },
       ],
     })) as UserWithRelations | null
@@ -44,9 +50,12 @@ export class AuthorizationService {
 
     const scopes = userLocations.map((ul) => ({
       roleCode: ul.role?.code || '',
+      roleName: ul.role?.name || '',
       companyId: ul.companyId,
       locationId: ul.locId,
       departmentId: ul.departmentId,
+      departmentCode: ul.department?.code || '',
+      departmentName: ul.department?.name || '',
     }))
 
     const rolesList = isSuperAdmin && !roleCodes.includes('SUPER_ADMIN') ? ['SUPER_ADMIN', ...roleCodes] : roleCodes

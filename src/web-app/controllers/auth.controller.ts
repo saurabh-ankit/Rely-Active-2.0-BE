@@ -1,6 +1,6 @@
 import type { Request, Response } from 'express'
 import bcrypt from 'bcryptjs'
-import { User, UserDetail } from '../../models/index.js'
+import { User, UserDetail, UserLocation, Role, Department } from '../../models/index.js'
 import { generateToken } from '../../utils/jwt.js'
 import { AuthorizationService } from '../../services/authorization.service.js'
 import type { AuthenticatedRequest } from '../../middlewares/authenticate.js'
@@ -33,7 +33,19 @@ export async function login(req: Request, res: Response): Promise<void> {
         username: trimmedUsername,
         isDeleted: false,
       },
-      include: [{ model: UserDetail, as: 'profile' }],
+      include: [
+        { model: UserDetail, as: 'profile' },
+        {
+          model: UserLocation,
+          as: 'userLocations',
+          where: { isActive: true, isDeleted: false },
+          required: false,
+          include: [
+            { model: Role, as: 'role' },
+            { model: Department, as: 'department' },
+          ],
+        },
+      ],
     })
 
     if (!user || !user.passwordHash) {
@@ -71,6 +83,13 @@ export async function login(req: Request, res: Response): Promise<void> {
       roles: authCtx.roles,
     })
 
+    const userLocs =
+      (user as User & { userLocations?: Array<UserLocation & { role?: Role; department?: Department }> })
+        .userLocations || []
+    const primaryUserLoc = userLocs[0]
+    const primaryDept = primaryUserLoc?.department
+    const primaryRole = primaryUserLoc?.role
+
     res.status(200).json({
       success: true,
       message: 'Login successful',
@@ -87,6 +106,22 @@ export async function login(req: Request, res: Response): Promise<void> {
           isSuperAdmin: authCtx.isSuperAdmin,
           roles: authCtx.roles,
           permissions: authCtx.permissions,
+          scopes: authCtx.scopes,
+          department: primaryDept
+            ? {
+                id: primaryDept.id,
+                name: primaryDept.name,
+                code: primaryDept.code,
+              }
+            : null,
+          role: primaryRole
+            ? {
+                id: primaryRole.id,
+                name: primaryRole.name,
+                code: primaryRole.code,
+              }
+            : null,
+          userLocations: userLocs,
         },
       },
     })
@@ -107,7 +142,19 @@ export async function getMe(req: AuthenticatedRequest, res: Response): Promise<v
     }
 
     const user = await User.findByPk(req.user.id, {
-      include: [{ model: UserDetail, as: 'profile' }],
+      include: [
+        { model: UserDetail, as: 'profile' },
+        {
+          model: UserLocation,
+          as: 'userLocations',
+          where: { isActive: true, isDeleted: false },
+          required: false,
+          include: [
+            { model: Role, as: 'role' },
+            { model: Department, as: 'department' },
+          ],
+        },
+      ],
     })
 
     if (!user) {
@@ -116,6 +163,13 @@ export async function getMe(req: AuthenticatedRequest, res: Response): Promise<v
     }
 
     const authCtx = await AuthorizationService.getUserAuthorizationContext(user.id)
+
+    const userLocs =
+      (user as User & { userLocations?: Array<UserLocation & { role?: Role; department?: Department }> })
+        .userLocations || []
+    const primaryUserLoc = userLocs[0]
+    const primaryDept = primaryUserLoc?.department
+    const primaryRole = primaryUserLoc?.role
 
     res.status(200).json({
       success: true,
@@ -130,6 +184,22 @@ export async function getMe(req: AuthenticatedRequest, res: Response): Promise<v
         isSuperAdmin: authCtx.isSuperAdmin,
         roles: authCtx.roles,
         permissions: authCtx.permissions,
+        scopes: authCtx.scopes,
+        department: primaryDept
+          ? {
+              id: primaryDept.id,
+              name: primaryDept.name,
+              code: primaryDept.code,
+            }
+          : null,
+        role: primaryRole
+          ? {
+              id: primaryRole.id,
+              name: primaryRole.name,
+              code: primaryRole.code,
+            }
+          : null,
+        userLocations: userLocs,
       },
     })
   } catch (err: unknown) {
