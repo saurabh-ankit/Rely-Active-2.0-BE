@@ -7,6 +7,7 @@ import {
   SlotGenerationMode,
   WEEK_DAYS,
 } from '../enums/roster.enum.js'
+import { SHIFT_CODE_REGEX } from '../utils/roster.util.js'
 
 const timeHHmm = z.string().regex(/^\d{2}:\d{2}$/, 'Time must be in HH:mm format')
 
@@ -25,9 +26,16 @@ const slotTimeRangeSchema = z
 
 const optionalLocationRef = z.union([uuid, z.literal('none'), z.null()]).optional()
 
+const shiftCode = z
+  .string()
+  .trim()
+  .toUpperCase()
+  .regex(SHIFT_CODE_REGEX, 'Shift code must be 2-20 characters (letters, numbers, hyphen)')
+
 // ── Shift ─────────────────────────────────────────────────────────────────────
 export const createShiftSchema = z.object({
   name: z.string().trim().min(1, 'Shift name is required').max(255),
+  shiftCode: shiftCode.optional(),
   description: z.string().trim().max(500).optional().nullable(),
   startTime: timeHHmm,
   endTime: timeHHmm,
@@ -38,6 +46,7 @@ export const createShiftSchema = z.object({
 
 export const updateShiftSchema = z.object({
   name: z.string().trim().min(1).max(255).optional(),
+  shiftCode: shiftCode.optional(),
   description: z.string().trim().max(500).optional().nullable(),
   startTime: timeHHmm.optional(),
   endTime: timeHHmm.optional(),

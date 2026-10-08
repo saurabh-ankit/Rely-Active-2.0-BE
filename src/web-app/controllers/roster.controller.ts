@@ -34,6 +34,7 @@ import {
   asParamString,
   doSlotRangesOverlap,
   eachDay,
+  generateShiftCode,
   getDaysUnavailableForAllEmployees,
   getWeekOffConflicts,
   hasWindowStartPassedOnDate,
@@ -266,10 +267,23 @@ export const getShift = async (req: AuthenticatedRequest, res: Response) => {
   }
 }
 
+const isShiftCodeTaken = async (locationId: string, shiftCode: string, excludeId?: string): Promise<boolean> => {
+  const existing = await Shift.findOne({
+    where: {
+      locationId,
+      shiftCode,
+      isDeleted: false,
+      ...(excludeId ? { id: { [Op.ne]: excludeId } } : {}),
+    },
+  })
+  return !!existing
+}
+
 export const createShift = async (req: AuthenticatedRequest, res: Response) => {
   try {
     const locationId = asParamString(req.params.locationId)
-    const { name, description, startTime, endTime, slotGenerationMode, slotDuration, numberOfSlots } = req.body
+    const { name, shiftCode, description, startTime, endTime, slotGenerationMode, slotDuration, numberOfSlots } =
+      req.body
 
     if (!startTime || !endTime) {
       return res.status(400).json(errorResponse('Start time and end time are required'))
@@ -288,9 +302,26 @@ export const createShift = async (req: AuthenticatedRequest, res: Response) => {
       return res.status(400).json(errorResponse('Shift name already exists for this location'))
     }
 
+    let finalShiftCode = ''
+    if (shiftCode) {
+      if (await isShiftCodeTaken(locationId, shiftCode)) {
+        return res.status(400).json(errorResponse('Shift code already exists for this location'))
+      }
+      finalShiftCode = shiftCode
+    } else {
+      for (let attempt = 0; attempt < 5 && !finalShiftCode; attempt++) {
+        const candidate = generateShiftCode(name)
+        if (!(await isShiftCodeTaken(locationId, candidate))) finalShiftCode = candidate
+      }
+      if (!finalShiftCode) {
+        return res.status(500).json(errorResponse('Failed to generate a unique shift code'))
+      }
+    }
+
     const createdBy = req.user?.id ?? null
     const shift = await Shift.create({
       name,
+      shiftCode: finalShiftCode,
       description: description ?? '',
       startTime,
       endTime,
@@ -337,6 +368,12 @@ export const updateShift = async (req: AuthenticatedRequest, res: Response) => {
     const nextEnd = payload.endTime ?? shift.endTime
     if (!nextStart || !nextEnd) {
       return res.status(400).json(errorResponse('Start time and end time are required'))
+    }
+
+    if (payload.shiftCode && payload.shiftCode !== shift.shiftCode) {
+      if (await isShiftCodeTaken(shift.locationId, payload.shiftCode, id)) {
+        return res.status(400).json(errorResponse('Shift code already exists for this location'))
+      }
     }
 
     const updatedBy = req.user?.id ?? null
@@ -583,7 +620,7 @@ export const listEmployeeShifts = async (req: AuthenticatedRequest, res: Respons
         },
         {
           association: 'shift',
-          attributes: ['id', 'name', 'startTime', 'endTime'],
+          attributes: ['id', 'name', 'shiftCode', 'startTime', 'endTime'],
         },
         {
           association: 'area',
@@ -1894,7 +1931,7 @@ export const listShiftEmployeeDates = async (req: AuthenticatedRequest, res: Res
             {
               model: Shift,
               as: 'shift',
-              attributes: ['id', 'name', 'startTime', 'endTime'],
+              attributes: ['id', 'name', 'shiftCode', 'startTime', 'endTime'],
             },
             {
               association: 'area',

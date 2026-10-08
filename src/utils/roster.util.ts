@@ -107,6 +107,22 @@ export const asParamString = (value: string | string[] | undefined): string => {
   return value || ''
 }
 
+export const SHIFT_CODE_REGEX = /^[A-Z0-9-]{2,20}$/
+
+/** Shift code from name initials (max 3 words) + 4 random digits, e.g. "Morning Shift" -> "MS-4821". */
+export function generateShiftCode(name: string): string {
+  const initials =
+    (name || '')
+      .trim()
+      .split(/[^A-Za-z0-9]+/)
+      .filter(Boolean)
+      .slice(0, 3)
+      .map((word) => word.charAt(0).toUpperCase())
+      .join('') || 'SH'
+  const digits = String(Math.floor(Math.random() * 10000)).padStart(4, '0')
+  return `${initials}-${digits}`
+}
+
 export const todayYmdLocal = (now = new Date()): string => {
   const y = now.getFullYear()
   const m = String(now.getMonth() + 1).padStart(2, '0')
