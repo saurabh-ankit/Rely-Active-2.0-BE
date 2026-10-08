@@ -7,6 +7,7 @@ import {
   deleteProperty,
   getAllProperties,
   getPropertyById,
+  getUnitPicker,
   updateProperty,
 } from '../controllers/property.controller.js'
 import { validateBody } from '../../middlewares/validate/index.js'
@@ -17,6 +18,7 @@ const router = express.Router()
 // ── Property CRUD ─────────────────────────────────────────────────────────────
 router.post('/', validateBody(createPropertySchema), createProperty)
 router.get('/', getAllProperties)
+router.get('/:id/unit-picker', getUnitPicker)
 router.get('/:id', getPropertyById)
 router.put('/:id', validateBody(updatePropertySchema), updateProperty)
 router.delete('/:id', deleteProperty)

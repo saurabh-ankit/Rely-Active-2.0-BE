@@ -643,7 +643,7 @@ export const getResidentsForAssignment = async (req: AuthenticatedRequest, res: 
             {
               model: PropertyFloor,
               as: 'floor',
-              attributes: ['id', 'floor_name', 'floor_number'],
+              attributes: ['id', 'floor_name', 'floor_number', 'is_virtual'],
             },
           ],
         },

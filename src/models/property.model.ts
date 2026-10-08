@@ -5,13 +5,12 @@ import type { Package } from './package.model.js'
 import type { CareTask } from './careTasks.model.js'
 import type { PackageSubscription } from './packageSubscription.model.js'
 
-export type PropertyType = 'apartment' | 'villa' | 'duplex' | 'triplex'
+export type PropertyType = 'apartment' | 'villa' | 'duplex' | 'triplex' | 'row_house' | 'plot' | 'commercial' | 'custom'
 export type AreaUnit = 'sqft' | 'sqmt' | 'acres'
 
 export interface PropertyAttributes extends BaseAttributes {
   companyId: string
   property_name: string
-  property_type: PropertyType
   description?: string | null
   // Address
   street?: string | null
@@ -24,6 +23,8 @@ export interface PropertyAttributes extends BaseAttributes {
   area_unit?: AreaUnit | null
   // Meta
   amenities?: string[] | null
+  /** Every kind of entity the property contains, e.g. ['apartment', 'villa']. */
+  property_types?: PropertyType[] | null
   launch_date?: string | null
   isActive?: boolean
   isDeleted?: boolean
@@ -37,6 +38,7 @@ export type PropertyCreationAttributes = Optional<
   | 'total_area'
   | 'area_unit'
   | 'amenities'
+  | 'property_types'
   | 'launch_date'
   | 'isActive'
   | 'isDeleted'
@@ -49,7 +51,6 @@ export type PropertyCreationAttributes = Optional<
 export class Property extends BaseModel<PropertyAttributes, PropertyCreationAttributes> implements PropertyAttributes {
   declare companyId: string
   declare property_name: string
-  declare property_type: PropertyType
   declare description: string | null
   declare street: string | null
   declare city: string
@@ -59,6 +60,7 @@ export class Property extends BaseModel<PropertyAttributes, PropertyCreationAttr
   declare total_area: number | null
   declare area_unit: AreaUnit | null
   declare amenities: string[] | null
+  declare property_types: PropertyType[] | null
   declare launch_date: string | null
   declare isActive: boolean
   declare isDeleted: boolean
@@ -80,11 +82,6 @@ Property.init(
       type: DataTypes.STRING(255),
       allowNull: false,
       comment: 'Name of the property / project',
-    },
-    property_type: {
-      type: DataTypes.ENUM('apartment', 'villa', 'duplex', 'triplex'),
-      allowNull: false,
-      defaultValue: 'apartment',
     },
     description: {
       type: DataTypes.TEXT,
@@ -123,6 +120,10 @@ Property.init(
       defaultValue: 'sqft',
     },
     // ── Meta ──────────────────────────────────────────────────────────────────
+    property_types: {
+      type: DataTypes.JSON,
+      allowNull: true,
+    },
     amenities: {
       type: DataTypes.JSON,
       allowNull: true,

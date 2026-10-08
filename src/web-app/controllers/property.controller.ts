@@ -4,6 +4,7 @@ import {
   Company,
   Property,
   PropertyBlock,
+  PropertyEntity,
   PropertyFloor,
   PropertyUnit,
   Resident,
@@ -12,6 +13,16 @@ import {
   UserLocation,
 } from '../../models/index.js'
 import type { UnitAreaUnit, UnitFacing, UnitStatus, UnitType } from '../../enums/propertyUnit.enum.js'
+import { HttpError } from '../../middlewares/error/http-error.js'
+import type { PropertyType } from '../../models/property.model.js'
+import {
+  buildEntitiesView,
+  buildUnitOptions,
+  legacyBlocksToEntity,
+  resolveBlockFloorsAndUnits,
+  saveStructure,
+} from '../../services/propertyStructure.service.js'
+import type { EntityInput } from '../../validations/property.validation.js'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -40,6 +51,8 @@ const propertyFullInclude = [
                 as: 'residents',
                 where: { isDeleted: false },
                 required: false,
+                // Never send credentials with the property structure.
+                attributes: { exclude: ['passwordHash', 'username'] },
               },
             ],
           },
@@ -49,158 +62,33 @@ const propertyFullInclude = [
   },
 ]
 
-interface FloorInputItem {
-  floor_number: number
-  floor_name?: string | null
-  floor_type?: string
-  is_sellable?: boolean
-  description?: string | null
-  units?: Array<{
-    id?: string
-    unit_number: string
-    unit_type?: string
-    position?: number | null
-    direction?: string | null
-    view_facing?: string | null
-    is_sellable?: boolean
-    carpet_area?: number | null
-    built_up_area?: number | null
-    super_built_up_area?: number | null
-    area_unit?: string | null
-    facing?: string | null
-    price?: number | null
-    price_per_sqft?: number | null
-    status?: string
-  }>
+/** Property JSON plus the nested `entities` view of its structure. */
+async function withStructure(property: Property) {
+  const entities = await PropertyEntity.findAll({ where: { propertyId: property.id, isDeleted: false } })
+  const json = property.toJSON() as unknown as Record<string, unknown>
+  return { ...json, entities: buildEntitiesView(entities, (json.blocks as unknown[]) ?? []) }
 }
 
-interface BHKPositionItem {
-  position: number
-  direction?: string | null
-  view_facing?: string | null
+/**
+ * property_types lists every kind of entity the property contains. When a structure is sent the
+ * entities are the truth; otherwise the given list is used. A lone legacy `property_type` from older
+ * clients is accepted and turned into a one-item list.
+ */
+function resolveTypes(body: {
+  property_type?: string | null
+  property_types?: string[] | null
+  entities?: EntityInput[] | null
+}) {
+  const types = (
+    body.entities?.length
+      ? Array.from(new Set(body.entities.map((e) => e.entity_type)))
+      : Array.from(new Set(body.property_types?.length ? body.property_types : [body.property_type ?? 'apartment']))
+  ) as PropertyType[]
+  return { property_types: types.length ? types : (['apartment'] as PropertyType[]) }
 }
 
-interface BHKTemplateItem {
-  type?: string
-  carpet_area?: number | null
-  super_built_up_area?: number | null
-  built_up_area?: number | null
-  positions?: BHKPositionItem[]
-}
-
-interface BlockInputItem {
-  total_floors?: number | string | null
-  units_per_floor?: number | string | null
-  prefix?: string | null
-  nomenclature_template?: string | null
-  bhk_templates?: BHKTemplateItem[]
-  floors?: FloorInputItem[]
-}
-
-function generateUnitNumber(
-  template: string | null | undefined,
-  prefix: string,
-  floorNumber: number,
-  position: number,
-): string {
-  if (template) {
-    return template
-      .replace(/\{\{TowerPrefix\}\}/g, prefix)
-      .replace(/\{\{FloorNumber\}\}/g, String(floorNumber))
-      .replace(/\{\{Position\}\}/g, String(position))
-  }
-  return `${prefix}-${floorNumber}${position}`
-}
-
-function resolveBlockFloorsAndUnits(blockInput: BlockInputItem): FloorInputItem[] {
-  const customFloors = Array.isArray(blockInput.floors) ? blockInput.floors : []
-  const maxCustomFloorNum = customFloors.reduce((max, fl) => Math.max(max, Number(fl.floor_number) || 0), 0)
-  const totalF = blockInput.total_floors ? Number(blockInput.total_floors) : maxCustomFloorNum
-
-  if (totalF <= 0 && customFloors.length === 0) return []
-
-  const unitsPerF = blockInput.units_per_floor ? Number(blockInput.units_per_floor) : 0
-  const prefix = blockInput.prefix || 'A'
-  const bhkTemplates = Array.isArray(blockInput.bhk_templates) ? blockInput.bhk_templates : []
-  const template = blockInput.nomenclature_template || null
-
-  const generated: FloorInputItem[] = []
-  const floorCount = totalF > 0 ? totalF : maxCustomFloorNum
-
-  for (let fNum = 1; fNum <= floorCount; fNum++) {
-    const isGround = fNum === 1
-    const existingFloor = customFloors.find((fl) => Number(fl.floor_number) === fNum)
-
-    const floorName = existingFloor?.floor_name || (isGround ? 'Ground Floor' : `Floor ${fNum}`)
-    const floorType = existingFloor?.floor_type || (isGround ? 'GROUND_FLOOR' : 'FLOOR')
-    const isSellable = existingFloor?.is_sellable !== undefined ? Boolean(existingFloor.is_sellable) : true
-    const description = existingFloor?.description || null
-
-    const floorUnits: FloorInputItem['units'] = []
-    const existingUnits = existingFloor?.units && Array.isArray(existingFloor.units) ? existingFloor.units : []
-
-    if (isSellable && unitsPerF > 0) {
-      for (let pos = 1; pos <= unitsPerF; pos++) {
-        const existingUnit = existingUnits.find(
-          (u) => Number(u.position) === pos || u.unit_number === generateUnitNumber(template, prefix, fNum, pos),
-        )
-
-        const assignedBHK = bhkTemplates.find((t) => t.positions?.some((p) => Number(p.position) === pos))
-        const posObj = assignedBHK?.positions?.find((p) => Number(p.position) === pos)
-
-        const unitNum = generateUnitNumber(template, prefix, fNum, pos)
-        const unitType = assignedBHK?.type || existingUnit?.unit_type || '2BHK'
-        const carpetArea =
-          assignedBHK?.carpet_area !== undefined && assignedBHK?.carpet_area !== null
-            ? Number(assignedBHK.carpet_area)
-            : existingUnit?.carpet_area !== undefined && existingUnit?.carpet_area !== null
-              ? Number(existingUnit.carpet_area)
-              : null
-        const sbaArea =
-          assignedBHK?.super_built_up_area !== undefined && assignedBHK?.super_built_up_area !== null
-            ? Number(assignedBHK.super_built_up_area)
-            : existingUnit?.super_built_up_area !== undefined && existingUnit?.super_built_up_area !== null
-              ? Number(existingUnit.super_built_up_area)
-              : null
-        const buaArea =
-          assignedBHK?.built_up_area !== undefined && assignedBHK?.built_up_area !== null
-            ? Number(assignedBHK.built_up_area)
-            : existingUnit?.built_up_area !== undefined && existingUnit?.built_up_area !== null
-              ? Number(existingUnit.built_up_area)
-              : sbaArea
-        const direction = posObj?.direction || existingUnit?.direction || null
-        const viewFacing = posObj?.view_facing || existingUnit?.view_facing || null
-
-        floorUnits.push({
-          ...(existingUnit?.id ? { id: existingUnit.id } : {}),
-          unit_number: unitNum,
-          unit_type: unitType,
-          position: pos,
-          direction,
-          view_facing: viewFacing,
-          is_sellable: existingUnit?.is_sellable !== undefined ? Boolean(existingUnit.is_sellable) : true,
-          carpet_area: carpetArea,
-          built_up_area: buaArea,
-          super_built_up_area: sbaArea,
-          status: existingUnit?.status || 'available',
-        })
-      }
-    } else if (existingUnits.length > 0) {
-      floorUnits.push(...existingUnits)
-    }
-
-    generated.push({
-      floor_number: fNum,
-      floor_name: floorName,
-      floor_type: floorType,
-      is_sellable: isSellable,
-      description,
-      units: floorUnits,
-    })
-  }
-
-  return generated
-}
+const structureError = (res: Response, error: unknown) =>
+  error instanceof HttpError ? res.status(error.status).json({ success: false, message: error.message }) : null
 
 // ─── Create Property ─────────────────────────────────────────────────────────
 
@@ -221,6 +109,7 @@ export const createProperty = async (req: AuthenticatedRequest, res: Response, _
       amenities,
       launch_date,
       blocks,
+      entities,
     } = req.body
 
     // ── Required field validation ───────────────────────────────────────────
@@ -257,7 +146,7 @@ export const createProperty = async (req: AuthenticatedRequest, res: Response, _
     const property = await Property.create({
       companyId: finalCompanyId,
       property_name,
-      property_type: property_type || 'apartment',
+      ...resolveTypes({ property_type, property_types: req.body.property_types, entities }),
       description: description || null,
       street: street || null,
       city,
@@ -321,67 +210,13 @@ export const createProperty = async (req: AuthenticatedRequest, res: Response, _
       }
     }
 
-    // ── Optionally create nested blocks → floors → units ───────────────────
-    if (blocks && Array.isArray(blocks)) {
-      for (const blockInput of blocks) {
-        const block = await PropertyBlock.create({
-          propertyId: property.id,
-          block_name: blockInput.block_name,
-          total_floors: blockInput.total_floors ? Number(blockInput.total_floors) : null,
-          units_per_floor: blockInput.units_per_floor ? Number(blockInput.units_per_floor) : null,
-          prefix: blockInput.prefix || null,
-          price_per_sqft: blockInput.price_per_sqft ? Number(blockInput.price_per_sqft) : null,
-          nomenclature_template: blockInput.nomenclature_template || null,
-          bhk_templates: blockInput.bhk_templates || null,
-          description: blockInput.description || null,
-          isActive: true,
-          isDeleted: false,
-          createdBy: operatingUserId,
-          updatedBy: operatingUserId,
-        })
-
-        const resolvedFloors = resolveBlockFloorsAndUnits(blockInput)
-        for (const floorInput of resolvedFloors) {
-          const floor = await PropertyFloor.create({
-            blockId: block.id,
-            floor_number: Number(floorInput.floor_number),
-            floor_name: floorInput.floor_name || null,
-            floor_type: floorInput.floor_type || 'FLOOR',
-            is_sellable: floorInput.is_sellable ?? true,
-            description: floorInput.description || null,
-            isActive: true,
-            isDeleted: false,
-            createdBy: operatingUserId,
-            updatedBy: operatingUserId,
-          })
-
-          if (floorInput.units && Array.isArray(floorInput.units)) {
-            for (const unitInput of floorInput.units) {
-              await PropertyUnit.create({
-                floorId: floor.id,
-                unit_number: unitInput.unit_number,
-                unit_type: (unitInput.unit_type || '2BHK') as UnitType,
-                position: unitInput.position ? Number(unitInput.position) : null,
-                direction: unitInput.direction || null,
-                view_facing: unitInput.view_facing || null,
-                is_sellable: unitInput.is_sellable ?? true,
-                carpet_area: unitInput.carpet_area ? Number(unitInput.carpet_area) : null,
-                built_up_area: unitInput.built_up_area ? Number(unitInput.built_up_area) : null,
-                super_built_up_area: unitInput.super_built_up_area ? Number(unitInput.super_built_up_area) : null,
-                area_unit: (unitInput.area_unit || null) as UnitAreaUnit | null,
-                facing: (unitInput.facing || null) as UnitFacing | null,
-                price: unitInput.price ? Number(unitInput.price) : null,
-                price_per_sqft: unitInput.price_per_sqft ? Number(unitInput.price_per_sqft) : null,
-                status: (unitInput.status || 'available') as UnitStatus,
-                isActive: true,
-                isDeleted: false,
-                createdBy: operatingUserId,
-                updatedBy: operatingUserId,
-              })
-            }
-          }
-        }
-      }
+    // ── Structure: nested entities (or legacy towers-only blocks) ──────────
+    try {
+      await saveStructure(property.id, { entities, blocks }, operatingUserId)
+    } catch (structureErr) {
+      // Don't leave a half-created property behind.
+      await property.update({ isDeleted: true, isActive: false })
+      throw structureErr
     }
 
     // ── Return full nested response ─────────────────────────────────────────
@@ -392,9 +227,10 @@ export const createProperty = async (req: AuthenticatedRequest, res: Response, _
     return res.status(201).json({
       success: true,
       message: 'Property created successfully',
-      data: result,
+      data: result ? await withStructure(result) : null,
     })
   } catch (error) {
+    if (structureError(res, error)) return
     console.error('CREATE PROPERTY ERROR:', error)
     return res.status(500).json({ success: false, error: (error as Error).message, stack: (error as Error).stack })
   }
@@ -418,7 +254,7 @@ export const getAllProperties = async (req: Request, res: Response, next: NextFu
     return res.status(200).json({
       success: true,
       message: 'Properties fetched successfully',
-      data: properties,
+      data: await Promise.all(properties.map(withStructure)),
     })
   } catch (error) {
     next(error)
@@ -446,8 +282,31 @@ export const getPropertyById = async (req: Request, res: Response, next: NextFun
     return res.status(200).json({
       success: true,
       message: 'Property fetched successfully',
-      data: property,
+      data: await withStructure(property),
     })
+  } catch (error) {
+    next(error)
+  }
+}
+
+// ─── Unit picker ──────────────────────────────────────────────────────────────
+
+/**
+ * GET /property/:id/unit-picker
+ * The structure without hidden levels plus a flat, labelled unit list, so every screen picks
+ * flats the same way: Entity → (Block) → (Floor) → Unit.
+ */
+export const getUnitPicker = async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id
+    const property = id
+      ? await Property.findOne({ where: { id, isDeleted: false }, include: propertyFullInclude })
+      : null
+    if (!property) {
+      return res.status(404).json({ success: false, message: 'Property not found' })
+    }
+    const { entities } = await withStructure(property)
+    return res.status(200).json({ success: true, data: { entities, units: buildUnitOptions(entities) } })
   } catch (error) {
     next(error)
   }
@@ -468,173 +327,32 @@ export const updateProperty = async (req: Request, res: Response, next: NextFunc
     }
 
     const operatingUserId = (req as AuthenticatedRequest).user?.id || null
-    const { blocks: blocksInput, ...propertyFields } = req.body
+    const { blocks: blocksInput, entities: entitiesInput, property_type: legacyType, ...propertyFields } = req.body
 
-    await existing.update({ ...propertyFields, updatedBy: operatingUserId })
-
-    if (blocksInput && Array.isArray(blocksInput)) {
-      const existingBlocks = await PropertyBlock.findAll({
-        where: { propertyId: id, isDeleted: false },
-      })
-
-      const incomingBlockIds = blocksInput
-        .map((b: { id?: string }) => b.id)
-        .filter((bId): bId is string => Boolean(bId))
-
-      // Soft-delete blocks that were removed in edit
-      const blocksToDelete = existingBlocks.filter((b) => !incomingBlockIds.includes(b.id))
-      for (const bToDelete of blocksToDelete) {
-        await bToDelete.update({ isDeleted: true, isActive: false, updatedBy: operatingUserId })
-      }
-
-      for (const blockInput of blocksInput) {
-        let block = blockInput.id
-          ? existingBlocks.find((b) => b.id === blockInput.id)
-          : existingBlocks.find((b) => b.block_name === blockInput.block_name)
-
-        if (block) {
-          await block.update({
-            block_name: blockInput.block_name,
-            total_floors: blockInput.total_floors ? Number(blockInput.total_floors) : null,
-            units_per_floor: blockInput.units_per_floor ? Number(blockInput.units_per_floor) : null,
-            prefix: blockInput.prefix || null,
-            price_per_sqft: blockInput.price_per_sqft ? Number(blockInput.price_per_sqft) : null,
-            nomenclature_template: blockInput.nomenclature_template || null,
-            bhk_templates: blockInput.bhk_templates || null,
-            description: blockInput.description || null,
-            updatedBy: operatingUserId,
-          })
-        } else {
-          block = await PropertyBlock.create({
-            propertyId: id,
-            block_name: blockInput.block_name,
-            total_floors: blockInput.total_floors ? Number(blockInput.total_floors) : null,
-            units_per_floor: blockInput.units_per_floor ? Number(blockInput.units_per_floor) : null,
-            prefix: blockInput.prefix || null,
-            price_per_sqft: blockInput.price_per_sqft ? Number(blockInput.price_per_sqft) : null,
-            nomenclature_template: blockInput.nomenclature_template || null,
-            bhk_templates: blockInput.bhk_templates || null,
-            description: blockInput.description || null,
-            isActive: true,
-            isDeleted: false,
-            createdBy: operatingUserId,
-            updatedBy: operatingUserId,
-          })
-        }
-
-        const existingFloors = await PropertyFloor.findAll({
-          where: { blockId: block.id, isDeleted: false },
-        })
-
-        const resolvedFloors = resolveBlockFloorsAndUnits(blockInput)
-        const incomingFloorNumbers = resolvedFloors.map((f) => Number(f.floor_number))
-
-        const floorsToDelete = existingFloors.filter((f) => !incomingFloorNumbers.includes(f.floor_number))
-        for (const fToDelete of floorsToDelete) {
-          await fToDelete.update({ isDeleted: true, isActive: false, updatedBy: operatingUserId })
-        }
-
-        for (const floorInput of resolvedFloors) {
-          let floor = existingFloors.find((f) => f.floor_number === Number(floorInput.floor_number))
-
-          if (floor) {
-            await floor.update({
-              floor_name: floorInput.floor_name || null,
-              floor_type: floorInput.floor_type || 'FLOOR',
-              is_sellable: floorInput.is_sellable ?? true,
-              description: floorInput.description || null,
-              updatedBy: operatingUserId,
-            })
-          } else {
-            floor = await PropertyFloor.create({
-              blockId: block.id,
-              floor_number: Number(floorInput.floor_number),
-              floor_name: floorInput.floor_name || null,
-              floor_type: floorInput.floor_type || 'FLOOR',
-              is_sellable: floorInput.is_sellable ?? true,
-              description: floorInput.description || null,
-              isActive: true,
-              isDeleted: false,
-              createdBy: operatingUserId,
-              updatedBy: operatingUserId,
-            })
-          }
-
-          if (floorInput.units && Array.isArray(floorInput.units)) {
-            const existingUnits = await PropertyUnit.findAll({
-              where: { floorId: floor.id, isDeleted: false },
-            })
-
-            const incomingUnitNumbers = floorInput.units.map((u) => u.unit_number)
-            const incomingUnitIds = floorInput.units.map((u) => u.id).filter((uId): uId is string => Boolean(uId))
-
-            const unitsToDelete = existingUnits.filter(
-              (u) => !incomingUnitNumbers.includes(u.unit_number) && !incomingUnitIds.includes(u.id),
-            )
-            for (const uToDelete of unitsToDelete) {
-              await uToDelete.update({ isDeleted: true, isActive: false, updatedBy: operatingUserId })
-            }
-
-            for (const unitInput of floorInput.units) {
-              const unit = unitInput.id
-                ? existingUnits.find((u) => u.id === unitInput.id)
-                : existingUnits.find((u) => u.unit_number === unitInput.unit_number)
-
-              if (unit) {
-                await unit.update({
-                  unit_number: unitInput.unit_number,
-                  unit_type: (unitInput.unit_type || '2BHK') as UnitType,
-                  position: unitInput.position ? Number(unitInput.position) : null,
-                  direction: unitInput.direction || null,
-                  view_facing: unitInput.view_facing || null,
-                  is_sellable: unitInput.is_sellable ?? true,
-                  carpet_area: unitInput.carpet_area ? Number(unitInput.carpet_area) : null,
-                  built_up_area: unitInput.built_up_area ? Number(unitInput.built_up_area) : null,
-                  super_built_up_area: unitInput.super_built_up_area ? Number(unitInput.super_built_up_area) : null,
-                  area_unit: (unitInput.area_unit || null) as UnitAreaUnit | null,
-                  facing: (unitInput.facing || null) as UnitFacing | null,
-                  price: unitInput.price ? Number(unitInput.price) : null,
-                  price_per_sqft: unitInput.price_per_sqft ? Number(unitInput.price_per_sqft) : null,
-                  status: (unitInput.status || unit.status || 'available') as UnitStatus,
-                  updatedBy: operatingUserId,
-                })
-              } else {
-                await PropertyUnit.create({
-                  floorId: floor.id,
-                  unit_number: unitInput.unit_number,
-                  unit_type: (unitInput.unit_type || '2BHK') as UnitType,
-                  position: unitInput.position ? Number(unitInput.position) : null,
-                  direction: unitInput.direction || null,
-                  view_facing: unitInput.view_facing || null,
-                  is_sellable: unitInput.is_sellable ?? true,
-                  carpet_area: unitInput.carpet_area ? Number(unitInput.carpet_area) : null,
-                  built_up_area: unitInput.built_up_area ? Number(unitInput.built_up_area) : null,
-                  super_built_up_area: unitInput.super_built_up_area ? Number(unitInput.super_built_up_area) : null,
-                  area_unit: (unitInput.area_unit || null) as UnitAreaUnit | null,
-                  facing: (unitInput.facing || null) as UnitFacing | null,
-                  price: unitInput.price ? Number(unitInput.price) : null,
-                  price_per_sqft: unitInput.price_per_sqft ? Number(unitInput.price_per_sqft) : null,
-                  status: (unitInput.status || 'available') as UnitStatus,
-                  isActive: true,
-                  isDeleted: false,
-                  createdBy: operatingUserId,
-                  updatedBy: operatingUserId,
-                })
-              }
-            }
-          }
-        }
-      }
+    if (entitiesInput || legacyType || propertyFields.property_types) {
+      Object.assign(
+        propertyFields,
+        resolveTypes({
+          property_type: legacyType,
+          property_types: propertyFields.property_types ?? (legacyType ? null : existing.property_types),
+          entities: entitiesInput,
+        }),
+      )
     }
+
+    // Structure first: if it's refused (e.g. removing an occupied flat) nothing else changes either.
+    await saveStructure(id, { entities: entitiesInput, blocks: blocksInput }, operatingUserId)
+    await existing.update({ ...propertyFields, updatedBy: operatingUserId })
 
     const updated = await Property.findByPk(id, { include: propertyFullInclude })
 
     return res.status(200).json({
       success: true,
       message: 'Property updated successfully',
-      data: updated,
+      data: updated ? await withStructure(updated) : null,
     })
   } catch (error) {
+    if (structureError(res, error)) return
     next(error)
   }
 }
@@ -695,8 +413,25 @@ export const addBlock = async (req: Request, res: Response, next: NextFunction) 
       return res.status(400).json({ success: false, message: 'block_name is required' })
     }
 
+    // New towers join the property's tower entity (created if the property has none yet).
+    const towers = await legacyBlocksToEntity(propertyId, [])
+    const entityId =
+      towers.id ??
+      (
+        await PropertyEntity.create({
+          propertyId,
+          entity_type: towers.entity_type,
+          name: towers.name,
+          levels: towers.levels,
+          level_labels: towers.level_labels ?? null,
+          createdBy: operatingUserId,
+          updatedBy: operatingUserId,
+        })
+      ).id
+
     const block = await PropertyBlock.create({
       propertyId,
+      entityId,
       block_name,
       total_floors: total_floors ? Number(total_floors) : null,
       units_per_floor: units_per_floor ? Number(units_per_floor) : null,

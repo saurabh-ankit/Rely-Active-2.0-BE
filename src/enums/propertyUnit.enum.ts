@@ -9,10 +9,14 @@ export enum UnitType {
   BHK2 = '2BHK',
   BHK3 = '3BHK',
   BHK4 = '4BHK',
+  BHK5 = '5BHK',
   STUDIO = 'studio',
   PENTHOUSE = 'penthouse',
   SHOP = 'shop',
   OFFICE = 'office',
+  VILLA = 'villa',
+  DUPLEX = 'duplex',
+  TRIPLEX = 'triplex',
 }
 
 export enum UnitFacing {

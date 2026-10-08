@@ -13,6 +13,7 @@ import { Company } from './company.model.js'
 import { CompanyCustomField } from './companyCustomField.model.js'
 import { Property } from './property.model.js'
 import { PropertyBlock } from './propertyBlock.model.js'
+import { PropertyEntity } from './propertyEntity.model.js'
 import { PropertyFloor } from './propertyFloor.model.js'
 import { PropertyUnit } from './propertyUnit.model.js'
 import { User } from './user.model.js'
@@ -233,7 +234,13 @@ CompanyCustomField.belongsTo(Company, { foreignKey: 'companyId', as: 'company' }
 Company.hasMany(Property, { foreignKey: 'companyId', as: 'properties' })
 Property.belongsTo(Company, { foreignKey: 'companyId', as: 'company' })
 
-// ── Property → Block → Floor → Unit ─────────────────────────────────────────
+// ── Property → Entity → Block → Floor → Unit ────────────────────────────────
+Property.hasMany(PropertyEntity, { foreignKey: 'propertyId', as: 'entities' })
+PropertyEntity.belongsTo(Property, { foreignKey: 'propertyId', as: 'property' })
+
+PropertyEntity.hasMany(PropertyBlock, { foreignKey: 'entityId', as: 'blocks' })
+PropertyBlock.belongsTo(PropertyEntity, { foreignKey: 'entityId', as: 'entity' })
+
 Property.hasMany(PropertyBlock, { foreignKey: 'propertyId', as: 'blocks' })
 PropertyBlock.belongsTo(Property, { foreignKey: 'propertyId', as: 'property' })
 
@@ -1025,6 +1032,7 @@ export {
   CompanyCustomField,
   Property,
   PropertyBlock,
+  PropertyEntity,
   PropertyFloor,
   PropertyUnit,
   User,

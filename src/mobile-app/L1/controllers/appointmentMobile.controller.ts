@@ -177,7 +177,7 @@ async function resolveResidentUnitScope(residentId: string): Promise<ResidentUni
           {
             model: PropertyFloor,
             as: 'floor',
-            attributes: ['id', 'floor_name', 'floor_number', 'blockId'],
+            attributes: ['id', 'floor_name', 'floor_number', 'blockId', 'is_virtual'],
             required: false,
             include: [
               {
@@ -570,7 +570,7 @@ export async function listInhouseDoctorAppointments(req: AuthenticatedRequest, r
         {
           model: PropertyFloor,
           as: 'floor',
-          attributes: ['id', 'floor_name', 'floor_number'],
+          attributes: ['id', 'floor_name', 'floor_number', 'is_virtual'],
           required: false,
         },
         {
@@ -633,7 +633,7 @@ export async function listInhouseDoctorAppointments(req: AuthenticatedRequest, r
             {
               model: PropertyFloor,
               as: 'floor',
-              attributes: ['id', 'floor_name', 'floor_number'],
+              attributes: ['id', 'floor_name', 'floor_number', 'is_virtual'],
               required: false,
             },
             {

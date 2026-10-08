@@ -75,7 +75,7 @@ async function loadResidentWithUnit(residentId: string): Promise<Resident | null
           {
             model: PropertyFloor,
             as: 'floor',
-            attributes: ['id', 'floor_number', 'floor_name', 'blockId'],
+            attributes: ['id', 'floor_number', 'floor_name', 'blockId', 'is_virtual'],
             include: [
               {
                 model: PropertyBlock,

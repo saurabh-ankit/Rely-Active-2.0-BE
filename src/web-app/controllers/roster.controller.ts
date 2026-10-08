@@ -632,7 +632,7 @@ export const listEmployeeShifts = async (req: AuthenticatedRequest, res: Respons
         },
         {
           association: 'floor',
-          attributes: ['id', 'floor_name', 'floor_number'],
+          attributes: ['id', 'floor_name', 'floor_number', 'is_virtual'],
         },
         {
           association: 'unit',
@@ -1943,7 +1943,7 @@ export const listShiftEmployeeDates = async (req: AuthenticatedRequest, res: Res
             },
             {
               association: 'floor',
-              attributes: ['id', 'floor_name', 'floor_number'],
+              attributes: ['id', 'floor_name', 'floor_number', 'is_virtual'],
             },
             {
               association: 'unit',
@@ -2408,7 +2408,7 @@ export const listShiftResidentPool = async (req: AuthenticatedRequest, res: Resp
             {
               model: PropertyFloor,
               as: 'floor',
-              attributes: ['id', 'floor_name', 'floor_number'],
+              attributes: ['id', 'floor_name', 'floor_number', 'is_virtual'],
               include: [
                 {
                   model: PropertyBlock,
