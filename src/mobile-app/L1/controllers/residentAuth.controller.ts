@@ -357,6 +357,7 @@ export async function getResidentProfile(req: Request, res: Response): Promise<v
           email: familyMember.email,
           phone: familyMember.phone,
           unit: parent.unit,
+          photoUrl: familyMember.photoUrl || null,
           propertyDetails: formatPropertyDetails(parent),
           foodPackage: formatSinglePackage(familyMemberPkg, slotNameMap),
           primaryResident: {

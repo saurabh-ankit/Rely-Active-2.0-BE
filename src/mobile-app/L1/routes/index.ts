@@ -1,6 +1,7 @@
 import { Router } from 'express'
 import residentAuthRouter from './residentAuth.routes.js'
 import residentDetailsRouter from './residentDetails.routes.js'
+import residentProfileRouter from './residentProfile.routes.js'
 import fnbMobileRouter from './fnbMobile.routes.js'
 import ticketMobileRouter from './ticketMobile.routes.js'
 import gnsRouter from './gns.routes.js'
@@ -21,6 +22,7 @@ l1MobileRouter.use('/assistant', assistantMobileRouter)
 l1MobileRouter.use('/voice-assistant', assistantMobileRouter)
 
 // ── Auth & Resident Module (/api/v1/mobile/l1/auth, /api/v1/mobile/l1/resident) ──
+l1MobileRouter.use('/resident/profile-photo', residentProfileRouter)
 l1MobileRouter.use('/resident/auth', residentAuthRouter)
 l1MobileRouter.use('/resident', residentDetailsRouter)
 l1MobileRouter.use('/resident', residentAuthRouter)
