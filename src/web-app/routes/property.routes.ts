@@ -12,8 +12,12 @@ import {
 } from '../controllers/property.controller.js'
 import { validateBody } from '../../middlewares/validate/index.js'
 import { addBlockSchema, createPropertySchema, updatePropertySchema } from '../../validations/property.validation.js'
+import { authenticate } from '../../middlewares/authenticate.js'
 
 const router = express.Router()
+
+// Every property route needs a signed-in user.
+router.use(authenticate)
 
 // ── Property CRUD ─────────────────────────────────────────────────────────────
 router.post('/', validateBody(createPropertySchema), createProperty)
