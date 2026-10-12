@@ -83,6 +83,21 @@ function generateUnitNumber(
   return `${prefix}-${floorNumber}${position}`
 }
 
+const FLOOR_TYPE_NAMES: Record<string, string> = {
+  GROUND_FLOOR: 'Ground Floor',
+  STILT: 'Stilt',
+  BASEMENT: 'Basement',
+  PENTHOUSE: 'Penthouse',
+}
+
+/** Names the system generates; anything else was typed by someone and is kept. */
+const isAutoFloorName = (name?: string | null) =>
+  !name || /^(ground floor|floor \d+|stilt|basement|penthouse)$/i.test(name.trim())
+
+/** A floor's name follows its type ("Floor 1" once it's no longer a ground floor) unless it was renamed by hand. */
+export const floorNameFor = (floorNumber: number, floorType: string, current?: string | null) =>
+  current && !isAutoFloorName(current) ? current : (FLOOR_TYPE_NAMES[floorType] ?? `Floor ${floorNumber}`)
+
 export function resolveBlockFloorsAndUnits(blockInput: BlockInputItem): FloorInputItem[] {
   const customFloors = Array.isArray(blockInput.floors) ? blockInput.floors : []
   const maxCustomFloorNum = customFloors.reduce((max, fl) => Math.max(max, Number(fl.floor_number) || 0), 0)
@@ -106,8 +121,8 @@ export function resolveBlockFloorsAndUnits(blockInput: BlockInputItem): FloorInp
     const isGround = fNum === 1
     const existingFloor = customFloors.find((fl) => Number(fl.floor_number) === fNum)
 
-    const floorName = existingFloor?.floor_name || (isGround ? 'Ground Floor' : `Floor ${fNum}`)
     const floorType = existingFloor?.floor_type || (isGround ? 'GROUND_FLOOR' : 'FLOOR')
+    const floorName = floorNameFor(fNum, floorType, existingFloor?.floor_name)
     const isSellable = existingFloor?.is_sellable !== undefined ? Boolean(existingFloor.is_sellable) : true
     const description = existingFloor?.description || null
 
