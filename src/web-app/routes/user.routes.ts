@@ -10,6 +10,11 @@ import {
   updateUser,
   updateUserProperties,
 } from '../controllers/user.controller.js'
+import {
+  getEmployeeActivityRecords,
+  getEmployeeActivitySummary,
+  getEmployeeWorkLog,
+} from '../controllers/employeeActivity.controller.js'
 import { authenticate } from '../../middlewares/authenticate.js'
 import { authorize } from '../../middlewares/authorize.js'
 import { validateBody } from '../../middlewares/validate/index.js'
@@ -33,6 +38,9 @@ router.get('/user-properties', getUserAccessibleProperties)
 router.get('/me/properties', getUserAccessibleProperties)
 router.get('/', authorize('USER_VIEW'), getAllUsers)
 router.get('/:id', authorize('USER_VIEW'), getUserById)
+router.get('/:id/activity/summary', authorize('USER_VIEW'), getEmployeeActivitySummary)
+router.get('/:id/activity/records', authorize('USER_VIEW'), getEmployeeActivityRecords)
+router.get('/:id/activity/work-log', authorize('USER_VIEW'), getEmployeeWorkLog)
 router.post('/', authorize('USER_CREATE'), uploadUserPhoto, validateBody(createUserSchema), createUser)
 router.put('/:id', authorize('USER_UPDATE'), uploadUserPhoto, validateBody(updateUserSchema), updateUser)
 router.post('/:id/roles', authorize('USER_ASSIGN_ROLE'), validateBody(assignUserRoleSchema), assignUserRole)

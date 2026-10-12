@@ -1901,7 +1901,7 @@ export const generateShiftEmployeeDates = async (req: AuthenticatedRequest, res:
 export const listShiftEmployeeDates = async (req: AuthenticatedRequest, res: Response) => {
   try {
     const locationId = asParamString(req.params.locationId)
-    const { assignmentId, date, status, includeDeleted } = req.query
+    const { assignmentId, date, status, includeDeleted, employeeId, from, to } = req.query
 
     // Advance time-based statuses before filtering so completed rows match status queries.
     await syncShiftDateLifecycleStatuses(locationId)
@@ -1912,6 +1912,11 @@ export const listShiftEmployeeDates = async (req: AuthenticatedRequest, res: Res
     if (assignmentId) where.employeeShiftAssignmentId = assignmentId
     if (date) where.date = date
     if (status) where.status = status
+    // Optional narrowing for one employee's calendar: their own dates plus dates they cover.
+    if (typeof from === 'string' && typeof to === 'string' && from && to) where.date = { [Op.between]: [from, to] }
+    if (typeof employeeId === 'string' && employeeId) {
+      where[Op.or] = [{ '$shiftAssignment.employeeId$': employeeId }, { coveredByEmployeeId: employeeId }]
+    }
 
     const shiftDates = await ShiftDate.findAll({
       where,

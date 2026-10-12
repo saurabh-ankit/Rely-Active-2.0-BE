@@ -630,6 +630,14 @@ GateEntry.belongsTo(GatePreapproved, { foreignKey: 'preapprovedId', as: 'preappr
 GateEntry.belongsTo(User, { foreignKey: 'clockedInBy', as: 'clockedInByUser' })
 GateEntry.belongsTo(User, { foreignKey: 'clockedOutBy', as: 'clockedOutByUser' })
 GateEntry.belongsTo(User, { foreignKey: 'approvedBy', as: 'approvedByUser' })
+// Who raised the entry: the guard for a walk-in (createdBy has no FK, hence constraints: false).
+GateEntry.belongsTo(User, { foreignKey: 'createdBy', as: 'createdByUser', constraints: false })
+// A pre-approval's createdBy is the resident or the family member who made it; this resolves the latter.
+GatePreapproved.belongsTo(ResidentFamilyMember, {
+  foreignKey: 'createdBy',
+  as: 'createdByFamilyMember',
+  constraints: false,
+})
 // ── Global Services associations ───────────────────────────────────────────
 EventGlobalService.hasMany(EventGlobalServiceProperty, { foreignKey: 'globalServiceId', as: 'propertyServices' })
 EventGlobalServiceProperty.belongsTo(EventGlobalService, { foreignKey: 'globalServiceId', as: 'globalService' })

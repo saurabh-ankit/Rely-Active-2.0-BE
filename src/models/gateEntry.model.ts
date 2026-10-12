@@ -5,6 +5,8 @@ import { VisitorType } from './gatePreapproved.model.js'
 
 export type EntrySource = 'Preapproved' | 'Walkin'
 export type EntryStatus = 'PendingApproval' | 'Approved' | 'Rejected' | 'Inside' | 'Completed'
+/** Who approved (or rejected) the entry: gate/admin staff, the resident, or a family member. */
+export type ApproverType = 'STAFF' | 'RESIDENT' | 'FAMILY_MEMBER'
 
 export interface GateEntryAttributes extends BaseAttributes {
   locId: string
@@ -20,6 +22,10 @@ export interface GateEntryAttributes extends BaseAttributes {
   clockedInBy?: string | null
   clockedOutBy?: string | null
   approvedBy?: string | null
+  approverType?: ApproverType | null
+  approverName?: string | null
+  approvedByResidentId?: string | null
+  approvedAt?: Date | null
   vehicleNumber?: string | null
   visitorPhotos?: string[] | null
   notes?: string | null
@@ -39,6 +45,10 @@ export type GateEntryCreationAttributes = Optional<
   | 'clockedInBy'
   | 'clockedOutBy'
   | 'approvedBy'
+  | 'approverType'
+  | 'approverName'
+  | 'approvedByResidentId'
+  | 'approvedAt'
   | 'vehicleNumber'
   | 'visitorPhotos'
   | 'notes'
@@ -66,7 +76,14 @@ export class GateEntry
   declare clockedOutAt: Date | null
   declare clockedInBy: string | null
   declare clockedOutBy: string | null
+  /** Staff user who approved/rejected (FK users); null when a resident decided. */
   declare approvedBy: string | null
+  declare approverType: ApproverType | null
+  /** Approver's name when they decided. */
+  declare approverName: string | null
+  /** Household resident, when a resident or family member decided. */
+  declare approvedByResidentId: string | null
+  declare approvedAt: Date | null
   declare vehicleNumber: string | null
   declare visitorPhotos: string[] | null
   declare notes: string | null
@@ -127,6 +144,22 @@ GateEntry.init(
     },
     approvedBy: {
       type: DataTypes.UUID,
+      allowNull: true,
+    },
+    approverType: {
+      type: DataTypes.ENUM('STAFF', 'RESIDENT', 'FAMILY_MEMBER'),
+      allowNull: true,
+    },
+    approverName: {
+      type: DataTypes.STRING(255),
+      allowNull: true,
+    },
+    approvedByResidentId: {
+      type: DataTypes.UUID,
+      allowNull: true,
+    },
+    approvedAt: {
+      type: DataTypes.DATE,
       allowNull: true,
     },
     vehicleNumber: {
