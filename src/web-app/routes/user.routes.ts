@@ -17,6 +17,7 @@ import {
 } from '../controllers/employeeActivity.controller.js'
 import { authenticate } from '../../middlewares/authenticate.js'
 import { authorize } from '../../middlewares/authorize.js'
+import { authorizeResource } from '../../middlewares/authorizeResource.js'
 import { validateBody } from '../../middlewares/validate/index.js'
 import { assignUserRoleSchema, createUserSchema, updateUserSchema } from '../../validations/user.validation.js'
 import { upload } from '../../middlewares/upload.js'
@@ -38,11 +39,28 @@ router.get('/user-properties', getUserAccessibleProperties)
 router.get('/me/properties', getUserAccessibleProperties)
 router.get('/', authorize('USER_VIEW'), getAllUsers)
 router.get('/:id', authorize('USER_VIEW'), getUserById)
-router.get('/:id/activity/summary', authorize('USER_VIEW'), getEmployeeActivitySummary)
-router.get('/:id/activity/records', authorize('USER_VIEW'), getEmployeeActivityRecords)
-router.get('/:id/activity/work-log', authorize('USER_VIEW'), getEmployeeWorkLog)
-router.post('/', authorize('USER_CREATE'), uploadUserPhoto, validateBody(createUserSchema), createUser)
-router.put('/:id', authorize('USER_UPDATE'), uploadUserPhoto, validateBody(updateUserSchema), updateUser)
+// Employee activity tabs and editing follow the Employee sections. The plain user list and
+// details stay open: roster, ticket and other screens use them for people pickers.
+const canSeeActivity = authorizeResource('EMPLOYEE.ACTIVITY', 'view')
+router.get('/:id/activity/summary', authorize('USER_VIEW'), canSeeActivity, getEmployeeActivitySummary)
+router.get('/:id/activity/records', authorize('USER_VIEW'), canSeeActivity, getEmployeeActivityRecords)
+router.get('/:id/activity/work-log', authorize('USER_VIEW'), canSeeActivity, getEmployeeWorkLog)
+router.post(
+  '/',
+  authorize('USER_CREATE'),
+  authorizeResource('EMPLOYEE.DIRECTORY', 'create'),
+  uploadUserPhoto,
+  validateBody(createUserSchema),
+  createUser,
+)
+router.put(
+  '/:id',
+  authorize('USER_UPDATE'),
+  authorizeResource('EMPLOYEE.DIRECTORY', 'update'),
+  uploadUserPhoto,
+  validateBody(updateUserSchema),
+  updateUser,
+)
 router.post('/:id/roles', authorize('USER_ASSIGN_ROLE'), validateBody(assignUserRoleSchema), assignUserRole)
 router.put('/:id/properties', authorize('USER_UPDATE'), updateUserProperties)
 
