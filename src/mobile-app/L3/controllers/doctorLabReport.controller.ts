@@ -3,6 +3,11 @@ import type { AuthenticatedRequest } from '../../../middlewares/authenticate.js'
 import { HttpError } from '../../../middlewares/error/http-error.js'
 import { uploadFileToS3 } from '../../../middlewares/s3/index.js'
 import { LabTestSetting, Resident, ResidentLabReport } from '../../../models/index.js'
+import {
+  formatLabReport,
+  labReportInclude,
+  listResidentLabReportsForResident,
+} from '../../../services/residentClinical.service.js'
 import type { CreateResidentLabReportInput } from '../../../validations/residentLabReport.validation.js'
 import { assertDoctorClinicalAccess } from './doctorClinical.controller.js'
 
@@ -20,35 +25,6 @@ function sendError(res: Response, err: unknown, logLabel: string): void {
     success: false,
     message: err instanceof Error ? err.message : 'Unknown error',
   })
-}
-
-function numOrNull(value: number | string | null | undefined): number | null {
-  if (value === null || value === undefined || value === '') return null
-  const n = Number(value)
-  return Number.isFinite(n) ? n : null
-}
-
-function formatLabReport(report: ResidentLabReport): Record<string, unknown> {
-  const setting = report.labTestSetting
-  return {
-    id: report.id,
-    residentId: report.residentId,
-    locationId: report.locationId,
-    appointmentId: report.appointmentId,
-    labTestSettingId: report.labTestSettingId,
-    labTestName: setting?.name ?? null,
-    labTestImageUrl: setting?.imageUrl ?? null,
-    severity: report.severity,
-    reportDate: report.reportDate,
-    notes: report.notes,
-    cost: numOrNull(report.cost),
-    paymentMethod: report.paymentMethod,
-    reportFileUrl: report.reportFileUrl,
-    receiptFileUrl: report.receiptFileUrl,
-    isActive: report.isActive,
-    createdAt: report.createdAt,
-    updatedAt: report.updatedAt,
-  }
 }
 
 function getUploadFiles(req: AuthenticatedRequest) {
@@ -112,26 +88,12 @@ export async function listResidentLabReports(req: AuthenticatedRequest, res: Res
       return
     }
 
-    const rows = await ResidentLabReport.findAll({
-      where: { residentId, isDeleted: false },
-      include: [
-        {
-          model: LabTestSetting,
-          as: 'labTestSetting',
-          attributes: ['id', 'name', 'imageUrl', 'description'],
-          required: false,
-        },
-      ],
-      order: [
-        ['reportDate', 'DESC'],
-        ['createdAt', 'DESC'],
-      ],
-    })
+    const reports = await listResidentLabReportsForResident(residentId)
 
     res.status(200).json({
       success: true,
       message: 'Lab reports fetched successfully',
-      data: rows.map(formatLabReport),
+      data: reports,
     })
   } catch (err) {
     sendError(res, err, 'listResidentLabReports')
@@ -207,16 +169,7 @@ export async function createResidentLabReport(req: AuthenticatedRequest, res: Re
       updatedBy: createdBy,
     })
 
-    await report.reload({
-      include: [
-        {
-          model: LabTestSetting,
-          as: 'labTestSetting',
-          attributes: ['id', 'name', 'imageUrl', 'description'],
-          required: false,
-        },
-      ],
-    })
+    await report.reload({ include: labReportInclude })
 
     res.status(201).json({
       success: true,

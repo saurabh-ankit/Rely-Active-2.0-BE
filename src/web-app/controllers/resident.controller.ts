@@ -23,12 +23,21 @@ import {
   UserLocation,
   Role,
   ResidentCareTeam,
+  ResidentDocument,
+  ResidentConditionLog,
 } from '../../models/index.js'
 import { CareLevel, OwnershipType, ResidentStatus, ResidentType } from '../../enums/resident.enum.js'
 import { SubscriptionStatus } from '../../enums/packageSubscription.enum.js'
 import { OccupancyStatus } from '../../enums/propertyUnit.enum.js'
 import { uploadFileToS3, uploadBase64ToS3 } from '../../middlewares/s3/index.js'
 import { syncPackageTasksForResidents } from './careTaskAssignment.controller.js'
+import { getResidentClinicalChart, listResidentLabReportsForResident } from '../../services/residentClinical.service.js'
+import { formatResidentDocument, listResidentDocumentsForResident } from '../../services/residentDocument.service.js'
+import { getResidentTimeline } from '../../services/residentTimeline.service.js'
+import { getResidentCurrentCondition } from '../../services/residentCondition.service.js'
+import type { ResidentTimelineQuery } from '../../validations/residentTimeline.validation.js'
+import type { CreateResidentDocumentInput } from '../../validations/residentDocument.validation.js'
+import type { UpdateResidentConditionInput } from '../../validations/residentCondition.validation.js'
 import { verifyToken } from '../../utils/jwt.js'
 
 export async function createResident(req: AuthenticatedRequest, res: Response): Promise<void> {
@@ -1453,6 +1462,187 @@ export async function getResidentBillingData(req: Request, res: Response): Promi
     })
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Error fetching billing data'
+    res.status(500).json({ success: false, message })
+  }
+}
+
+// ── Clinical Chart ────────────────────────────────────────────────────────────
+
+/**
+ * GET /residents/:residentId/clinical
+ * Allergies, vitals, medications, insulin and completed doctor notes for a resident.
+ */
+export async function getResidentClinicalData(req: AuthenticatedRequest, res: Response): Promise<void> {
+  try {
+    const residentId = String(req.params.residentId || '').trim()
+    const resident = await Resident.findOne({ where: { id: residentId, isDeleted: false }, attributes: ['id'] })
+    if (!resident) {
+      res.status(404).json({ success: false, message: 'Resident not found' })
+      return
+    }
+
+    const data = await getResidentClinicalChart(residentId)
+    res.status(200).json({ success: true, message: 'Resident clinical chart fetched successfully', data })
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : 'Failed to fetch resident clinical chart'
+    res.status(500).json({ success: false, message })
+  }
+}
+
+/**
+ * POST /residents/:residentId/condition
+ * Body: condition (CRITICAL | STABLE | RECOVERING | GOOD), note (optional)
+ */
+export async function updateResidentCondition(req: AuthenticatedRequest, res: Response): Promise<void> {
+  try {
+    const residentId = String(req.params.residentId || '').trim()
+    const resident = await Resident.findOne({
+      where: { id: residentId, isDeleted: false },
+      attributes: ['id', 'locId'],
+    })
+    if (!resident) {
+      res.status(404).json({ success: false, message: 'Resident not found' })
+      return
+    }
+    if (!resident.locId) {
+      res.status(400).json({ success: false, message: 'Resident is not assigned to a location' })
+      return
+    }
+
+    const input = req.body as UpdateResidentConditionInput
+    const createdBy = req.user?.id ?? null
+
+    await ResidentConditionLog.create({
+      residentId,
+      locationId: resident.locId,
+      condition: input.condition,
+      note: input.note?.trim() || null,
+      isDeleted: false,
+      createdBy,
+      updatedBy: createdBy,
+    })
+
+    const data = await getResidentCurrentCondition(residentId)
+    res.status(201).json({ success: true, message: 'Resident condition updated successfully', data })
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : 'Failed to update resident condition'
+    res.status(500).json({ success: false, message })
+  }
+}
+
+/**
+ * GET /residents/:residentId/lab-reports
+ */
+export async function getResidentLabReports(req: AuthenticatedRequest, res: Response): Promise<void> {
+  try {
+    const residentId = String(req.params.residentId || '').trim()
+    const resident = await Resident.findOne({ where: { id: residentId, isDeleted: false }, attributes: ['id'] })
+    if (!resident) {
+      res.status(404).json({ success: false, message: 'Resident not found' })
+      return
+    }
+
+    const data = await listResidentLabReportsForResident(residentId)
+    res.status(200).json({ success: true, message: 'Lab reports fetched successfully', data })
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : 'Failed to fetch lab reports'
+    res.status(500).json({ success: false, message })
+  }
+}
+
+/**
+ * GET /residents/:residentId/documents
+ */
+export async function getResidentDocuments(req: AuthenticatedRequest, res: Response): Promise<void> {
+  try {
+    const residentId = String(req.params.residentId || '').trim()
+    const resident = await Resident.findOne({ where: { id: residentId, isDeleted: false }, attributes: ['id'] })
+    if (!resident) {
+      res.status(404).json({ success: false, message: 'Resident not found' })
+      return
+    }
+
+    const data = await listResidentDocumentsForResident(residentId)
+    res.status(200).json({ success: true, message: 'Resident documents fetched successfully', data })
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : 'Failed to fetch resident documents'
+    res.status(500).json({ success: false, message })
+  }
+}
+
+/**
+ * POST /residents/:residentId/documents
+ * Multipart: file (required), name (required), note (optional)
+ */
+export async function createResidentDocument(req: AuthenticatedRequest, res: Response): Promise<void> {
+  try {
+    const residentId = String(req.params.residentId || '').trim()
+    const files = req.files as { [fieldname: string]: Express.Multer.File[] } | undefined
+    const file = files?.file?.[0]
+    if (!file) {
+      res.status(400).json({ success: false, message: 'Document file is required' })
+      return
+    }
+
+    const resident = await Resident.findOne({
+      where: { id: residentId, isDeleted: false },
+      attributes: ['id', 'locId'],
+    })
+    if (!resident) {
+      res.status(404).json({ success: false, message: 'Resident not found' })
+      return
+    }
+    if (!resident.locId) {
+      res.status(400).json({ success: false, message: 'Resident is not assigned to a location' })
+      return
+    }
+
+    const input = req.body as CreateResidentDocumentInput
+    const createdBy = req.user?.id ?? null
+    const uploaded = await uploadFileToS3(file, 'resident-documents')
+
+    const document = await ResidentDocument.create({
+      residentId,
+      locationId: resident.locId,
+      name: input.name.trim(),
+      fileUrl: uploaded.location,
+      fileName: file.originalname || null,
+      mimeType: file.mimetype || null,
+      note: input.note?.trim() || null,
+      isActive: true,
+      isDeleted: false,
+      createdBy,
+      updatedBy: createdBy,
+    })
+
+    res.status(201).json({
+      success: true,
+      message: 'Document uploaded successfully',
+      data: formatResidentDocument(document),
+    })
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : 'Failed to upload document'
+    res.status(500).json({ success: false, message })
+  }
+}
+
+/**
+ * GET /residents/:residentId/timeline?startDate&endDate&page&limit&type&types
+ * Allergies, vitals, medications, insulin, lab reports, doctor visits, care tasks and condition changes merged newest first.
+ */
+export async function getResidentTimelineData(req: AuthenticatedRequest, res: Response): Promise<void> {
+  try {
+    const residentId = String(req.params.residentId || '').trim()
+    const resident = await Resident.findOne({ where: { id: residentId, isDeleted: false }, attributes: ['id'] })
+    if (!resident) {
+      res.status(404).json({ success: false, message: 'Resident not found' })
+      return
+    }
+
+    const data = await getResidentTimeline(residentId, req.query as unknown as ResidentTimelineQuery)
+    res.status(200).json({ success: true, message: 'Resident timeline fetched successfully', data })
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : 'Failed to fetch resident timeline'
     res.status(500).json({ success: false, message })
   }
 }

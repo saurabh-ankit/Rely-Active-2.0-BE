@@ -5,6 +5,7 @@ import { BaseAttributes, BaseModel, baseModelColumns } from './base.model.js'
 import type { Resident } from './resident.model.js'
 import type { DoctorAppointment } from './doctorAppointment.model.js'
 import type { LabTestSetting } from './labTestSetting.model.js'
+import type { User } from './user.model.js'
 
 export const LAB_REPORT_SEVERITIES = ['normal', 'abnormal', 'severe'] as const
 export type LabReportSeverity = (typeof LAB_REPORT_SEVERITIES)[number]
@@ -64,6 +65,7 @@ export class ResidentLabReport
   declare resident?: Resident
   declare appointment?: DoctorAppointment
   declare labTestSetting?: LabTestSetting
+  declare creator?: User
 }
 
 ResidentLabReport.init(

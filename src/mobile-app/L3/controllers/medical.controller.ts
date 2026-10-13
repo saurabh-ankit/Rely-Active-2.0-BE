@@ -485,6 +485,11 @@ export async function getNurseCareTasks(req: Request, res: Response): Promise<vo
     const todayStr = getTodayDateStr()
     const targetDateStr =
       typeof req.query.targetDate === 'string' && req.query.targetDate ? req.query.targetDate : todayStr
+    // dateScope=DAY limits completed tasks to those completed on targetDate (default: all-time)
+    const completedDayCondition: WhereOptions | null =
+      String(req.query.dateScope || '').toUpperCase() === 'DAY'
+        ? Sequelize.where(Sequelize.fn('DATE', Sequelize.col('ResidentCareTaskCompletion.completedAt')), targetDateStr)
+        : null
 
     const isAdmin = await isAdminOrSuperAdmin(authReq)
     let filterNurseId: string | null = null
@@ -632,7 +637,7 @@ export async function getNurseCareTasks(req: Request, res: Response): Promise<vo
     }
 
     const completedCount = await ResidentCareTaskCompletion.count({
-      where: completedCountWhere,
+      where: completedDayCondition ? { [Op.and]: [completedCountWhere, completedDayCondition] } : completedCountWhere,
     })
 
     // ── If Tab is PENDING ──
@@ -965,6 +970,7 @@ export async function getNurseCareTasks(req: Request, res: Response): Promise<vo
       { isDeleted: false },
       { status: 'COMPLETED' },
       ...(filterNurseId ? [{ completedBy: filterNurseId }] : []),
+      ...(completedDayCondition ? [completedDayCondition] : []),
       Sequelize.literal(`
         EXISTS (
           SELECT 1 FROM residents r 
@@ -1240,12 +1246,11 @@ export async function completeNurseCareTask(req: Request, res: Response): Promis
 // ══════════════════════════════════════════════════════════════════════════════
 
 /**
- * GET /api/v1/mobile/l3/medical/doctor/residents
- * Also alias: GET /api/v1/mobile/l3/medical/residents
- * Fetches residents assigned to the Doctor's property/location with basic details,
- * unit information, care package status, and count of active care tasks.
+ * Lists residents on the given staff member's care team (role DOCTOR or NURSE),
+ * narrowed to the staff member's shift scope for the target date when a shift exists.
+ * Admins see all residing residents of the location.
  */
-export async function getDoctorResidents(req: Request, res: Response): Promise<void> {
+async function listCareTeamResidents(req: Request, res: Response, role: 'DOCTOR' | 'NURSE'): Promise<void> {
   try {
     const authReq = req as AuthenticatedRequest
     const locId = await resolveUserLocationId(authReq)
@@ -1259,10 +1264,11 @@ export async function getDoctorResidents(req: Request, res: Response): Promise<v
     }
 
     if (!isAdmin) {
-      const targetDoctorId = (req.query.doctorId as string) || authReq.user?.id || null
-      if (targetDoctorId) {
+      const staffIdParam = role === 'NURSE' ? req.query.nurseId : req.query.doctorId
+      const targetStaffId = (staffIdParam as string) || authReq.user?.id || null
+      if (targetStaffId) {
         // 1. Resident Care Team Filter
-        const careTeamResidentIds = await getStaffCareTeamResidentIds(targetDoctorId, 'DOCTOR')
+        const careTeamResidentIds = await getStaffCareTeamResidentIds(targetStaffId, role)
         if (careTeamResidentIds.length === 0) {
           res.status(200).json({
             success: true,
@@ -1288,11 +1294,11 @@ export async function getDoctorResidents(req: Request, res: Response): Promise<v
         const todayStr = getTodayDateStr()
         const targetDateStr =
           typeof req.query.targetDate === 'string' && req.query.targetDate ? req.query.targetDate : todayStr
-        const doctorShifts = await getEmployeeActiveShifts(targetDoctorId, targetDateStr, locId)
+        const staffShifts = await getEmployeeActiveShifts(targetStaffId, targetDateStr, locId)
 
-        if (doctorShifts.length > 0) {
+        if (staffShifts.length > 0) {
           const shiftOrConditions: WhereOptions[] = []
-          for (const shift of doctorShifts) {
+          for (const shift of staffShifts) {
             if (shift.unitId) {
               shiftOrConditions.push({ unitId: shift.unitId })
             } else if (shift.floorId) {
@@ -1463,10 +1469,29 @@ export async function getDoctorResidents(req: Request, res: Response): Promise<v
       locationId: locId,
     })
   } catch (error) {
-    console.error('Error fetching doctor residents:', error)
+    console.error(`Error fetching ${role.toLowerCase()} residents:`, error)
     const message = error instanceof Error ? error.message : 'Failed to fetch location residents'
     res.status(500).json({ success: false, message })
   }
+}
+
+/**
+ * GET /api/v1/mobile/l3/medical/doctor/residents
+ * Also alias: GET /api/v1/mobile/l3/medical/residents
+ * Fetches residents assigned to the Doctor's property/location with basic details,
+ * unit information, care package status, and count of active care tasks.
+ */
+export async function getDoctorResidents(req: Request, res: Response): Promise<void> {
+  await listCareTeamResidents(req, res, 'DOCTOR')
+}
+
+/**
+ * GET /api/v1/mobile/l3/medical/nurse/residents
+ * Fetches residents on the logged-in Nurse's care team, narrowed to today's shift scope
+ * when the nurse has a shift. Supports `search`, `page`, `limit` (or `limit=all`) and `targetDate`.
+ */
+export async function getNurseResidents(req: Request, res: Response): Promise<void> {
+  await listCareTeamResidents(req, res, 'NURSE')
 }
 
 /**

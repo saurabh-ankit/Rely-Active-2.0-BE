@@ -1,6 +1,6 @@
 import { DataTypes, Optional } from 'sequelize'
 import sequelize from '../config/db/index.js'
-import { DiagnosisStatus } from '../enums/diagnosis.enum.js'
+import { DiagnosisCondition, DiagnosisStatus } from '../enums/diagnosis.enum.js'
 import { BaseAttributes, BaseModel, baseModelColumns } from './base.model.js'
 import type { DoctorAppointment } from './doctorAppointment.model.js'
 import type { Resident } from './resident.model.js'
@@ -38,6 +38,21 @@ export interface ConsultantMedicationEntry {
 /** Same shape as medication; inventory items must be packType vial. */
 export type ConsultantInsulinEntry = ConsultantMedicationEntry
 
+export type ConsultantFileType = 'IMAGE' | 'PDF' | 'AUDIO'
+
+/** A file uploaded to S3 with the diagnosis note (image/PDF attachment or voice note). */
+export interface ConsultantFileEntry {
+  id: string
+  url: string
+  key: string
+  name: string
+  contentType: string
+  size: number
+  fileType: ConsultantFileType
+  uploadedAt: string
+  uploadedByUserId: string
+}
+
 export interface ConsultantAttributes extends BaseAttributes {
   appointmentId: string
   residentId: string
@@ -48,6 +63,9 @@ export interface ConsultantAttributes extends BaseAttributes {
   medications: ConsultantMedicationEntry[]
   insulin: ConsultantInsulinEntry[]
   note?: string | null
+  attachments?: ConsultantFileEntry[] | null
+  voiceNotes?: ConsultantFileEntry[] | null
+  condition?: DiagnosisCondition | null
   status: DiagnosisStatus
   completedAt?: Date | null
   isActive?: boolean
@@ -62,6 +80,9 @@ export type ConsultantCreationAttributes = Optional<
   | 'medications'
   | 'insulin'
   | 'note'
+  | 'attachments'
+  | 'voiceNotes'
+  | 'condition'
   | 'status'
   | 'completedAt'
   | 'isActive'
@@ -85,6 +106,9 @@ export class Consultant
   declare medications: ConsultantMedicationEntry[]
   declare insulin: ConsultantInsulinEntry[]
   declare note: string | null
+  declare attachments: ConsultantFileEntry[] | null
+  declare voiceNotes: ConsultantFileEntry[] | null
+  declare condition: DiagnosisCondition | null
   declare status: DiagnosisStatus
   declare completedAt: Date | null
   declare isActive: boolean
@@ -142,6 +166,23 @@ Consultant.init(
     note: {
       type: DataTypes.TEXT,
       allowNull: true,
+    },
+    attachments: {
+      type: DataTypes.JSON,
+      allowNull: true,
+      defaultValue: [],
+      comment: 'Image/PDF files attached to the note (S3)',
+    },
+    voiceNotes: {
+      type: DataTypes.JSON,
+      allowNull: true,
+      defaultValue: [],
+      comment: 'Voice notes recorded with the note (S3)',
+    },
+    condition: {
+      type: DataTypes.ENUM(...Object.values(DiagnosisCondition)),
+      allowNull: true,
+      comment: 'Resident condition recorded by the doctor',
     },
     status: {
       type: DataTypes.ENUM(...Object.values(DiagnosisStatus)),

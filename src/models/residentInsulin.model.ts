@@ -5,6 +5,7 @@ import type { Resident } from './resident.model.js'
 import type { InventoryItem } from './inventoryItem.model.js'
 import type { DoctorAppointment } from './doctorAppointment.model.js'
 import type { MedicationTiming } from './residentMedication.model.js'
+import type { User } from './user.model.js'
 
 export interface ResidentInsulinAttributes extends BaseAttributes {
   residentId: string
@@ -55,6 +56,7 @@ export class ResidentInsulin
   declare resident?: Resident
   declare inventoryItem?: InventoryItem
   declare appointment?: DoctorAppointment
+  declare creator?: User
 }
 
 ResidentInsulin.init(

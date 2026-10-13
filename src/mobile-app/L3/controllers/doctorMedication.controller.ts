@@ -1,14 +1,7 @@
 import type { Response } from 'express'
 import type { AuthenticatedRequest } from '../../../middlewares/authenticate.js'
-import {
-  DoctorAppointment,
-  InventoryItem,
-  InventoryItemLocation,
-  Property,
-  UserLocation,
-} from '../../../models/index.js'
-import { InventoryStock } from '../../../models/inventoryStock.model.js'
-import { stockDisplay } from '../../../services/center-inventory.service.js'
+import { DoctorAppointment, Property, UserLocation } from '../../../models/index.js'
+import { listLocationMedicinesData } from '../../../services/residentMedication.service.js'
 import { isAdminOrSuperAdmin } from './medical.controller.js'
 
 async function assertLocationMedicineAccess(
@@ -68,54 +61,12 @@ export async function listLocationMedicines(req: AuthenticatedRequest, res: Resp
       return
     }
 
-    const search = typeof req.query.search === 'string' ? req.query.search.trim() : ''
-    const packType = typeof req.query.packType === 'string' ? req.query.packType.trim().toLowerCase() : ''
-    const excludePackType =
-      typeof req.query.excludePackType === 'string' ? req.query.excludePackType.trim().toLowerCase() : ''
-    const limitRaw = Number(req.query.limit)
-    const limit = Number.isFinite(limitRaw) && limitRaw > 0 ? Math.min(Math.floor(limitRaw), 100) : 50
-
-    const links = await InventoryItemLocation.findAll({ where: { locationId } })
-    const itemIds = links.map((l) => l.itemId)
-    if (itemIds.length === 0) {
-      res.status(200).json({
-        success: true,
-        message: 'Medicines fetched successfully',
-        data: { medicines: [] },
-      })
-      return
-    }
-
-    const [items, stocks] = await Promise.all([
-      InventoryItem.findAll({
-        where: { id: itemIds, isActive: true },
-        order: [['name', 'ASC']],
-      }),
-      InventoryStock.findAll({ where: { locationId } }),
-    ])
-
-    const stockMap = new Map(stocks.map((s) => [s.itemId, s.quantity]))
-    const medicines = items
-      .filter((item) => {
-        if (search && !item.name.toLowerCase().includes(search.toLowerCase())) return false
-        const itemPack = String(item.packType || '').toLowerCase()
-        if (packType && itemPack !== packType) return false
-        if (excludePackType && itemPack === excludePackType) return false
-        return true
-      })
-      .slice(0, limit)
-      .map((item) => {
-        const quantity = stockMap.get(item.id) ?? 0
-        return {
-          id: item.id,
-          name: item.name,
-          packType: item.packType,
-          packQuantity: item.packQuantity,
-          packUnit: item.packUnit,
-          quantity,
-          stockDisplay: stockDisplay(quantity, item),
-        }
-      })
+    const medicines = await listLocationMedicinesData(locationId, {
+      search: typeof req.query.search === 'string' ? req.query.search : undefined,
+      packType: typeof req.query.packType === 'string' ? req.query.packType : undefined,
+      excludePackType: typeof req.query.excludePackType === 'string' ? req.query.excludePackType : undefined,
+      limit: Number(req.query.limit) || undefined,
+    })
 
     res.status(200).json({
       success: true,

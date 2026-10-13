@@ -4,10 +4,10 @@ import { BaseAttributes, BaseModel, baseModelColumns } from './base.model.js'
 import type { Resident } from './resident.model.js'
 import type { InventoryItem } from './inventoryItem.model.js'
 import type { DoctorAppointment } from './doctorAppointment.model.js'
+import type { User } from './user.model.js'
+import type { MedicationMealTiming, MedicationRoute } from '../enums/medication.enum.js'
 
 export type MedicationTimeOfDay = 'morning' | 'afternoon' | 'evening' | 'night'
-export type MedicationRoute = 'oral' | 'iv' | 'im' | 'sc' | 'topical' | 'inhalation' | 'rectal' | 'other'
-export type MedicationMealTiming = 'before_food' | 'after_food' | 'with_food' | 'none'
 
 export interface MedicationTiming {
   timeOfDay: MedicationTimeOfDay
@@ -67,6 +67,7 @@ export class ResidentMedication
   declare resident?: Resident
   declare inventoryItem?: InventoryItem
   declare appointment?: DoctorAppointment
+  declare creator?: User
 }
 
 ResidentMedication.init(

@@ -1,19 +1,14 @@
 import type { Response } from 'express'
 import type { AuthenticatedRequest } from '../../../middlewares/authenticate.js'
 import {
-  Consultant,
   DoctorAppointment,
   Property,
   PropertyBlock,
   PropertyFloor,
   PropertyUnit,
   Resident,
-  ResidentAllergy,
-  ResidentInsulin,
-  ResidentMedication,
-  ResidentVital,
 } from '../../../models/index.js'
-import { DiagnosisStatus } from '../../../enums/diagnosis.enum.js'
+import { getResidentClinicalChart } from '../../../services/residentClinical.service.js'
 import { getStaffCareTeamResidentIds, isAdminOrSuperAdmin } from './medical.controller.js'
 
 function formatResidentProfile(resident: Resident) {
@@ -157,128 +152,14 @@ export async function getResidentClinical(req: AuthenticatedRequest, res: Respon
       return
     }
 
-    const [allergyRows, medicationRows, insulinRows, vitalRows] = await Promise.all([
-      ResidentAllergy.findAll({
-        where: { residentId, isDeleted: false },
-        order: [['recordedAt', 'DESC']],
-      }),
-      ResidentMedication.findAll({
-        where: { residentId, isDeleted: false },
-        order: [['createdAt', 'DESC']],
-      }),
-      ResidentInsulin.findAll({
-        where: { residentId, isDeleted: false },
-        order: [['createdAt', 'DESC']],
-      }),
-      ResidentVital.findAll({
-        where: { residentId, isDeleted: false },
-        order: [['recordedAt', 'DESC']],
-      }),
-    ])
-
-    const allergies = allergyRows.map((row) => {
-      const data = row.toJSON ? row.toJSON() : row
-      return {
-        id: data.id,
-        name: data.name,
-        note: data.note || null,
-        recordedAt: data.recordedAt instanceof Date ? data.recordedAt.toISOString() : String(data.recordedAt),
-        residentId: data.residentId,
-        locationId: data.locationId,
-        appointmentId: data.appointmentId || null,
-        createdAt: data.createdAt,
-        updatedAt: data.updatedAt,
-      }
-    })
-    const vitals = vitalRows.map((row) => {
-      const data = row.toJSON ? row.toJSON() : row
-      return {
-        id: data.id,
-        vitalSettingId: data.vitalSettingId || '',
-        name: data.name,
-        unit: data.unit || '',
-        value: data.value || '',
-        note: data.note || null,
-        recordedAt: data.recordedAt instanceof Date ? data.recordedAt.toISOString() : String(data.recordedAt),
-        residentId: data.residentId,
-        locationId: data.locationId,
-        appointmentId: data.appointmentId || null,
-        createdAt: data.createdAt,
-        updatedAt: data.updatedAt,
-      }
-    })
-    const medications = medicationRows.map((row) => {
-      const data = row.toJSON ? row.toJSON() : row
-      return {
-        id: data.id,
-        inventoryItemId: data.inventoryItemId,
-        medicineName: data.medicineName,
-        startDate: data.startDate,
-        endDate: data.endDate || null,
-        isUntilDischarge: Boolean(data.isUntilDischarge),
-        timings: Array.isArray(data.timings) ? data.timings : [],
-        note: data.note || null,
-        residentId: data.residentId,
-        locationId: data.locationId,
-        appointmentId: data.appointmentId || null,
-        createdAt: data.createdAt,
-        updatedAt: data.updatedAt,
-      }
-    })
-    const insulin = insulinRows.map((row) => {
-      const data = row.toJSON ? row.toJSON() : row
-      return {
-        id: data.id,
-        inventoryItemId: data.inventoryItemId,
-        medicineName: data.medicineName,
-        startDate: data.startDate,
-        endDate: data.endDate || null,
-        isUntilDischarge: Boolean(data.isUntilDischarge),
-        timings: Array.isArray(data.timings) ? data.timings : [],
-        note: data.note || null,
-        residentId: data.residentId,
-        locationId: data.locationId,
-        appointmentId: data.appointmentId || null,
-        createdAt: data.createdAt,
-        updatedAt: data.updatedAt,
-      }
-    })
-    const doctorNotes: Array<{
-      id: string
-      note: string
-      completedAt: string | null
-      doctorId: string
-      appointmentId: string
-    }> = []
-
-    const consultants = await Consultant.findAll({
-      where: { residentId, isDeleted: false },
-      order: [['updatedAt', 'DESC']],
-    })
-
-    for (const row of consultants) {
-      const data = row.toJSON ? row.toJSON() : row
-      if (data.status === DiagnosisStatus.COMPLETED && data.note && String(data.note).trim()) {
-        doctorNotes.push({
-          id: data.id,
-          note: data.note,
-          completedAt: data.completedAt ? new Date(data.completedAt).toISOString() : null,
-          doctorId: data.doctorId,
-          appointmentId: data.appointmentId,
-        })
-      }
-    }
+    const chart = await getResidentClinicalChart(residentId)
 
     res.status(200).json({
       success: true,
       message: 'Resident clinical chart fetched successfully',
       data: {
         profile: formatResidentProfile(resident),
-        allergies,
-        vitals,
-        medications,
-        insulin,
-        doctorNotes,
+        ...chart,
       },
     })
   } catch (err) {

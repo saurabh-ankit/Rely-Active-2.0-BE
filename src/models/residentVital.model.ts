@@ -4,6 +4,7 @@ import { BaseAttributes, BaseModel, baseModelColumns } from './base.model.js'
 import type { Resident } from './resident.model.js'
 import type { DoctorAppointment } from './doctorAppointment.model.js'
 import type { VitalSetting } from './vitalSetting.model.js'
+import type { User } from './user.model.js'
 
 export interface ResidentVitalAttributes extends BaseAttributes {
   residentId: string
@@ -54,6 +55,7 @@ export class ResidentVital
   declare resident?: Resident
   declare appointment?: DoctorAppointment
   declare vitalSetting?: VitalSetting
+  declare creator?: User
 }
 
 ResidentVital.init(

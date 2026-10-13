@@ -3,6 +3,7 @@ import sequelize from '../config/db/index.js'
 import { BaseAttributes, BaseModel, baseModelColumns } from './base.model.js'
 import type { Resident } from './resident.model.js'
 import type { DoctorAppointment } from './doctorAppointment.model.js'
+import type { User } from './user.model.js'
 
 export interface ResidentAllergyAttributes extends BaseAttributes {
   residentId: string
@@ -35,6 +36,7 @@ export class ResidentAllergy
 
   declare resident?: Resident
   declare appointment?: DoctorAppointment
+  declare creator?: User
 }
 
 ResidentAllergy.init(

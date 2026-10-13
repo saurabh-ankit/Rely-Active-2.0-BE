@@ -6,6 +6,11 @@ export const residentIdParamSchema = z.object({
   residentId: z.string().uuid('Valid resident ID is required'),
 })
 
+export const residentClinicalItemParamSchema = z.object({
+  residentId: z.string().uuid('Valid resident ID is required'),
+  id: z.string().uuid('Valid record ID is required'),
+})
+
 const optionalCost = z
   .union([z.number(), z.string(), z.null(), z.undefined()])
   .transform((val): number | null => {
@@ -52,4 +57,15 @@ export const createResidentLabReportSchema = z.object({
     .or(z.literal('').transform(() => null)),
 })
 
+export const updateResidentLabReportSchema = createResidentLabReportSchema
+  .omit({ locationId: true, appointmentId: true })
+  .partial()
+  .extend({
+    removeReceipt: z
+      .union([z.boolean(), z.enum(['true', 'false'])])
+      .transform((val) => val === true || val === 'true')
+      .optional(),
+  })
+
 export type CreateResidentLabReportInput = z.infer<typeof createResidentLabReportSchema>
+export type UpdateResidentLabReportInput = z.infer<typeof updateResidentLabReportSchema>
