@@ -816,6 +816,19 @@ export const updateEmployeeShift = async (req: AuthenticatedRequest, res: Respon
       return res.status(404).json(errorResponse('Assignment not found'))
     }
 
+    // A roster can be edited only until it starts; after that its days are being worked.
+    const today = todayYmdLocal()
+    const currentStart = String(assignment.startDate).slice(0, 10)
+    if (today >= currentStart) {
+      return res.status(400).json(errorResponse(`This roster started on ${currentStart} and can no longer be edited.`))
+    }
+    if (payload.startDate && payload.startDate < today) {
+      return res.status(400).json(errorResponse('The start date cannot be in the past.'))
+    }
+    if (payload.startDate && payload.endDate && payload.endDate < payload.startDate) {
+      return res.status(400).json(errorResponse('The end date must be on or after the start date.'))
+    }
+
     const assignmentData = assignment.toJSON()
     const nextStart = payload.startDate || assignmentData.startDate
     const nextEnd = payload.endDate || assignmentData.endDate
