@@ -10,6 +10,8 @@ export interface PropertyFloorAttributes extends BaseAttributes {
   floor_name?: string | null
   floor_type?: string | null
   is_sellable?: boolean
+  /** Hidden floor created for entities that don't use floors. */
+  is_virtual?: boolean
   description?: string | null
   isActive?: boolean
   isDeleted?: boolean
@@ -21,6 +23,7 @@ export type PropertyFloorCreationAttributes = Optional<
   | 'floor_name'
   | 'floor_type'
   | 'is_sellable'
+  | 'is_virtual'
   | 'description'
   | 'isActive'
   | 'isDeleted'
@@ -40,6 +43,7 @@ export class PropertyFloor
   declare floor_name: string | null
   declare floor_type: string | null
   declare is_sellable: boolean
+  declare is_virtual: boolean
   declare description: string | null
   declare isActive: boolean
   declare isDeleted: boolean
@@ -68,6 +72,11 @@ PropertyFloor.init(
       allowNull: true,
       defaultValue: 'FLOOR',
       comment: 'FLOOR, GROUND_FLOOR, BASEMENT, STILT, PENTHOUSE',
+    },
+    is_virtual: {
+      type: DataTypes.BOOLEAN,
+      allowNull: false,
+      defaultValue: false,
     },
     is_sellable: {
       type: DataTypes.BOOLEAN,

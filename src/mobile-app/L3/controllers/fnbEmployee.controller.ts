@@ -1265,7 +1265,7 @@ export async function getResidentOrdersForProperty(req: Request, res: Response):
                 {
                   model: PropertyFloor,
                   as: 'floor',
-                  attributes: ['id', 'floor_number', 'floor_name'],
+                  attributes: ['id', 'floor_number', 'floor_name', 'is_virtual'],
                   include: [
                     {
                       model: PropertyBlock,
@@ -1296,7 +1296,7 @@ export async function getResidentOrdersForProperty(req: Request, res: Response):
                     {
                       model: PropertyFloor,
                       as: 'floor',
-                      attributes: ['id', 'floor_number', 'floor_name'],
+                      attributes: ['id', 'floor_number', 'floor_name', 'is_virtual'],
                       include: [
                         {
                           model: PropertyBlock,
@@ -1520,7 +1520,7 @@ export async function getAssignedDeliveries(req: Request, res: Response): Promis
                     {
                       model: PropertyFloor,
                       as: 'floor',
-                      attributes: ['id', 'floor_number', 'floor_name'],
+                      attributes: ['id', 'floor_number', 'floor_name', 'is_virtual'],
                       include: [
                         {
                           model: PropertyBlock,

@@ -5,6 +5,8 @@ import { Op, type WhereOptions } from 'sequelize'
 import { checkUsernameAvailability } from '../../utils/usernameValidation.js'
 import {
   Property,
+  PropertyBlock,
+  PropertyEntity,
   PropertyFloor,
   PropertyUnit,
   Resident,
@@ -418,7 +420,21 @@ export async function getAllResidents(req: Request, res: Response): Promise<void
         {
           model: PropertyUnit,
           as: 'unit',
-          include: [{ model: PropertyFloor, as: 'floor' }],
+          include: [
+            {
+              model: PropertyFloor,
+              as: 'floor',
+              include: [
+                {
+                  model: PropertyBlock,
+                  as: 'block',
+                  attributes: ['id', 'block_name', 'is_virtual', 'entityId'],
+                  // The entity (Apartment, Villa…) so lists can say which one the home is in.
+                  include: [{ model: PropertyEntity, as: 'entity', attributes: ['id', 'name', 'entity_type'] }],
+                },
+              ],
+            },
+          ],
         },
         { model: ResidentFamilyMember, as: 'familyMembers', where: { isDeleted: false }, required: false },
         { model: Package, as: 'carePackage', required: false },
@@ -453,7 +469,21 @@ export async function getResidentById(req: Request, res: Response): Promise<void
         {
           model: PropertyUnit,
           as: 'unit',
-          include: [{ model: PropertyFloor, as: 'floor' }],
+          include: [
+            {
+              model: PropertyFloor,
+              as: 'floor',
+              include: [
+                {
+                  model: PropertyBlock,
+                  as: 'block',
+                  attributes: ['id', 'block_name', 'is_virtual', 'entityId'],
+                  // The entity (Apartment, Villa…) so lists can say which one the home is in.
+                  include: [{ model: PropertyEntity, as: 'entity', attributes: ['id', 'name', 'entity_type'] }],
+                },
+              ],
+            },
+          ],
         },
         { model: ResidentFamilyMember, as: 'familyMembers', where: { isDeleted: false }, required: false },
         { model: Package, as: 'carePackage', required: false },

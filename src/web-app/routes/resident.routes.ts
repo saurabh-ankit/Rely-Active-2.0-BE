@@ -12,8 +12,12 @@ import {
   removeCareTeamMember,
 } from '../controllers/resident.controller.js'
 import { upload } from '../../middlewares/upload.js'
+import { authenticate } from '../../middlewares/authenticate.js'
 
 const router = Router()
+
+// Every resident route needs a signed-in user.
+router.use(authenticate)
 
 const uploadResidentPhoto = upload.fields([
   { name: 'photo', maxCount: 1 },

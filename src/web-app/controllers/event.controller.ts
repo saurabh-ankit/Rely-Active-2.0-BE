@@ -2266,7 +2266,7 @@ const eventRequestResidentInclude = {
         {
           model: PropertyFloor,
           as: 'floor',
-          attributes: ['id', 'floor_name', 'floor_number'],
+          attributes: ['id', 'floor_name', 'floor_number', 'is_virtual'],
           required: false,
           include: [
             {

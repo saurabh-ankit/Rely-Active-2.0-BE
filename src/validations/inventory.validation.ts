@@ -93,7 +93,7 @@ export const itemVendorsSchema = z
       .max(1000)
       .refine(
         (v) => new Set(v.map((x) => `${x.vendorId}:${x.locationId}`)).size === v.length,
-        'Duplicate vendor assignments are not allowed',
+        'Duplicate supplier assignments are not allowed',
       ),
   })
   .strict()

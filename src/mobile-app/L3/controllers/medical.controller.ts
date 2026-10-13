@@ -667,7 +667,7 @@ export async function getNurseCareTasks(req: Request, res: Response): Promise<vo
                   {
                     model: PropertyFloor,
                     as: 'floor',
-                    attributes: ['id', 'floor_name', 'blockId'],
+                    attributes: ['id', 'floor_name', 'blockId', 'is_virtual'],
                     required: false,
                     include: [
                       {
@@ -1017,7 +1017,7 @@ export async function getNurseCareTasks(req: Request, res: Response): Promise<vo
                 {
                   model: PropertyFloor,
                   as: 'floor',
-                  attributes: ['id', 'floor_name', 'blockId'],
+                  attributes: ['id', 'floor_name', 'blockId', 'is_virtual'],
                   required: false,
                   include: [
                     {
@@ -1358,7 +1358,7 @@ export async function getDoctorResidents(req: Request, res: Response): Promise<v
             {
               model: PropertyFloor,
               as: 'floor',
-              attributes: ['id', 'floor_number', 'floor_name', 'blockId'],
+              attributes: ['id', 'floor_number', 'floor_name', 'blockId', 'is_virtual'],
               include: [
                 {
                   model: PropertyBlock,
@@ -1512,7 +1512,7 @@ export async function getDoctorResidentDetails(req: Request, res: Response): Pro
             {
               model: PropertyFloor,
               as: 'floor',
-              attributes: ['id', 'floor_number', 'floor_name', 'blockId'],
+              attributes: ['id', 'floor_number', 'floor_name', 'blockId', 'is_virtual'],
               include: [
                 {
                   model: PropertyBlock,
