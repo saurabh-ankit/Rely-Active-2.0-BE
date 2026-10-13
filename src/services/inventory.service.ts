@@ -266,7 +266,7 @@ async function replaceLocations(
       transaction,
     }))
   )
-    throw new InventoryError(409, 'Remove dependent item/vendor assignments first', 'locationIds')
+    throw new InventoryError(409, 'Remove dependent item/supplier assignments first', 'locationIds')
   if (kind === 'items') {
     const item = await InventoryItem.findByPk(id, { transaction })
     if (!item) throw new InventoryError(404, 'Item not found')
@@ -403,7 +403,7 @@ export async function saveItemVendors(
         })) ||
         !(await InventoryVendorLocation.count({ where: assignment, transaction }))
       )
-        throw new InventoryError(400, 'Vendor and item must both be assigned to the selected location', 'assignments')
+        throw new InventoryError(400, 'Supplier and item must both be assigned to the selected location', 'assignments')
     }
     await validateLocations([...new Set(assignments.map((a) => a.locationId))], transaction)
     await InventoryItemVendor.destroy({ where: { itemId: id }, transaction })
