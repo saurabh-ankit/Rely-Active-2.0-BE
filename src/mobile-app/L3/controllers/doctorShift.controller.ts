@@ -185,7 +185,7 @@ function assignmentIncludeForLocation() {
     {
       model: PropertyFloor,
       as: 'floor',
-      attributes: ['id', 'floor_name', 'floor_number'],
+      attributes: ['id', 'floor_name', 'floor_number', 'is_virtual'],
       required: false,
     },
     {
@@ -672,7 +672,7 @@ export async function getDoctorShiftResidents(req: AuthenticatedRequest, res: Re
             {
               model: PropertyFloor,
               as: 'floor',
-              attributes: ['id', 'floor_number', 'floor_name', 'blockId'],
+              attributes: ['id', 'floor_number', 'floor_name', 'blockId', 'is_virtual'],
               include: [
                 {
                   model: PropertyBlock,

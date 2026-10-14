@@ -13,6 +13,7 @@ import { Company } from './company.model.js'
 import { CompanyCustomField } from './companyCustomField.model.js'
 import { Property } from './property.model.js'
 import { PropertyBlock } from './propertyBlock.model.js'
+import { PropertyEntity } from './propertyEntity.model.js'
 import { PropertyFloor } from './propertyFloor.model.js'
 import { PropertyUnit } from './propertyUnit.model.js'
 import { User } from './user.model.js'
@@ -266,7 +267,13 @@ CompanyCustomField.belongsTo(Company, { foreignKey: 'companyId', as: 'company' }
 Company.hasMany(Property, { foreignKey: 'companyId', as: 'properties' })
 Property.belongsTo(Company, { foreignKey: 'companyId', as: 'company' })
 
-// ── Property → Block → Floor → Unit ─────────────────────────────────────────
+// ── Property → Entity → Block → Floor → Unit ────────────────────────────────
+Property.hasMany(PropertyEntity, { foreignKey: 'propertyId', as: 'entities' })
+PropertyEntity.belongsTo(Property, { foreignKey: 'propertyId', as: 'property' })
+
+PropertyEntity.hasMany(PropertyBlock, { foreignKey: 'entityId', as: 'blocks' })
+PropertyBlock.belongsTo(PropertyEntity, { foreignKey: 'entityId', as: 'entity' })
+
 Property.hasMany(PropertyBlock, { foreignKey: 'propertyId', as: 'blocks' })
 PropertyBlock.belongsTo(Property, { foreignKey: 'propertyId', as: 'property' })
 
@@ -701,6 +708,14 @@ GateEntry.belongsTo(GatePreapproved, { foreignKey: 'preapprovedId', as: 'preappr
 GateEntry.belongsTo(User, { foreignKey: 'clockedInBy', as: 'clockedInByUser' })
 GateEntry.belongsTo(User, { foreignKey: 'clockedOutBy', as: 'clockedOutByUser' })
 GateEntry.belongsTo(User, { foreignKey: 'approvedBy', as: 'approvedByUser' })
+// Who raised the entry: the guard for a walk-in (createdBy has no FK, hence constraints: false).
+GateEntry.belongsTo(User, { foreignKey: 'createdBy', as: 'createdByUser', constraints: false })
+// A pre-approval's createdBy is the resident or the family member who made it; this resolves the latter.
+GatePreapproved.belongsTo(ResidentFamilyMember, {
+  foreignKey: 'createdBy',
+  as: 'createdByFamilyMember',
+  constraints: false,
+})
 // ── Global Services associations ───────────────────────────────────────────
 EventGlobalService.hasMany(EventGlobalServiceProperty, { foreignKey: 'globalServiceId', as: 'propertyServices' })
 EventGlobalServiceProperty.belongsTo(EventGlobalService, { foreignKey: 'globalServiceId', as: 'globalService' })
@@ -1103,6 +1118,7 @@ export {
   CompanyCustomField,
   Property,
   PropertyBlock,
+  PropertyEntity,
   PropertyFloor,
   PropertyUnit,
   User,

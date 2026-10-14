@@ -632,7 +632,7 @@ export const listEmployeeShifts = async (req: AuthenticatedRequest, res: Respons
         },
         {
           association: 'floor',
-          attributes: ['id', 'floor_name', 'floor_number'],
+          attributes: ['id', 'floor_name', 'floor_number', 'is_virtual'],
         },
         {
           association: 'unit',
@@ -814,6 +814,19 @@ export const updateEmployeeShift = async (req: AuthenticatedRequest, res: Respon
     })
     if (!assignment) {
       return res.status(404).json(errorResponse('Assignment not found'))
+    }
+
+    // A roster can be edited only until it starts; after that its days are being worked.
+    const today = todayYmdLocal()
+    const currentStart = String(assignment.startDate).slice(0, 10)
+    if (today >= currentStart) {
+      return res.status(400).json(errorResponse(`This roster started on ${currentStart} and can no longer be edited.`))
+    }
+    if (payload.startDate && payload.startDate < today) {
+      return res.status(400).json(errorResponse('The start date cannot be in the past.'))
+    }
+    if (payload.startDate && payload.endDate && payload.endDate < payload.startDate) {
+      return res.status(400).json(errorResponse('The end date must be on or after the start date.'))
     }
 
     const assignmentData = assignment.toJSON()
@@ -1901,7 +1914,7 @@ export const generateShiftEmployeeDates = async (req: AuthenticatedRequest, res:
 export const listShiftEmployeeDates = async (req: AuthenticatedRequest, res: Response) => {
   try {
     const locationId = asParamString(req.params.locationId)
-    const { assignmentId, date, status, includeDeleted } = req.query
+    const { assignmentId, date, status, includeDeleted, employeeId, from, to } = req.query
 
     // Advance time-based statuses before filtering so completed rows match status queries.
     await syncShiftDateLifecycleStatuses(locationId)
@@ -1912,6 +1925,11 @@ export const listShiftEmployeeDates = async (req: AuthenticatedRequest, res: Res
     if (assignmentId) where.employeeShiftAssignmentId = assignmentId
     if (date) where.date = date
     if (status) where.status = status
+    // Optional narrowing for one employee's calendar: their own dates plus dates they cover.
+    if (typeof from === 'string' && typeof to === 'string' && from && to) where.date = { [Op.between]: [from, to] }
+    if (typeof employeeId === 'string' && employeeId) {
+      where[Op.or] = [{ '$shiftAssignment.employeeId$': employeeId }, { coveredByEmployeeId: employeeId }]
+    }
 
     const shiftDates = await ShiftDate.findAll({
       where,
@@ -1943,7 +1961,7 @@ export const listShiftEmployeeDates = async (req: AuthenticatedRequest, res: Res
             },
             {
               association: 'floor',
-              attributes: ['id', 'floor_name', 'floor_number'],
+              attributes: ['id', 'floor_name', 'floor_number', 'is_virtual'],
             },
             {
               association: 'unit',
@@ -2408,7 +2426,7 @@ export const listShiftResidentPool = async (req: AuthenticatedRequest, res: Resp
             {
               model: PropertyFloor,
               as: 'floor',
-              attributes: ['id', 'floor_name', 'floor_number'],
+              attributes: ['id', 'floor_name', 'floor_number', 'is_virtual'],
               include: [
                 {
                   model: PropertyBlock,

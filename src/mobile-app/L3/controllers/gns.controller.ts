@@ -2,6 +2,7 @@ import { Request, Response } from 'express'
 import { GateEntry, GatePreapproved, PropertyUnit, PropertyFloor, PropertyBlock } from '../../../models/index.js'
 import { Op } from 'sequelize'
 import { uploadBase64ToS3 } from '../../../middlewares/s3/index.js'
+import { approverFromRequest, residentApprover } from '../../../services/gateApproval.service.js'
 
 export const createWalkin = async (req: Request, res: Response) => {
   try {
@@ -72,6 +73,8 @@ export const createWalkin = async (req: Request, res: Response) => {
           visitorName: v.name,
           visitorPhone: v.phone,
           status: 'PendingApproval', // L3 creates Walk-in -> Request Sent for Approval
+          // The guard who raised the pass for the resident's approval.
+          createdBy: (req as Request & { user?: { id: string } }).user?.id || null,
           vehicleNumber,
           visitorPhotos: finalPhotoUrls.length > 0 ? finalPhotoUrls : null,
           notes,
@@ -171,6 +174,8 @@ export const rejectScan = async (req: Request, res: Response) => {
       visitorPhone: preapproved.visitorPhone,
       status: 'Rejected',
       clockedInBy: (req as Request & { user?: { id: string } }).user?.id || null,
+      // The guard turned the pass down at the gate.
+      ...(await approverFromRequest(req)),
       vehicleNumber: preapproved.vehicleNumber,
       visitorPhotos: preapproved.visitorPhotos,
       notes: preapproved.notes,
@@ -205,6 +210,8 @@ export const clockIn = async (req: Request, res: Response) => {
         status: 'Inside',
         clockedInAt: new Date(),
         clockedInBy: (req as Request & { user?: { id: string } }).user?.id || null,
+        // The resident approved this visitor when they created the pass; the guard only lets them in.
+        ...(preapproved.residentId ? await residentApprover(preapproved.residentId, preapproved.createdAt) : {}),
         vehicleNumber: vehicleNumber || preapproved.vehicleNumber,
         visitorPhotos: preapproved.visitorPhotos,
         notes: preapproved.notes,
@@ -224,6 +231,8 @@ export const clockIn = async (req: Request, res: Response) => {
         clockedInAt: new Date(),
         clockedInBy: (req as Request & { user?: { id: string } }).user?.id || null,
         vehicleNumber,
+        // No resident approved this walk-in, so the guard letting them in is the approver.
+        ...(!entry.approverType ? await approverFromRequest(req) : {}),
       })
     } else {
       return res.status(400).json({ success: false, message: 'Provide either preapprovedId or entryId' })

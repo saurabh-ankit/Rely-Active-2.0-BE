@@ -61,6 +61,9 @@ import { updateResidentConditionSchema } from '../../validations/residentConditi
 
 const router = Router()
 
+// Every resident route needs a signed-in user.
+router.use(authenticate)
+
 const uploadResidentPhoto = upload.fields([
   { name: 'photo', maxCount: 1 },
   { name: 'avatar', maxCount: 1 },

@@ -1,6 +1,7 @@
 import express from 'express'
 import multer from 'multer'
 import { authenticate } from '../../middlewares/authenticate.js'
+import { resourceGuard } from '../../middlewares/authorizeResource.js'
 import { validateRequest } from '../../middlewares/validateRequest.js'
 import {
   completeServiceLogValidation,
@@ -131,6 +132,28 @@ const upload = multer({
     fileSize: 10 * 1024 * 1024,
   },
 })
+
+// Sub-module permissions. Categories, vendors, items and the asset list are read by
+// several tabs' forms, so reading them only needs Asset access; changes need the tab.
+router.use(
+  authenticate,
+  resourceGuard(
+    [
+      { match: '/categories', keys: 'ASSET.CATEGORIES', readKeys: 'ASSET' },
+      { match: '/vendors', keys: 'ASSET.VENDORS', readKeys: 'ASSET' },
+      { match: '/items', keys: 'ASSET.ITEMS', readKeys: 'ASSET' },
+      { match: '/assignments', keys: 'ASSET.ASSIGNMENTS' },
+      { match: '/assignees', keys: 'ASSET.ASSIGNMENTS' },
+      { match: '/maintenance', keys: 'ASSET.MAINTENANCE' },
+      { match: '/compliance', keys: 'ASSET.COMPLIANCE' },
+      { match: '/stats', keys: 'ASSET' },
+      { match: '/bulk', keys: 'ASSET.ASSETS', action: 'create' },
+      // The asset register itself ('/' and '/:id'); the other tabs read it too.
+      { match: /^\//, keys: 'ASSET.ASSETS', readKeys: 'ASSET' },
+    ],
+    'ASSET.ASSETS',
+  ),
+)
 
 // ==================== CATEGORY ROUTES ====================
 router.post('/categories', authenticate, createCategoryValidation, validateRequest, createCategory)

@@ -4,6 +4,9 @@ import { BaseAttributes, BaseModel, baseModelColumns } from './base.model.js'
 
 export interface PropertyBlockAttributes extends BaseAttributes {
   propertyId: string
+  entityId?: string | null
+  /** Hidden block created for entities that don't use blocks. */
+  is_virtual?: boolean
   block_name: string
   total_floors?: number | null
   units_per_floor?: number | null
@@ -11,6 +14,8 @@ export interface PropertyBlockAttributes extends BaseAttributes {
   price_per_sqft?: number | null
   nomenclature_template?: string | null
   bhk_templates?: unknown | null
+  /** Order inside the entity; group unit numbers run in this order. */
+  sort_order?: number
   description?: string | null
   isActive?: boolean
   isDeleted?: boolean
@@ -19,12 +24,15 @@ export interface PropertyBlockAttributes extends BaseAttributes {
 export type PropertyBlockCreationAttributes = Optional<
   PropertyBlockAttributes,
   | 'id'
+  | 'entityId'
+  | 'is_virtual'
   | 'total_floors'
   | 'units_per_floor'
   | 'prefix'
   | 'price_per_sqft'
   | 'nomenclature_template'
   | 'bhk_templates'
+  | 'sort_order'
   | 'description'
   | 'isActive'
   | 'isDeleted'
@@ -39,6 +47,8 @@ export class PropertyBlock
   implements PropertyBlockAttributes
 {
   declare propertyId: string
+  declare entityId: string | null
+  declare is_virtual: boolean
   declare block_name: string
   declare total_floors: number | null
   declare units_per_floor: number | null
@@ -46,6 +56,7 @@ export class PropertyBlock
   declare price_per_sqft: number | null
   declare nomenclature_template: string | null
   declare bhk_templates: unknown | null
+  declare sort_order: number
   declare description: string | null
   declare isActive: boolean
   declare isDeleted: boolean
@@ -58,6 +69,15 @@ PropertyBlock.init(
       type: DataTypes.UUID,
       allowNull: false,
       comment: 'FK → properties.id',
+    },
+    entityId: {
+      type: DataTypes.UUID,
+      allowNull: true,
+    },
+    is_virtual: {
+      type: DataTypes.BOOLEAN,
+      allowNull: false,
+      defaultValue: false,
     },
     block_name: {
       type: DataTypes.STRING(100),
@@ -89,6 +109,7 @@ PropertyBlock.init(
       allowNull: true,
       comment: 'BHK template variants JSON array',
     },
+    sort_order: { type: DataTypes.INTEGER, allowNull: false, defaultValue: 0 },
     description: {
       type: DataTypes.TEXT,
       allowNull: true,
