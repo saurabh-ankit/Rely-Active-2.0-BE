@@ -60,6 +60,8 @@ import { FeedbackQuestion } from './feedbackQuestion.model.js'
 import { FeedbackFormRecipient } from './feedbackFormRecipient.model.js'
 import { FeedbackAnswer } from './feedbackAnswer.model.js'
 import { TicketTatHistory } from './ticketTatHistory.model.js'
+import { NotificationEvent } from './notificationEvent.model.js'
+import { NotificationInbox } from './notificationInbox.model.js'
 import { Specialization } from './specialization.model.js'
 import { DoctorSpecialization } from './doctorSpecialization.model.js'
 import { GatePreapproved } from './gatePreapproved.model.js'
@@ -583,6 +585,22 @@ Ticket.belongsTo(User, { foreignKey: 'workStartedByUserId', as: 'workStartedByUs
 Ticket.belongsTo(User, { foreignKey: 'completedByUserId', as: 'completedByUser' })
 Ticket.belongsTo(User, { foreignKey: 'verifiedByUserId', as: 'verifiedByUser' })
 
+// ── Notifications (module-agnostic, in-app inbox) ──────────────────────────
+NotificationEvent.hasMany(NotificationInbox, { foreignKey: 'eventId', as: 'recipients' })
+NotificationInbox.belongsTo(NotificationEvent, { foreignKey: 'eventId', as: 'event' })
+
+NotificationEvent.belongsTo(User, { foreignKey: 'actorUserId', as: 'actorUser' })
+NotificationEvent.belongsTo(Resident, { foreignKey: 'actorResidentId', as: 'actorResident' })
+NotificationEvent.belongsTo(ResidentFamilyMember, { foreignKey: 'actorFamilyMemberId', as: 'actorFamilyMember' })
+NotificationEvent.belongsTo(Property, { foreignKey: 'locationId', as: 'location' })
+
+NotificationInbox.belongsTo(User, { foreignKey: 'recipientUserId', as: 'recipientUser' })
+NotificationInbox.belongsTo(Resident, { foreignKey: 'recipientResidentId', as: 'recipientResident' })
+NotificationInbox.belongsTo(ResidentFamilyMember, {
+  foreignKey: 'recipientFamilyMemberId',
+  as: 'recipientFamilyMember',
+})
+
 // ── Doctor specializations ─────────────────────────────────────────────────
 User.belongsToMany(Specialization, {
   through: DoctorSpecialization,
@@ -1067,6 +1085,8 @@ export {
   TicketActivityLog,
   TicketFeedback,
   TicketTatHistory,
+  NotificationEvent,
+  NotificationInbox,
   AiInteractionLog,
   type AiInteractionLogAttributes,
   type AiInteractionLogCreationAttributes,

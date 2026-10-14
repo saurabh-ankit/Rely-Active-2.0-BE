@@ -31,6 +31,7 @@ import medicalRouter from './medical.routes.js'
 import dashboardRouter from './dashboard.routes.js'
 import advertisementRouter from './advertisement.routes.js'
 import feedbackFormRouter from './feedback.routes.js'
+import notificationRouter from './notification.routes.js'
 
 export const apiRouter = Router()
 
@@ -91,5 +92,8 @@ apiRouter.use('/location/:locationId/dashboard', dashboardRouter)
 // Feedback & Advertisements
 apiRouter.use('/location/:locationId/advertisements', advertisementRouter)
 apiRouter.use('/location/:locationId/feedback-forms', feedbackFormRouter)
+
+// In-app notifications (tickets first, module-agnostic design)
+apiRouter.use('/notifications', notificationRouter)
 
 export default apiRouter

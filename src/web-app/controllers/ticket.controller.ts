@@ -27,6 +27,8 @@ import {
 } from '../../models/index.js'
 import { TicketActivityType, TicketPriority, TicketStatus } from '../../enums/ticket.enum.js'
 import { uploadFileToS3 } from '../../middlewares/s3/index.js'
+import { resolveNotificationActor } from '../../services/notifications/notificationAudience.service.js'
+import { publishTicketNotificationSafe } from '../../services/notifications/ticketNotification.service.js'
 
 /**
  * Fetch master ticket categories and sub-categories
@@ -787,6 +789,22 @@ export async function createTicket(req: AuthenticatedRequest, res: Response): Pr
       comment: `Ticket created with number ${ticketNumber}`,
       attachments: finalAttachments,
       createdBy: userId,
+    })
+
+    // Keep notifications non-blocking: ticket creation should succeed even if
+    // inbox fan-out has a temporary issue.
+    await publishTicketNotificationSafe({
+      ticket,
+      eventCode: 'TICKET_CREATED',
+      title: 'New ticket created',
+      message: `${ticket.title || 'Ticket'} has been created (${ticket.ticketNumber}).`,
+      actor: resolveNotificationActor(req, userName),
+      dedupeKey: `ticket-created:${ticket.id}`,
+      payload: {
+        status: ticket.status,
+        priority: ticket.priority,
+        category: ticket.category,
+      },
     })
 
     res.status(201).json({
