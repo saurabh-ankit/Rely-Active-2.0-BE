@@ -62,6 +62,7 @@ import { FeedbackAnswer } from './feedbackAnswer.model.js'
 import { TicketTatHistory } from './ticketTatHistory.model.js'
 import { NotificationEvent } from './notificationEvent.model.js'
 import { NotificationInbox } from './notificationInbox.model.js'
+import { NotificationDeviceToken } from './notificationDeviceToken.model.js'
 import { Specialization } from './specialization.model.js'
 import { DoctorSpecialization } from './doctorSpecialization.model.js'
 import { GatePreapproved } from './gatePreapproved.model.js'
@@ -601,6 +602,20 @@ NotificationInbox.belongsTo(ResidentFamilyMember, {
   as: 'recipientFamilyMember',
 })
 
+User.hasMany(NotificationDeviceToken, { foreignKey: 'recipientUserId', as: 'notificationDeviceTokens' })
+Resident.hasMany(NotificationDeviceToken, { foreignKey: 'recipientResidentId', as: 'notificationDeviceTokens' })
+ResidentFamilyMember.hasMany(NotificationDeviceToken, {
+  foreignKey: 'recipientFamilyMemberId',
+  as: 'notificationDeviceTokens',
+})
+
+NotificationDeviceToken.belongsTo(User, { foreignKey: 'recipientUserId', as: 'recipientUser' })
+NotificationDeviceToken.belongsTo(Resident, { foreignKey: 'recipientResidentId', as: 'recipientResident' })
+NotificationDeviceToken.belongsTo(ResidentFamilyMember, {
+  foreignKey: 'recipientFamilyMemberId',
+  as: 'recipientFamilyMember',
+})
+
 // ── Doctor specializations ─────────────────────────────────────────────────
 User.belongsToMany(Specialization, {
   through: DoctorSpecialization,
@@ -1087,6 +1102,7 @@ export {
   TicketTatHistory,
   NotificationEvent,
   NotificationInbox,
+  NotificationDeviceToken,
   AiInteractionLog,
   type AiInteractionLogAttributes,
   type AiInteractionLogCreationAttributes,

@@ -8,9 +8,15 @@ import {
   markNotificationRead,
 } from '../../services/notifications/notification.service.js'
 import { resolveNotificationViewer } from '../../services/notifications/notificationAudience.service.js'
+import {
+  deactivateDeviceToken,
+  registerDeviceToken,
+} from '../../services/notifications/notificationDeviceToken.service.js'
 import type {
   MarkAllNotificationsReadInput,
   NotificationListQueryInput,
+  RegisterNotificationDeviceInput,
+  UnregisterNotificationDeviceInput,
 } from '../../validations/notification.validation.js'
 
 function toActorName(item: {
@@ -186,4 +192,65 @@ export async function archiveNotificationItem(req: AuthenticatedRequest, res: Re
   }
 
   res.status(200).json({ success: true, message: 'Notification archived' })
+}
+
+/** POST /api/v1/notifications/devices/register */
+export async function registerNotificationDevice(req: AuthenticatedRequest, res: Response): Promise<void> {
+  const viewer = resolveNotificationViewer(req)
+  if (!viewer) {
+    res.status(401).json({ success: false, message: 'Authentication required' })
+    return
+  }
+
+  const body = req.body as RegisterNotificationDeviceInput
+  const token = await registerDeviceToken({
+    ...viewer,
+    appSurface: body.appSurface,
+    platform: body.platform,
+    fcmToken: body.fcmToken,
+    deviceId: body.deviceId,
+    appVersion: body.appVersion,
+    createdBy: req.user?.id || null,
+  })
+
+  if (!token) {
+    res.status(400).json({ success: false, message: 'Unable to register notification device' })
+    return
+  }
+
+  res.status(200).json({
+    success: true,
+    message: 'Notification device registered',
+    data: {
+      id: token.id,
+      isActive: token.isActive,
+      appSurface: token.appSurface,
+      platform: token.platform,
+      lastRegisteredAt: token.lastRegisteredAt,
+      lastSeenAt: token.lastSeenAt,
+    },
+  })
+}
+
+/** POST /api/v1/notifications/devices/unregister */
+export async function unregisterNotificationDevice(req: AuthenticatedRequest, res: Response): Promise<void> {
+  const viewer = resolveNotificationViewer(req)
+  if (!viewer) {
+    res.status(401).json({ success: false, message: 'Authentication required' })
+    return
+  }
+
+  const body = req.body as UnregisterNotificationDeviceInput
+  const affected = await deactivateDeviceToken({
+    ...viewer,
+    fcmToken: body.fcmToken,
+    reason: body.reason || 'USER_UNREGISTERED',
+    updatedBy: req.user?.id || null,
+  })
+
+  res.status(200).json({
+    success: true,
+    message: affected > 0 ? 'Notification device unregistered' : 'No active device token found',
+    data: { affected },
+  })
 }

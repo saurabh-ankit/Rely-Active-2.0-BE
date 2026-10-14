@@ -15,6 +15,7 @@ import {
   User,
   UserDetail,
 } from '../../models/index.js'
+import { dispatchNotificationPushSafe } from './notificationPush.service.js'
 import type { NotificationActorInput, NotificationViewer } from './notificationAudience.service.js'
 
 export interface NotificationRecipientInput {
@@ -188,6 +189,13 @@ export async function createNotificationEvent(input: CreateNotificationEventInpu
     })),
     { transaction: input.transaction ?? null },
   )
+
+  if (!input.transaction) {
+    await dispatchNotificationPushSafe({
+      event,
+      recipients,
+    })
+  }
 
   return event
 }
