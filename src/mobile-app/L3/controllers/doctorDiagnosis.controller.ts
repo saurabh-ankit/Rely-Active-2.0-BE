@@ -26,6 +26,7 @@ import { syncAppointmentMedications } from '../../../services/residentMedication
 import { syncAppointmentInsulin } from '../../../services/residentInsulin.service.js'
 import { syncAppointmentVitals } from '../../../services/residentVital.service.js'
 import { syncAppointmentAllergies } from '../../../services/residentAllergy.service.js'
+import { getResidentPreviousClinical } from '../../../services/residentClinical.service.js'
 import { isAdminOrSuperAdmin } from './medical.controller.js'
 
 const TIME_OF_DAY: MedicationTimeOfDay[] = ['morning', 'afternoon', 'evening', 'night']
@@ -317,14 +318,20 @@ export async function getAppointmentDiagnosis(req: AuthenticatedRequest, res: Re
     }
 
     const { appointment } = access
-    const existing = await Consultant.findOne({
-      where: { appointmentId, isDeleted: false },
-    })
+    const [existing, previous] = await Promise.all([
+      Consultant.findOne({
+        where: { appointmentId, isDeleted: false },
+      }),
+      getResidentPreviousClinical(appointment.residentId, appointment.id),
+    ])
 
     res.status(200).json({
       success: true,
       message: existing ? 'Diagnosis fetched successfully' : 'Diagnosis draft',
-      data: existing ? formatConsultant(existing) : emptyDraft(appointment),
+      data: {
+        ...(existing ? formatConsultant(existing) : emptyDraft(appointment)),
+        previous,
+      },
     })
   } catch (err) {
     console.error('Get Appointment Diagnosis Error:', err)
@@ -356,14 +363,6 @@ export async function upsertAppointmentDiagnosis(req: AuthenticatedRequest, res:
     let row = await Consultant.findOne({
       where: { appointmentId, isDeleted: false },
     })
-
-    if (row && row.status === DiagnosisStatus.COMPLETED) {
-      res.status(400).json({
-        success: false,
-        message: 'Diagnosis is already completed and cannot be edited',
-      })
-      return
-    }
 
     let allergies = row ? asArray<ConsultantAllergyEntry>(row.allergies) : []
     let vitals = row ? asArray<ConsultantVitalEntry>(row.vitals) : []
@@ -526,14 +525,7 @@ export async function submitAppointmentDiagnosis(req: AuthenticatedRequest, res:
       transaction,
     })
 
-    if (consultant && consultant.status === DiagnosisStatus.COMPLETED) {
-      await transaction.rollback()
-      res.status(400).json({
-        success: false,
-        message: 'Diagnosis is already completed for this appointment',
-      })
-      return
-    }
+    const alreadyCompleted = consultant?.status === DiagnosisStatus.COMPLETED
 
     // Allow final payload on submit
     let allergies = consultant ? asArray<ConsultantAllergyEntry>(consultant.allergies) : []
@@ -598,6 +590,8 @@ export async function submitAppointmentDiagnosis(req: AuthenticatedRequest, res:
     }
 
     const now = new Date()
+    const completedAt = alreadyCompleted && consultant?.completedAt ? consultant.completedAt : now
+    const attendedAt = alreadyCompleted && appointment.attendedAt ? appointment.attendedAt : now
 
     if (!consultant) {
       consultant = await Consultant.create(
@@ -627,7 +621,7 @@ export async function submitAppointmentDiagnosis(req: AuthenticatedRequest, res:
       consultant.note = note
       consultant.condition = condition
       consultant.status = DiagnosisStatus.COMPLETED
-      consultant.completedAt = now
+      consultant.completedAt = completedAt
       consultant.updatedBy = userId
       await consultant.save({ transaction })
     }
@@ -635,7 +629,7 @@ export async function submitAppointmentDiagnosis(req: AuthenticatedRequest, res:
     await appointment.update(
       {
         status: AppointmentStatus.ATTENDED,
-        attendedAt: now,
+        attendedAt,
         cancelledAt: null,
         cancellationReason: null,
         updatedBy: userId,
@@ -681,13 +675,13 @@ export async function submitAppointmentDiagnosis(req: AuthenticatedRequest, res:
 
     res.status(200).json({
       success: true,
-      message: 'Diagnosis submitted successfully',
+      message: alreadyCompleted ? 'Diagnosis updated successfully' : 'Diagnosis submitted successfully',
       data: {
         diagnosis: formatConsultant(consultant),
         appointment: {
           id: appointment.id,
           status: AppointmentStatus.ATTENDED,
-          attendedAt: now,
+          attendedAt,
           residentId: appointment.residentId,
         },
       },
@@ -746,7 +740,7 @@ async function uploadDiagnosisFiles(
 /**
  * POST /doctor/appointments/:appointmentId/diagnosis/attachments  (multipart/form-data)
  * Files: files[] (image/PDF, max 5 per diagnosis), voiceNotes[] (audio, max 5 per diagnosis).
- * Uploads to S3 and appends to the consultant draft. Not allowed once the diagnosis is COMPLETED.
+ * Uploads to S3 and appends to the consultant (draft or completed).
  */
 export async function uploadDiagnosisAttachments(req: AuthenticatedRequest, res: Response): Promise<void> {
   try {
@@ -794,14 +788,6 @@ export async function uploadDiagnosisAttachments(req: AuthenticatedRequest, res:
     let row = await Consultant.findOne({
       where: { appointmentId, isDeleted: false },
     })
-
-    if (row && row.status === DiagnosisStatus.COMPLETED) {
-      res.status(400).json({
-        success: false,
-        message: 'Diagnosis is already completed and cannot be edited',
-      })
-      return
-    }
 
     const existingAttachments = row ? asArray<ConsultantFileEntry>(row.attachments) : []
     const existingVoiceNotes = row ? asArray<ConsultantFileEntry>(row.voiceNotes) : []
@@ -869,7 +855,7 @@ export async function uploadDiagnosisAttachments(req: AuthenticatedRequest, res:
 
 /**
  * DELETE /doctor/appointments/:appointmentId/diagnosis/attachments/:fileId
- * Removes a file or voice note from the consultant draft.
+ * Removes a file or voice note from the consultant.
  */
 export async function deleteDiagnosisAttachment(req: AuthenticatedRequest, res: Response): Promise<void> {
   try {
@@ -891,14 +877,6 @@ export async function deleteDiagnosisAttachment(req: AuthenticatedRequest, res: 
     })
     if (!row) {
       res.status(404).json({ success: false, message: 'Attachment not found' })
-      return
-    }
-
-    if (row.status === DiagnosisStatus.COMPLETED) {
-      res.status(400).json({
-        success: false,
-        message: 'Diagnosis is already completed and cannot be edited',
-      })
       return
     }
 

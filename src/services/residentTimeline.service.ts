@@ -11,13 +11,19 @@ import {
   ResidentInsulin,
   ResidentLabReport,
   ResidentMedication,
+  ResidentMedicationAdministration,
   ResidentVital,
   User,
   UserDetail,
 } from '../models/index.js'
 import { AppointmentStatus } from '../enums/appointment.enum.js'
 import { DiagnosisStatus } from '../enums/diagnosis.enum.js'
-import { MedicationMealTiming, MedicationRoute } from '../enums/medication.enum.js'
+import {
+  MedicationAdministrationStatus,
+  MedicationKind,
+  MedicationMealTiming,
+  MedicationRoute,
+} from '../enums/medication.enum.js'
 import type { ResidentTimelineQuery } from '../validations/residentTimeline.validation.js'
 import { RESIDENT_TIMELINE_EVENT_TYPES } from '../validations/residentTimeline.validation.js'
 
@@ -290,6 +296,82 @@ async function loadMedications(
   })
 }
 
+/** Doses given or cancelled by nurses; a cancelled dose given later yields both events. */
+async function loadMedicationAdministrations(
+  residentId: string,
+  range: DateRange,
+  kind: 'medication' | 'insulin',
+): Promise<PendingEvent[]> {
+  const rows = await ResidentMedicationAdministration.findAll({
+    where: {
+      residentId,
+      kind: kind === 'medication' ? MedicationKind.MEDICATION : MedicationKind.INSULIN,
+      isDeleted: false,
+      ...anyColumnInRange(['completedAt', 'cancelledAt'], range),
+    },
+    order: [
+      ['scheduledDate', 'DESC'],
+      ['updatedAt', 'DESC'],
+    ],
+    limit: SOURCE_ROW_LIMIT,
+  })
+  const label = kind === 'medication' ? 'Medication' : 'Insulin'
+
+  const events: PendingEvent[] = []
+  for (const row of rows) {
+    const timeOfDay = humanize(row.timeOfDay)
+    const mealTiming = MEAL_TIMING_LABELS[row.mealTiming] || ''
+    const details = [
+      `Dose: ${row.dose}${kind === 'insulin' ? ' units' : ''}`,
+      `Route: ${ROUTE_LABELS[row.route] || humanize(row.route)}`,
+      `Scheduled: ${row.scheduledDate} ${formatTime12h(row.scheduledTime)}`,
+      mealTiming ? `Meal Timing: ${mealTiming}` : null,
+    ]
+      .filter(Boolean)
+      .join(', ')
+    const meta = {
+      sourceId: row.id,
+      medicationId: row.medicationId,
+      medicineName: row.medicineName,
+      timeOfDay: row.timeOfDay,
+      scheduledDate: row.scheduledDate,
+      scheduledTime: row.scheduledTime,
+      dose: row.dose,
+      route: row.route,
+      status: row.status,
+      attachments: row.attachments || [],
+      voiceNotes: row.voiceNotes || [],
+    }
+
+    if (row.status === MedicationAdministrationStatus.COMPLETED && row.completedAt) {
+      events.push({
+        id: `${kind}:${row.id}:administered`,
+        type: kind,
+        title: `${label} Given: ${row.medicineName} (${timeOfDay})`,
+        description: joinParts(details, row.notes),
+        at: toIso(row.completedAt),
+        createdAt: toIso(row.completedAt),
+        userId: row.completedBy || null,
+        meta,
+      })
+    }
+
+    if (row.cancelledAt) {
+      events.push({
+        id: `${kind}:${row.id}:administration_cancelled`,
+        type: kind,
+        title: `${label} Dose Cancelled: ${row.medicineName} (${timeOfDay})`,
+        description: joinParts(details, row.cancelReason),
+        at: toIso(row.cancelledAt),
+        createdAt: toIso(row.cancelledAt),
+        userId: row.cancelledBy || null,
+        meta,
+      })
+    }
+  }
+  return events
+}
+
 async function loadLabReports(residentId: string, range: DateRange, startDate?: string, endDate?: string) {
   const reportDateCond: Record<symbol, string> = {}
   if (startDate) reportDateCond[Op.gte] = startDate
@@ -517,11 +599,24 @@ export async function getResidentTimeline(
   const selected = new Set<ResidentTimelineEventType>([...(types ?? []), ...(type ? [type] : [])])
   const wants = (t: ResidentTimelineEventType) => selected.size === 0 || selected.has(t)
 
-  const [allergies, vitals, medications, insulin, labs, appointments, careTasks, conditions] = await Promise.all([
+  const [
+    allergies,
+    vitals,
+    medications,
+    insulin,
+    medicationDoses,
+    insulinDoses,
+    labs,
+    appointments,
+    careTasks,
+    conditions,
+  ] = await Promise.all([
     wants('allergy') ? loadAllergies(residentId, range) : [],
     wants('vital') ? loadVitals(residentId, range) : [],
     wants('medication') ? loadMedications(residentId, range, 'medication') : [],
     wants('insulin') ? loadMedications(residentId, range, 'insulin') : [],
+    wants('medication') ? loadMedicationAdministrations(residentId, range, 'medication') : [],
+    wants('insulin') ? loadMedicationAdministrations(residentId, range, 'insulin') : [],
     wants('lab') ? loadLabReports(residentId, range, startDate, endDate) : [],
     wants('appointment') ? loadAppointments(residentId, range) : [],
     wants('care_task') ? loadCareTasks(residentId, range) : [],
@@ -533,6 +628,8 @@ export async function getResidentTimeline(
     ...vitals,
     ...medications,
     ...insulin,
+    ...medicationDoses,
+    ...insulinDoses,
     ...labs,
     ...appointments,
     ...careTasks,

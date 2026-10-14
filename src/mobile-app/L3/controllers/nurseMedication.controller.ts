@@ -36,7 +36,7 @@ function sendError(res: Response, err: unknown, logLabel: string): void {
  * Same visibility as nurse care tasks: residents on the nurse's care team, within the
  * nurse's active shifts for the date. Admins see everything.
  */
-async function resolveScope(
+export async function resolveScope(
   req: AuthenticatedRequest,
   targetDate: string,
   locationId: string | null,

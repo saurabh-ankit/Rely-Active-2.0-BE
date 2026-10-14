@@ -1,4 +1,4 @@
-import type { Includeable } from 'sequelize'
+import { Op, type Includeable, type WhereOptions } from 'sequelize'
 import {
   Consultant,
   DoctorAppointment,
@@ -242,6 +242,61 @@ export async function getResidentClinicalChart(residentId: string) {
   }
 
   return { allergies, vitals, medications, insulin, doctorNotes, currentCondition }
+}
+
+/**
+ * Resident clinical rows recorded outside the given appointment, shown on the doctor diagnosis screen:
+ * all allergies, the latest reading per vital type, and only active medications / insulin.
+ */
+export async function getResidentPreviousClinical(residentId: string, excludeAppointmentId: string) {
+  const previousRows: WhereOptions = {
+    [Op.and]: [
+      { residentId, isDeleted: false },
+      { [Op.or]: [{ appointmentId: null }, { appointmentId: { [Op.ne]: excludeAppointmentId } }] },
+    ],
+  }
+  const today = new Date().toISOString().slice(0, 10)
+  const activeMedication: WhereOptions = {
+    [Op.and]: [previousRows, { [Op.or]: [{ isUntilDischarge: true }, { endDate: { [Op.gte]: today } }] }],
+  }
+
+  const [allergyRows, vitalRows, medicationRows, insulinRows] = await Promise.all([
+    ResidentAllergy.findAll({
+      where: previousRows,
+      include: [userInclude('creator')],
+      order: [['recordedAt', 'DESC']],
+    }),
+    ResidentVital.findAll({
+      where: previousRows,
+      include: [userInclude('creator')],
+      order: [['recordedAt', 'DESC']],
+    }),
+    ResidentMedication.findAll({
+      where: activeMedication,
+      include: [userInclude('creator'), medicationInventoryInclude],
+      order: [['createdAt', 'DESC']],
+    }),
+    ResidentInsulin.findAll({
+      where: activeMedication,
+      include: [userInclude('creator'), medicationInventoryInclude],
+      order: [['createdAt', 'DESC']],
+    }),
+  ])
+
+  const seenVitalTypes = new Set<string>()
+  const latestVitals = vitalRows.filter((row) => {
+    const key = row.vitalSettingId || `name:${row.name.toLowerCase()}`
+    if (seenVitalTypes.has(key)) return false
+    seenVitalTypes.add(key)
+    return true
+  })
+
+  return {
+    allergies: allergyRows.map(formatAllergyRow),
+    vitals: latestVitals.map(formatVitalRow),
+    medications: medicationRows.map(formatMedicationRow),
+    insulin: insulinRows.map(formatMedicationRow),
+  }
 }
 
 export async function listResidentLabReportsForResident(residentId: string) {

@@ -5,9 +5,10 @@ import { upload } from '../../../middlewares/upload.js'
 import { validateBody, validateParams, validateQuery } from '../../../middlewares/validate/index.js'
 import {
   createResidentLabReportSchema,
+  residentClinicalItemParamSchema,
   residentIdParamSchema,
 } from '../../../validations/residentLabReport.validation.js'
-import { createResidentVitalSchema } from '../../../validations/residentVital.validation.js'
+import { createResidentVitalSchema, updateResidentVitalSchema } from '../../../validations/residentVital.validation.js'
 import {
   createResidentFluidBalanceSchema,
   listResidentFluidBalanceQuerySchema,
@@ -46,8 +47,9 @@ import {
   MAX_INCIDENT_PHOTOS,
   MAX_INCIDENT_VOICE_NOTES,
 } from '../controllers/nurseClinical.controller.js'
+import { listNurseTasksQuerySchema } from '../../../validations/nurseTask.validation.js'
+import { getNurseCareTasks, getNurseTasks } from '../controllers/nurseTask.controller.js'
 import {
-  getNurseCareTasks,
   completeNurseCareTask,
   getNurseResidents,
   getDoctorResidents,
@@ -63,7 +65,19 @@ import {
   getDoctorShiftResidents,
   ensureDoctorShiftAppointment,
 } from '../controllers/doctorShift.controller.js'
-import { getResidentClinical } from '../controllers/doctorClinical.controller.js'
+import {
+  getResidentClinical,
+  updateDoctorResidentAllergy,
+  deleteDoctorResidentAllergy,
+  updateDoctorResidentVital,
+  deleteDoctorResidentVital,
+  updateDoctorResidentMedication,
+  deleteDoctorResidentMedication,
+  updateDoctorResidentInsulin,
+  deleteDoctorResidentInsulin,
+} from '../controllers/doctorClinical.controller.js'
+import { updateResidentAllergySchema } from '../../../validations/residentAllergy.validation.js'
+import { updateResidentMedicationSchema } from '../../../validations/residentMedication.validation.js'
 import {
   getAppointmentDiagnosis,
   upsertAppointmentDiagnosis,
@@ -168,6 +182,7 @@ function handleIncidentUpload(req: Request, res: Response, next: NextFunction): 
 router.use(authenticate)
 
 // ── Nurse Endpoints ──────────────────────────────────────────────────────────
+router.get('/nurse/tasks', validateQuery(listNurseTasksQuerySchema), getNurseTasks)
 router.get('/care-tasks', getNurseCareTasks)
 router.post('/care-tasks/:id/complete', completeNurseCareTask)
 router.get('/nurse/residents', getNurseResidents)
@@ -265,6 +280,52 @@ router.get('/doctor/lab-test-settings', listLabTestSettingsForDoctor)
 // ── Doctor Resident Clinical Chart (aggregated from consultants) ─────────────
 router.get('/doctor/residents/:residentId/clinical', getResidentClinical)
 router.get('/doctor/locations/:locationId/medicines', listLocationMedicines)
+
+// ── Doctor edits of existing resident clinical rows ──────────────────────────
+router.put(
+  '/doctor/residents/:residentId/allergies/:id',
+  validateParams(residentClinicalItemParamSchema),
+  validateBody(updateResidentAllergySchema),
+  updateDoctorResidentAllergy,
+)
+router.delete(
+  '/doctor/residents/:residentId/allergies/:id',
+  validateParams(residentClinicalItemParamSchema),
+  deleteDoctorResidentAllergy,
+)
+router.put(
+  '/doctor/residents/:residentId/vitals/:id',
+  validateParams(residentClinicalItemParamSchema),
+  validateBody(updateResidentVitalSchema),
+  updateDoctorResidentVital,
+)
+router.delete(
+  '/doctor/residents/:residentId/vitals/:id',
+  validateParams(residentClinicalItemParamSchema),
+  deleteDoctorResidentVital,
+)
+router.put(
+  '/doctor/residents/:residentId/medications/:id',
+  validateParams(residentClinicalItemParamSchema),
+  validateBody(updateResidentMedicationSchema),
+  updateDoctorResidentMedication,
+)
+router.delete(
+  '/doctor/residents/:residentId/medications/:id',
+  validateParams(residentClinicalItemParamSchema),
+  deleteDoctorResidentMedication,
+)
+router.put(
+  '/doctor/residents/:residentId/insulin/:id',
+  validateParams(residentClinicalItemParamSchema),
+  validateBody(updateResidentMedicationSchema),
+  updateDoctorResidentInsulin,
+)
+router.delete(
+  '/doctor/residents/:residentId/insulin/:id',
+  validateParams(residentClinicalItemParamSchema),
+  deleteDoctorResidentInsulin,
+)
 
 // ── Doctor Resident Lab Reports ──────────────────────────────────────────────
 router.get('/doctor/residents/:residentId/lab-reports', validateParams(residentIdParamSchema), listResidentLabReports)
