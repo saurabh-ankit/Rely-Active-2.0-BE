@@ -36,6 +36,12 @@ import {
   updateResidentLabReport,
   deleteResidentLabReport,
 } from '../controllers/residentClinical.controller.js'
+import {
+  getResidentNokContacts,
+  createResidentNokContact,
+  updateResidentNokContact,
+  deleteResidentNokContact,
+} from '../controllers/residentNok.controller.js'
 import { upload } from '../../middlewares/upload.js'
 import { authenticate } from '../../middlewares/authenticate.js'
 import { validateBody, validateParams, validateQuery } from '../../middlewares/validate/index.js'
@@ -58,6 +64,10 @@ import {
 import { residentTimelineQuerySchema } from '../../validations/residentTimeline.validation.js'
 import { createResidentDocumentSchema } from '../../validations/residentDocument.validation.js'
 import { updateResidentConditionSchema } from '../../validations/residentCondition.validation.js'
+import {
+  createResidentNokContactSchema,
+  updateResidentNokContactSchema,
+} from '../../validations/residentNokContact.validation.js'
 
 const router = Router()
 
@@ -76,6 +86,8 @@ const uploadLabReportFiles = upload.fields([
   { name: 'report', maxCount: 1 },
   { name: 'receipt', maxCount: 1 },
 ])
+
+const uploadNokPhoto = upload.fields([{ name: 'photo', maxCount: 1 }])
 
 // Resident Billing
 router.get('/billing', getResidentBillingData)
@@ -230,6 +242,28 @@ router.post(
   uploadResidentDocument,
   validateBody(createResidentDocumentSchema),
   createResidentDocument,
+)
+
+// ── Resident NOK contacts ──────────────────────────────────────────────────
+router.get('/:residentId/nok-contacts', validateParams(residentIdParamSchema), getResidentNokContacts)
+router.post(
+  '/:residentId/nok-contacts',
+  validateParams(residentIdParamSchema),
+  uploadNokPhoto,
+  validateBody(createResidentNokContactSchema),
+  createResidentNokContact,
+)
+router.put(
+  '/:residentId/nok-contacts/:id',
+  validateParams(residentClinicalItemParamSchema),
+  uploadNokPhoto,
+  validateBody(updateResidentNokContactSchema),
+  updateResidentNokContact,
+)
+router.delete(
+  '/:residentId/nok-contacts/:id',
+  validateParams(residentClinicalItemParamSchema),
+  deleteResidentNokContact,
 )
 
 // Resident Onboarding & Operations

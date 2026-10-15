@@ -196,6 +196,11 @@ import {
   type ResidentDocumentCreationAttributes,
 } from './residentDocument.model.js'
 import {
+  ResidentNokContact,
+  type ResidentNokContactAttributes,
+  type ResidentNokContactCreationAttributes,
+} from './residentNokContact.model.js'
+import {
   ResidentConditionLog,
   type ResidentConditionLogAttributes,
   type ResidentConditionLogCreationAttributes,
@@ -342,6 +347,12 @@ Resident.hasMany(ResidentDocument, { foreignKey: 'residentId', as: 'documents' }
 ResidentDocument.belongsTo(Resident, { foreignKey: 'residentId', as: 'resident' })
 Property.hasMany(ResidentDocument, { foreignKey: 'locationId', as: 'residentDocuments' })
 ResidentDocument.belongsTo(Property, { foreignKey: 'locationId', as: 'location' })
+
+// ── Resident NOK Contact associations ───────────────────────────────────────
+Resident.hasMany(ResidentNokContact, { foreignKey: 'residentId', as: 'nokContacts' })
+ResidentNokContact.belongsTo(Resident, { foreignKey: 'residentId', as: 'resident' })
+Property.hasMany(ResidentNokContact, { foreignKey: 'locationId', as: 'residentNokContacts' })
+ResidentNokContact.belongsTo(Property, { foreignKey: 'locationId', as: 'location' })
 
 // ── Resident Condition Log associations ─────────────────────────────────────
 Resident.hasMany(ResidentConditionLog, { foreignKey: 'residentId', as: 'conditionLogs' })
@@ -1283,6 +1294,9 @@ export {
   ResidentDocument,
   type ResidentDocumentAttributes,
   type ResidentDocumentCreationAttributes,
+  ResidentNokContact,
+  type ResidentNokContactAttributes,
+  type ResidentNokContactCreationAttributes,
   ResidentConditionLog,
   type ResidentConditionLogAttributes,
   type ResidentConditionLogCreationAttributes,
