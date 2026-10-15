@@ -19,6 +19,8 @@ export type AssignmentStatus = 'ACTIVE' | 'STOPPED' | 'CANCELLED'
 
 export interface CareTaskAssignmentAttributes extends BaseAttributes {
   residentId: string
+  /** Set when the package / task belongs to a family member of the resident. */
+  familyMemberId?: string | null
   taskId: string
   propertyId?: string | null | undefined
 
@@ -59,6 +61,7 @@ export interface CareTaskAssignmentAttributes extends BaseAttributes {
 export type CareTaskAssignmentCreationAttributes = Optional<
   CareTaskAssignmentAttributes,
   | 'id'
+  | 'familyMemberId'
   | 'propertyId'
   | 'packageSubscriptionId'
   | 'carePackageId'
@@ -90,6 +93,7 @@ export class CareTaskAssignment
   implements CareTaskAssignmentAttributes
 {
   declare residentId: string
+  declare familyMemberId: string | null
   declare taskId: string
   declare propertyId: string | null
 
@@ -144,6 +148,11 @@ CareTaskAssignment.init(
       type: DataTypes.UUID,
       allowNull: false,
       comment: 'FK -> residents.id',
+    },
+    familyMemberId: {
+      type: DataTypes.UUID,
+      allowNull: true,
+      comment: 'FK -> resident_family_members.id',
     },
     taskId: {
       type: DataTypes.UUID,

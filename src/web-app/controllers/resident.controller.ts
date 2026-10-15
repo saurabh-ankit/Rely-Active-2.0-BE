@@ -15,6 +15,7 @@ import {
   PackageSubscription,
   PackageSubscriptionFeature,
   CarePackageFeaturesMap,
+  FnbResidentPackage,
   CareTaskAssignment,
   AdditionalTaskCharge,
   CareTask,
@@ -30,9 +31,11 @@ import {
 } from '../../models/index.js'
 import { CareLevel, OwnershipType, ResidentStatus, ResidentType } from '../../enums/resident.enum.js'
 import { SubscriptionStatus } from '../../enums/packageSubscription.enum.js'
+import { FnbSubscriptionStatus } from '../../enums/fnb.enum.js'
 import { OccupancyStatus } from '../../enums/propertyUnit.enum.js'
 import { uploadFileToS3, uploadBase64ToS3 } from '../../middlewares/s3/index.js'
 import { syncPackageTasksForResidents } from './careTaskAssignment.controller.js'
+import { setFamilyCarePackage } from '../../services/familyCarePackage.service.js'
 import { getResidentClinicalChart, listResidentLabReportsForResident } from '../../services/residentClinical.service.js'
 import { formatResidentDocument, listResidentDocumentsForResident } from '../../services/residentDocument.service.js'
 import { getResidentTimeline } from '../../services/residentTimeline.service.js'
@@ -67,6 +70,7 @@ export async function createResident(req: AuthenticatedRequest, res: Response): 
       payRentToCompany,
       careLevel,
       carePackageId,
+      carePackageStartDate,
       taskSchedules,
       familyMembers,
     } = req.body
@@ -290,12 +294,37 @@ export async function createResident(req: AuthenticatedRequest, res: Response): 
           }
         }),
       )
-      await ResidentFamilyMember.bulkCreate(familyMemberRecords)
+      const createdMembers = []
+      for (const record of familyMemberRecords) createdMembers.push(await ResidentFamilyMember.create(record))
+
+      // A family member can have their own care package (with its own start date).
+      if (residingFlag) {
+        let familyPackages = false
+        for (const [idx, fm] of familyMembers.entries()) {
+          const member = createdMembers[idx]
+          if (!member || !fm.carePackageId) continue
+          familyPackages =
+            (await setFamilyCarePackage({
+              residentId: resident.id,
+              familyMemberId: member.id,
+              propertyId: locId,
+              carePackageId: fm.carePackageId,
+              startDate: fm.carePackageStartDate || moveInDate || null,
+              operatorId,
+            })) || familyPackages
+        }
+        if (familyPackages) await syncPackageTasksForResidents(resident.id, locId, taskSchedules)
+      }
     }
 
     // 6. Create Package Subscription and Seed Features if carePackageId was provided
     if (selectedCarePackage) {
-      const startDate = moveInDate ? new Date(moveInDate) : new Date()
+      // The care package starts on the date picked at onboarding (else the move-in date).
+      const startDate = carePackageStartDate
+        ? new Date(carePackageStartDate)
+        : moveInDate
+          ? new Date(moveInDate)
+          : new Date()
       const subscription = await PackageSubscription.create({
         residentId: resident.id,
         carePackageId: selectedCarePackage.id,
@@ -550,6 +579,7 @@ export async function updateResident(req: Request, res: Response): Promise<void>
       status,
       isResiding,
       carePackageId,
+      carePackageStartDate,
       taskSchedules: rawTaskSchedules,
       familyMembers,
     } = req.body
@@ -697,7 +727,12 @@ export async function updateResident(req: Request, res: Response): Promise<void>
         if (pkg) {
           updatedCarePackageId = pkg.id
           const currentActiveSub = await PackageSubscription.findOne({
-            where: { residentId: resident.id, status: SubscriptionStatus.ACTIVE, isDeleted: false },
+            where: {
+              residentId: resident.id,
+              familyMemberId: null,
+              status: SubscriptionStatus.ACTIVE,
+              isDeleted: false,
+            },
           })
 
           if (!currentActiveSub || currentActiveSub.carePackageId !== pkg.id) {
@@ -728,6 +763,7 @@ export async function updateResident(req: Request, res: Response): Promise<void>
               {
                 where: {
                   residentId: resident.id,
+                  familyMemberId: null,
                   status: SubscriptionStatus.ACTIVE,
                   isDeleted: false,
                 },
@@ -748,6 +784,7 @@ export async function updateResident(req: Request, res: Response): Promise<void>
               {
                 where: {
                   residentId: resident.id,
+                  familyMemberId: null,
                   source: 'PACKAGE',
                   isDeleted: false,
                 },
@@ -758,7 +795,8 @@ export async function updateResident(req: Request, res: Response): Promise<void>
               residentId: resident.id,
               carePackageId: pkg.id,
               propertyId: resident.locId,
-              startDate: currentDate,
+              // The new package starts on the date picked (default today); the old one ends today.
+              startDate: carePackageStartDate ? new Date(carePackageStartDate) : currentDate,
               endDate: null,
               totalCost: pkg.packageCost,
               status: SubscriptionStatus.ACTIVE,
@@ -791,7 +829,7 @@ export async function updateResident(req: Request, res: Response): Promise<void>
         const currentDate = new Date()
 
         const currentActiveSub = await PackageSubscription.findOne({
-          where: { residentId: resident.id, status: SubscriptionStatus.ACTIVE, isDeleted: false },
+          where: { residentId: resident.id, familyMemberId: null, status: SubscriptionStatus.ACTIVE, isDeleted: false },
         })
         if (currentActiveSub) {
           await currentActiveSub.update({
@@ -818,6 +856,7 @@ export async function updateResident(req: Request, res: Response): Promise<void>
           {
             where: {
               residentId: resident.id,
+              familyMemberId: null,
               status: SubscriptionStatus.ACTIVE,
               isDeleted: false,
             },
@@ -838,6 +877,7 @@ export async function updateResident(req: Request, res: Response): Promise<void>
           {
             where: {
               residentId: resident.id,
+              familyMemberId: null,
               source: 'PACKAGE',
               isDeleted: false,
             },
@@ -878,43 +918,84 @@ export async function updateResident(req: Request, res: Response): Promise<void>
       await syncPackageTasksForResidents(resident.id, resident.locId, taskSchedules)
     }
 
-    // Sync Family Members if provided
+    // Sync family members in place: keep each member's id (their food and care packages, orders,
+    // tickets and invoice lines point at it), add new ones, and retire the ones removed.
     if (Array.isArray(familyMembers)) {
-      await ResidentFamilyMember.destroy({ where: { residentId: resident.id } })
-      if (familyMembers.length > 0) {
-        const familyMemberRecords = await Promise.all(
-          familyMembers.map(async (fm) => {
-            let fmPasswordHash: string | null = null
-            if (fm.username) {
-              const rawPass = fm.password || 'Resident@123'
-              fmPasswordHash = await bcrypt.hash(rawPass, 10)
-            }
+      const existingMembers = await ResidentFamilyMember.findAll({
+        where: { residentId: resident.id, isDeleted: false },
+      })
+      const keptIds = new Set<string>()
+      let familyPackagesChanged = false
+      for (const fm of familyMembers) {
+        const current = fm.id ? existingMembers.find((m) => m.id === fm.id) : undefined
+        const username = fm.username ? String(fm.username).trim() : null
+        // A password is only (re)set when one is typed, or when a login is first given.
+        const passwordHash = !username
+          ? null
+          : fm.password
+            ? await bcrypt.hash(fm.password, 10)
+            : current?.passwordHash || (await bcrypt.hash('Resident@123', 10))
+        const fields = {
+          firstName: fm.firstName.trim(),
+          lastName: fm.lastName ? fm.lastName.trim() : null,
+          relation: fm.relation ? fm.relation.trim() : 'Family',
+          isResiding: updatedResiding,
+          gender: fm.gender || null,
+          dob: fm.dob || null,
+          bloodGroup: fm.bloodGroup || null,
+          photoUrl: await uploadBase64ToS3(fm.photoUrl, 'residents/avatars'),
+          phone: fm.phone ? fm.phone.trim() : null,
+          username,
+          passwordHash,
+          email: fm.email ? fm.email.trim() : null,
+          updatedBy: operatorId,
+          isDeleted: false,
+        }
+        const member = current
+          ? await current.update(fields)
+          : await ResidentFamilyMember.create({ ...fields, residentId: resident.id, createdBy: operatorId } as never)
+        keptIds.add(member.id)
 
-            const fmResiding = updatedResiding
-            const fmPhotoUrl = await uploadBase64ToS3(fm.photoUrl, 'residents/avatars')
-
-            return {
+        if (fm.carePackageId !== undefined) {
+          familyPackagesChanged =
+            (await setFamilyCarePackage({
               residentId: resident.id,
-              firstName: fm.firstName.trim(),
-              lastName: fm.lastName ? fm.lastName.trim() : null,
-              relation: fm.relation ? fm.relation.trim() : 'Family',
-              isResiding: fmResiding,
-              gender: fm.gender || null,
-              dob: fm.dob || null,
-              bloodGroup: fm.bloodGroup || null,
-              photoUrl: fmPhotoUrl,
-              phone: fm.phone ? fm.phone.trim() : null,
-              username: fm.username ? fm.username.trim() : null,
-              passwordHash: fmPasswordHash,
-              email: fm.email ? fm.email.trim() : null,
-              createdBy: operatorId,
-              updatedBy: operatorId,
-              isDeleted: false,
-            }
-          }),
-        )
-        await ResidentFamilyMember.bulkCreate(familyMemberRecords)
+              familyMemberId: member.id,
+              propertyId: resident.locId,
+              carePackageId: updatedResiding ? fm.carePackageId || null : null,
+              startDate: fm.carePackageStartDate || null,
+              operatorId,
+            })) || familyPackagesChanged
+        }
       }
+
+      // Removed members: retire the record and end their care and food packages.
+      for (const gone of existingMembers.filter((m) => !keptIds.has(m.id))) {
+        familyPackagesChanged =
+          (await setFamilyCarePackage({
+            residentId: resident.id,
+            familyMemberId: gone.id,
+            propertyId: resident.locId,
+            carePackageId: null,
+            operatorId,
+          })) || familyPackagesChanged
+        await FnbResidentPackage.update(
+          {
+            status: FnbSubscriptionStatus.CANCELLED,
+            endDate: new Date().toISOString().slice(0, 10),
+            updatedBy: operatorId,
+          },
+          { where: { familyMemberId: gone.id, status: [FnbSubscriptionStatus.ACTIVE, FnbSubscriptionStatus.PAUSED] } },
+        )
+        await gone.update({
+          isDeleted: true,
+          isResiding: false,
+          username: null,
+          passwordHash: null,
+          updatedBy: operatorId,
+        })
+      }
+      if (familyPackagesChanged) await syncPackageTasksForResidents(resident.id, resident.locId, taskSchedules)
     } else if (!updatedResiding) {
       // If owner changed to non-residing, update existing family members to non-residing as well
       await ResidentFamilyMember.update({ isResiding: false }, { where: { residentId: resident.id } })

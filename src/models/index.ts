@@ -231,20 +231,15 @@ import {
   type ResidentMedicationAdministrationCreationAttributes,
 } from './residentMedicationAdministration.model.js'
 
-// ── Billing & Revenue Management Module ──────────────────────────────────────
-import { UnitResident } from './unitResident.model.js'
-import { BillingProduct } from './billingProduct.model.js'
-import { BillingPricePlan } from './billingPricePlan.model.js'
-import { BillingAccount } from './billingAccount.model.js'
-import { BillingParty } from './billingParty.model.js'
-import { BillingSubscription } from './billingSubscription.model.js'
-import { BillingEvent } from './billingEvent.model.js'
+// ── Flat Billing (Rely Assist model) ─────────────────────────────────────────
 import { Invoice } from './invoice.model.js'
-import { InvoiceLine } from './invoiceLine.model.js'
-import { Payment } from './payment.model.js'
-import { PaymentAllocation } from './paymentAllocation.model.js'
-import { BillingRun } from './billingRun.model.js'
-import { BillingLedgerEntry } from './billingLedgerEntry.model.js'
+import { ServicesInvoice } from './servicesInvoice.model.js'
+import { MiscellaneousBilling } from './miscellaneousBilling.model.js'
+import { UnitMiscellaneousItem } from './unitMiscellaneousItem.model.js'
+import { Receipt } from './receipt.model.js'
+import { InvoiceDocument } from './invoiceDocument.model.js'
+import { CarriedForwardInvoice } from './carriedForwardInvoice.model.js'
+import { ReceiptAllocation } from './receiptAllocation.model.js'
 import {
   InventoryStock,
   InventoryPurchaseOrder,
@@ -830,136 +825,38 @@ ShiftRolePolicy.belongsTo(Property, { foreignKey: 'locationId', as: 'location' }
 
 Property.hasMany(ShiftArea, { foreignKey: 'locationId', as: 'shiftAreas' })
 ShiftArea.belongsTo(Property, { foreignKey: 'locationId', as: 'property' })
-// ── Billing Module Associations ────────────────────────────────────────────────
-// "Start simple in implementation, but never simplistic in architecture."
-// Golden Rule: Billing Account = Financial Folio. Decoupled from occupancy.
-
-// ── UnitResident (Occupancy Bridge) ──────────────────────────────────────────
-PropertyUnit.hasMany(UnitResident, { foreignKey: 'unitId', as: 'unitResidents' })
-UnitResident.belongsTo(PropertyUnit, { foreignKey: 'unitId', as: 'unit' })
-
-Resident.hasMany(UnitResident, { foreignKey: 'residentId', as: 'unitResidencies' })
-UnitResident.belongsTo(Resident, { foreignKey: 'residentId', as: 'resident' })
-
-// ── Billing Product & Price Plans ─────────────────────────────────────────────
-Company.hasMany(BillingProduct, { foreignKey: 'companyId', as: 'billingProducts' })
-BillingProduct.belongsTo(Company, { foreignKey: 'companyId', as: 'company' })
-
-BillingProduct.hasMany(BillingPricePlan, { foreignKey: 'productId', as: 'pricePlans' })
-BillingPricePlan.belongsTo(BillingProduct, { foreignKey: 'productId', as: 'product' })
-
-Property.hasMany(BillingPricePlan, { foreignKey: 'propertyId', as: 'billingPricePlans' })
-BillingPricePlan.belongsTo(Property, { foreignKey: 'propertyId', as: 'property' })
-
-// ── Billing Account (Financial Folio) ─────────────────────────────────────────
-PropertyUnit.hasMany(BillingAccount, { foreignKey: 'unitId', as: 'billingAccounts' })
-BillingAccount.belongsTo(PropertyUnit, { foreignKey: 'unitId', as: 'unit' })
-
-Property.hasMany(BillingAccount, { foreignKey: 'propertyId', as: 'billingAccounts' })
-BillingAccount.belongsTo(Property, { foreignKey: 'propertyId', as: 'property' })
-
-Company.hasMany(BillingAccount, { foreignKey: 'companyId', as: 'billingAccounts' })
-BillingAccount.belongsTo(Company, { foreignKey: 'companyId', as: 'company' })
-
-// primaryResidentId is informational (anchor) — NOT the payer
-Resident.hasMany(BillingAccount, { foreignKey: 'primaryResidentId', as: 'primaryBillingAccounts' })
-BillingAccount.belongsTo(Resident, { foreignKey: 'primaryResidentId', as: 'primaryResident' })
-
-// ── Billing Parties (WHO PAYS) ────────────────────────────────────────────────
-BillingAccount.hasMany(BillingParty, { foreignKey: 'billingAccountId', as: 'parties' })
-BillingParty.belongsTo(BillingAccount, { foreignKey: 'billingAccountId', as: 'billingAccount' })
-
-Resident.hasMany(BillingParty, { foreignKey: 'residentId', as: 'billingParties' })
-BillingParty.belongsTo(Resident, { foreignKey: 'residentId', as: 'resident' })
-
-ResidentFamilyMember.hasMany(BillingParty, { foreignKey: 'familyMemberId', as: 'billingParties' })
-BillingParty.belongsTo(ResidentFamilyMember, { foreignKey: 'familyMemberId', as: 'familyMember' })
-
-// ── Billing Subscriptions ─────────────────────────────────────────────────────
-BillingAccount.hasMany(BillingSubscription, { foreignKey: 'billingAccountId', as: 'subscriptions' })
-BillingSubscription.belongsTo(BillingAccount, { foreignKey: 'billingAccountId', as: 'billingAccount' })
-
-BillingProduct.hasMany(BillingSubscription, { foreignKey: 'productId', as: 'subscriptions' })
-BillingSubscription.belongsTo(BillingProduct, { foreignKey: 'productId', as: 'product' })
-
-BillingPricePlan.hasMany(BillingSubscription, { foreignKey: 'pricePlanId', as: 'subscriptions' })
-BillingSubscription.belongsTo(BillingPricePlan, { foreignKey: 'pricePlanId', as: 'pricePlan' })
-
-PropertyUnit.hasMany(BillingSubscription, { foreignKey: 'unitId', as: 'billingSubscriptions' })
-BillingSubscription.belongsTo(PropertyUnit, { foreignKey: 'unitId', as: 'unit' })
-
-// FnB package bridge: food subscription links to fnb_resident_packages
-FnbResidentPackage.hasOne(BillingSubscription, { foreignKey: 'fnbPackageId', as: 'billingSubscription' })
-BillingSubscription.belongsTo(FnbResidentPackage, { foreignKey: 'fnbPackageId', as: 'fnbPackage' })
-
-// ── Billing Events (IMMUTABLE Usage Facts) ────────────────────────────────────
-BillingAccount.hasMany(BillingEvent, { foreignKey: 'billingAccountId', as: 'billingEvents' })
-BillingEvent.belongsTo(BillingAccount, { foreignKey: 'billingAccountId', as: 'billingAccount' })
-
-Resident.hasMany(BillingEvent, { foreignKey: 'residentId', as: 'billingEvents' })
-BillingEvent.belongsTo(Resident, { foreignKey: 'residentId', as: 'resident' })
-
-PropertyUnit.hasMany(BillingEvent, { foreignKey: 'unitId', as: 'billingEvents' })
-BillingEvent.belongsTo(PropertyUnit, { foreignKey: 'unitId', as: 'unit' })
-
-BillingProduct.hasMany(BillingEvent, { foreignKey: 'productId', as: 'billingEvents' })
-BillingEvent.belongsTo(BillingProduct, { foreignKey: 'productId', as: 'product' })
-
-// ── Invoices ──────────────────────────────────────────────────────────────────
-BillingAccount.hasMany(Invoice, { foreignKey: 'billingAccountId', as: 'invoices' })
-Invoice.belongsTo(BillingAccount, { foreignKey: 'billingAccountId', as: 'billingAccount' })
-
+// ── Flat Billing Associations ──────────────────────────────────────────────────
 PropertyUnit.hasMany(Invoice, { foreignKey: 'unitId', as: 'invoices' })
 Invoice.belongsTo(PropertyUnit, { foreignKey: 'unitId', as: 'unit' })
+Invoice.belongsTo(Resident, { foreignKey: 'billToResidentId', as: 'billToResident' })
 
-Resident.hasMany(Invoice, { foreignKey: 'residentId', as: 'invoices' })
-Invoice.belongsTo(Resident, { foreignKey: 'residentId', as: 'resident' })
+Invoice.hasMany(ServicesInvoice, { foreignKey: 'invoiceId', as: 'services' })
+ServicesInvoice.belongsTo(Invoice, { foreignKey: 'invoiceId', as: 'invoice' })
+ServicesInvoice.belongsTo(Resident, { foreignKey: 'residentId', as: 'resident' })
 
-// Self-referential for credit/debit notes
-Invoice.belongsTo(Invoice, { foreignKey: 'referenceInvoiceId', as: 'referenceInvoice' })
-Invoice.hasMany(Invoice, { foreignKey: 'referenceInvoiceId', as: 'relatedNotes' })
+Invoice.hasMany(MiscellaneousBilling, { foreignKey: 'invoiceId', as: 'miscellaneousItems' })
+MiscellaneousBilling.belongsTo(Invoice, { foreignKey: 'invoiceId', as: 'invoice' })
 
-// ── Invoice Lines ─────────────────────────────────────────────────────────────
-Invoice.hasMany(InvoiceLine, { foreignKey: 'invoiceId', as: 'lines' })
-InvoiceLine.belongsTo(Invoice, { foreignKey: 'invoiceId', as: 'invoice' })
+PropertyUnit.hasMany(UnitMiscellaneousItem, { foreignKey: 'unitId', as: 'miscellaneousItems' })
+UnitMiscellaneousItem.belongsTo(PropertyUnit, { foreignKey: 'unitId', as: 'unit' })
+UnitMiscellaneousItem.belongsTo(Resident, { foreignKey: 'residentId', as: 'resident' })
 
-BillingSubscription.hasMany(InvoiceLine, { foreignKey: 'subscriptionId', as: 'invoiceLines' })
-InvoiceLine.belongsTo(BillingSubscription, { foreignKey: 'subscriptionId', as: 'subscription' })
+Invoice.hasMany(Receipt, { foreignKey: 'invoiceId', as: 'receipts' })
+Receipt.belongsTo(Invoice, { foreignKey: 'invoiceId', as: 'invoice' })
+Receipt.belongsTo(User, { foreignKey: 'handedOverTo', as: 'handedOverToUser' })
 
-BillingEvent.hasMany(InvoiceLine, { foreignKey: 'billingEventId', as: 'invoiceLines' })
-InvoiceLine.belongsTo(BillingEvent, { foreignKey: 'billingEventId', as: 'billingEvent' })
+Invoice.hasMany(InvoiceDocument, { foreignKey: 'invoiceId', as: 'documents' })
+InvoiceDocument.belongsTo(Invoice, { foreignKey: 'invoiceId', as: 'invoice' })
 
-BillingProduct.hasMany(InvoiceLine, { foreignKey: 'productId', as: 'invoiceLines' })
-InvoiceLine.belongsTo(BillingProduct, { foreignKey: 'productId', as: 'product' })
+Invoice.hasMany(CarriedForwardInvoice, { foreignKey: 'targetInvoiceId', as: 'carriedForwardFrom' })
+Invoice.hasOne(CarriedForwardInvoice, { foreignKey: 'sourceInvoiceId', as: 'carriedForwardTo' })
+CarriedForwardInvoice.belongsTo(Invoice, { foreignKey: 'targetInvoiceId', as: 'targetInvoice' })
+CarriedForwardInvoice.belongsTo(Invoice, { foreignKey: 'sourceInvoiceId', as: 'sourceInvoice' })
 
-// consumedByResidentId = WHO used the service (not who pays)
-Resident.hasMany(InvoiceLine, { foreignKey: 'consumedByResidentId', as: 'consumedInvoiceLines' })
-InvoiceLine.belongsTo(Resident, { foreignKey: 'consumedByResidentId', as: 'consumedByResident' })
-
-// ── Payments ──────────────────────────────────────────────────────────────────
-BillingAccount.hasMany(Payment, { foreignKey: 'billingAccountId', as: 'payments' })
-Payment.belongsTo(BillingAccount, { foreignKey: 'billingAccountId', as: 'billingAccount' })
-
-// ── Payment Allocations ───────────────────────────────────────────────────────
-Payment.hasMany(PaymentAllocation, { foreignKey: 'paymentId', as: 'allocations' })
-PaymentAllocation.belongsTo(Payment, { foreignKey: 'paymentId', as: 'payment' })
-
-Invoice.hasMany(PaymentAllocation, { foreignKey: 'invoiceId', as: 'paymentAllocations' })
-PaymentAllocation.belongsTo(Invoice, { foreignKey: 'invoiceId', as: 'invoice' })
-
-BillingAccount.hasMany(PaymentAllocation, { foreignKey: 'billingAccountId', as: 'paymentAllocations' })
-PaymentAllocation.belongsTo(BillingAccount, { foreignKey: 'billingAccountId', as: 'billingAccount' })
-
-// ── Billing Runs ──────────────────────────────────────────────────────────────
-Property.hasMany(BillingRun, { foreignKey: 'propertyId', as: 'billingRuns' })
-BillingRun.belongsTo(Property, { foreignKey: 'propertyId', as: 'property' })
-
-// ── Billing Ledger Entries (SACRED APPEND-ONLY) ───────────────────────────────
-BillingAccount.hasMany(BillingLedgerEntry, { foreignKey: 'billingAccountId', as: 'ledgerEntries' })
-BillingLedgerEntry.belongsTo(BillingAccount, { foreignKey: 'billingAccountId', as: 'billingAccount' })
-
-PropertyUnit.hasMany(BillingLedgerEntry, { foreignKey: 'unitId', as: 'ledgerEntries' })
-BillingLedgerEntry.belongsTo(PropertyUnit, { foreignKey: 'unitId', as: 'unit' })
+Receipt.hasMany(ReceiptAllocation, { foreignKey: 'receiptId', as: 'allocations' })
+ReceiptAllocation.belongsTo(Receipt, { foreignKey: 'receiptId', as: 'receipt' })
+Invoice.hasMany(ReceiptAllocation, { foreignKey: 'invoiceId', as: 'allocations' })
+ReceiptAllocation.belongsTo(Invoice, { foreignKey: 'invoiceId', as: 'invoice' })
 
 // ── Care Tasks associations ──────────────────────────────────────────────────
 Property.hasMany(CareTask, { foreignKey: 'propertyId', as: 'careTasks' })
@@ -1071,6 +968,12 @@ CareTaskAssignment.belongsTo(User, { foreignKey: 'stoppedBy', as: 'stoppedByUser
 
 CareTaskAssignment.hasMany(AdditionalTaskCharge, { foreignKey: 'taskAssignmentId', as: 'charges' })
 AdditionalTaskCharge.belongsTo(CareTaskAssignment, { foreignKey: 'taskAssignmentId', as: 'taskAssignment' })
+
+// A care package (and the tasks / charges made from it) can belong to a family member.
+PackageSubscription.belongsTo(ResidentFamilyMember, { foreignKey: 'familyMemberId', as: 'familyMember' })
+CareTaskAssignment.belongsTo(ResidentFamilyMember, { foreignKey: 'familyMemberId', as: 'familyMember' })
+AdditionalTaskCharge.belongsTo(ResidentFamilyMember, { foreignKey: 'familyMemberId', as: 'familyMember' })
+ResidentCareTaskCompletion.belongsTo(ResidentFamilyMember, { foreignKey: 'familyMemberId', as: 'familyMember' })
 
 PackageSubscription.hasMany(CareTaskAssignment, { foreignKey: 'packageSubscriptionId', as: 'careTaskAssignments' })
 CareTaskAssignment.belongsTo(PackageSubscription, { foreignKey: 'packageSubscriptionId', as: 'packageSubscription' })
@@ -1207,20 +1110,15 @@ export {
   ShiftArea,
   RosterArea,
   FnbFoodAttendance,
-  // ── Billing & Revenue Management Module ───────────────────────────────────
-  UnitResident,
-  BillingProduct,
-  BillingPricePlan,
-  BillingAccount,
-  BillingParty,
-  BillingSubscription,
-  BillingEvent,
+  // ── Flat Billing ───────────────────────────────────────────────────────────
   Invoice,
-  InvoiceLine,
-  Payment,
-  PaymentAllocation,
-  BillingRun,
-  BillingLedgerEntry,
+  ServicesInvoice,
+  MiscellaneousBilling,
+  UnitMiscellaneousItem,
+  Receipt,
+  InvoiceDocument,
+  CarriedForwardInvoice,
+  ReceiptAllocation,
   // ── Care Tasks & Medical Module ───────────────────────────────────────────
   CareTask,
   type CareTaskAttributes,

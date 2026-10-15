@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { PaymentMethod } from '../enums/billing.enum.js'
+import { LabPaymentMethod } from '../enums/labReport.enum.js'
 import { LAB_REPORT_SEVERITIES } from '../models/residentLabReport.model.js'
 
 export const residentIdParamSchema = z.object({
@@ -21,10 +21,10 @@ const optionalCost = z
   .optional()
 
 const optionalPaymentMethod = z
-  .union([z.nativeEnum(PaymentMethod), z.literal(''), z.null(), z.undefined()])
-  .transform((val): PaymentMethod | null => {
+  .union([z.nativeEnum(LabPaymentMethod), z.literal(''), z.null(), z.undefined()])
+  .transform((val): LabPaymentMethod | null => {
     if (val === null || val === undefined || val === '') return null
-    return val as PaymentMethod
+    return val as LabPaymentMethod
   })
   .optional()
 

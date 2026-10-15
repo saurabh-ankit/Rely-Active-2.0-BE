@@ -9,6 +9,8 @@ import type { CareTaskAssignment } from './careTaskAssignment.model.js'
 
 export interface AdditionalTaskChargeAttributes extends BaseAttributes {
   residentId: string
+  /** Set when the package / task belongs to a family member of the resident. */
+  familyMemberId?: string | null
   featureId: string
   nurseId: string
   price: number
@@ -24,6 +26,7 @@ export interface AdditionalTaskChargeAttributes extends BaseAttributes {
 export type AdditionalTaskChargeCreationAttributes = Optional<
   AdditionalTaskChargeAttributes,
   | 'id'
+  | 'familyMemberId'
   | 'completedAt'
   | 'unitPrice'
   | 'description'
@@ -41,6 +44,7 @@ export class AdditionalTaskCharge
   implements AdditionalTaskChargeAttributes
 {
   declare residentId: string
+  declare familyMemberId: string | null
   declare featureId: string
   declare nurseId: string
   declare price: number
@@ -65,6 +69,11 @@ AdditionalTaskCharge.init(
       type: DataTypes.UUID,
       allowNull: false,
       comment: 'FK -> residents.id',
+    },
+    familyMemberId: {
+      type: DataTypes.UUID,
+      allowNull: true,
+      comment: 'FK -> resident_family_members.id',
     },
     featureId: {
       type: DataTypes.UUID,

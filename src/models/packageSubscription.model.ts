@@ -12,6 +12,8 @@ export { SubscriptionStatus }
 
 export interface PackageSubscriptionAttributes extends BaseAttributes {
   residentId: string
+  /** Set when the package / task belongs to a family member of the resident. */
+  familyMemberId?: string | null
   carePackageId: string
   status: SubscriptionStatus
   startDate: Date | string
@@ -27,6 +29,7 @@ export interface PackageSubscriptionAttributes extends BaseAttributes {
 export type PackageSubscriptionCreationAttributes = Optional<
   PackageSubscriptionAttributes,
   | 'id'
+  | 'familyMemberId'
   | 'status'
   | 'endDate'
   | 'totalCost'
@@ -45,6 +48,7 @@ export class PackageSubscription
   implements PackageSubscriptionAttributes
 {
   declare residentId: string
+  declare familyMemberId: string | null
   declare carePackageId: string
   declare status: SubscriptionStatus
   declare startDate: Date | string
@@ -70,6 +74,11 @@ PackageSubscription.init(
       type: DataTypes.UUID,
       allowNull: false,
       comment: 'FK -> residents.id',
+    },
+    familyMemberId: {
+      type: DataTypes.UUID,
+      allowNull: true,
+      comment: 'FK -> resident_family_members.id',
     },
     carePackageId: {
       type: DataTypes.UUID,

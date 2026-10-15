@@ -1306,6 +1306,7 @@ export async function assignDoctorCareTask(req: Request, res: Response): Promise
     const activeSubscription = await PackageSubscription.findOne({
       where: {
         residentId,
+        familyMemberId: null,
         status: SubscriptionStatus.ACTIVE,
         isDeleted: false,
       },

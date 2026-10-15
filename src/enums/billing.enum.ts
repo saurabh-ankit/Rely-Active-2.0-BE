@@ -1,195 +1,86 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// Rely Active 2.0 — Billing & Revenue Management Module
-// Enum Definitions (v2.3 Final Architecture)
+// Flat billing (ported from Rely Assist). An invoice is computed live from the
+// source modules for a date range and saved as a snapshot of service lines.
 // ─────────────────────────────────────────────────────────────────────────────
-
-// ── Occupancy / Ownership ─────────────────────────────────────────────────────
-
-export enum UnitResidentRelationshipType {
-  OWNER = 'OWNER',
-  TENANT = 'TENANT',
-  SPOUSE = 'SPOUSE',
-  DEPENDENT = 'DEPENDENT',
-  CO_RESIDENT = 'CO_RESIDENT',
-  CARETAKER = 'CARETAKER',
-}
-
-// ── Billing Account ───────────────────────────────────────────────────────────
-
-export enum BillingMode {
-  INDIVIDUAL = 'INDIVIDUAL',
-  UNIT_CONSOLIDATED = 'UNIT_CONSOLIDATED',
-}
-
-export enum BillingAccountStatus {
-  ACTIVE = 'ACTIVE',
-  SUSPENDED = 'SUSPENDED',
-  CLOSED = 'CLOSED',
-}
-
-export enum BillingCycle {
-  MONTHLY = 'MONTHLY',
-  QUARTERLY = 'QUARTERLY',
-  ANNUAL = 'ANNUAL',
-}
-
-// ── Billing Parties ───────────────────────────────────────────────────────────
-
-export enum BillingPartyType {
-  RESIDENT = 'RESIDENT',
-  FAMILY_MEMBER = 'FAMILY_MEMBER',
-  GUARDIAN = 'GUARDIAN',
-  ORGANIZATION = 'ORGANIZATION',
-  OTHER = 'OTHER',
-}
-
-export enum BillingPartyRole {
-  PRIMARY_PAYER = 'PRIMARY_PAYER',
-  SECONDARY_PAYER = 'SECONDARY_PAYER',
-  AUTHORIZED_CONTACT = 'AUTHORIZED_CONTACT',
-}
-
-// ── Product Catalog ───────────────────────────────────────────────────────────
-
-export enum BillingProductCategory {
-  ACCOMMODATION = 'ACCOMMODATION',
-  FOOD = 'FOOD',
-  CARE = 'CARE',
-  HOUSEKEEPING = 'HOUSEKEEPING',
-  TRANSPORT = 'TRANSPORT',
-  ACTIVITY = 'ACTIVITY',
-  UTILITY = 'UTILITY',
-  CONSUMABLE = 'CONSUMABLE',
-  GUEST_SERVICE = 'GUEST_SERVICE',
-  SECURITY_DEPOSIT = 'SECURITY_DEPOSIT',
-  ONE_TIME = 'ONE_TIME',
-  OTHER = 'OTHER',
-}
-
-export enum ChargeType {
-  SUBSCRIPTION = 'SUBSCRIPTION',
-  USAGE = 'USAGE',
-  ONE_TIME = 'ONE_TIME',
-}
-
-// ── Contracts ─────────────────────────────────────────────────────────────────
-
-export enum ContractType {
-  STANDARD = 'STANDARD',
-  TRIAL = 'TRIAL',
-  CONCESSION = 'CONCESSION',
-}
-
-export enum ContractStatus {
-  DRAFT = 'DRAFT',
-  ACTIVE = 'ACTIVE',
-  EXPIRED = 'EXPIRED',
-  TERMINATED = 'TERMINATED',
-}
-
-// ── Subscriptions ─────────────────────────────────────────────────────────────
-
-export enum SubscriptionStatus {
-  ACTIVE = 'ACTIVE',
-  PAUSED = 'PAUSED',
-  CANCELLED = 'CANCELLED',
-  COMPLETED = 'COMPLETED',
-}
-
-export enum ProrationPolicy {
-  DAILY = 'DAILY',
-  FULL_MONTH = 'FULL_MONTH',
-  NO_PRORATION = 'NO_PRORATION',
-}
-
-// ── Billing Events ────────────────────────────────────────────────────────────
-
-export enum BillingEventSourceModule {
-  FNB = 'FNB',
-  CARE = 'CARE',
-  TRANSPORT = 'TRANSPORT',
-  ACTIVITY = 'ACTIVITY',
-  INVENTORY = 'INVENTORY',
-  HOUSEKEEPING = 'HOUSEKEEPING',
-  MANUAL = 'MANUAL',
-  SYSTEM = 'SYSTEM',
-}
-
-export enum BillingEventStatus {
-  PENDING = 'PENDING',
-  INVOICED = 'INVOICED',
-  CANCELLED = 'CANCELLED',
-}
-
-// ── Invoices ──────────────────────────────────────────────────────────────────
-
-export enum InvoiceType {
-  INVOICE = 'INVOICE',
-  CREDIT_NOTE = 'CREDIT_NOTE',
-  DEBIT_NOTE = 'DEBIT_NOTE',
-}
 
 export enum InvoiceStatus {
   DRAFT = 'DRAFT',
-  PREVIEW = 'PREVIEW',
-  FINALIZED = 'FINALIZED',
-  SENT = 'SENT',
-  PARTIALLY_PAID = 'PARTIALLY_PAID',
+  PENDING = 'PENDING',
   PAID = 'PAID',
+  PARTIALLY_PAID = 'PARTIALLY_PAID',
   CANCELLED = 'CANCELLED',
   OVERDUE = 'OVERDUE',
+  OBSOLETE = 'OBSOLETE',
+  CARRY_FORWARDED = 'CARRY_FORWARDED',
 }
 
-export enum InvoiceLineType {
-  SUBSCRIPTION = 'SUBSCRIPTION',
-  USAGE = 'USAGE',
-  DISCOUNT = 'DISCOUNT',
-  TAX = 'TAX',
-  ADJUSTMENT = 'ADJUSTMENT',
+/** Invoices in these states no longer count as billed (their lines can be billed again). */
+export const VOID_INVOICE_STATUSES = [InvoiceStatus.CANCELLED] as const
+
+/**
+ * Carried forward into a newer invoice: still billed (its charges are not billed again), but its
+ * balance is owed on the newer invoice. New carry-forwards use OBSOLETE, which is permanent;
+ * CARRY_FORWARDED is the older name for the same state.
+ */
+export const CARRIED_INVOICE_STATUSES = [InvoiceStatus.OBSOLETE, InvoiceStatus.CARRY_FORWARDED] as const
+
+/** Invoices that still have money owed on them (candidates for payment / carry-forward). */
+export const OPEN_INVOICE_STATUSES = [
+  InvoiceStatus.PENDING,
+  InvoiceStatus.PARTIALLY_PAID,
+  InvoiceStatus.OVERDUE,
+] as const
+
+export enum BillingMode {
+  /** Calendar month; rent and packages billed in advance, last month's packages reconciled. */
+  MONTHLY = 'MONTHLY',
+  /** Any date range; rent and packages prorated by active days. */
+  CUSTOM = 'CUSTOM',
 }
 
-// ── Payments ──────────────────────────────────────────────────────────────────
+export enum ServiceType {
+  RENT = 'RENT',
+  CARE_PACKAGE = 'CARE_PACKAGE',
+  FOOD_PACKAGE = 'FOOD_PACKAGE',
+  FOOD_ORDER = 'FOOD_ORDER',
+  ADDITIONAL_TASK = 'ADDITIONAL_TASK',
+  DOCTOR_CONSULTATION = 'DOCTOR_CONSULTATION',
+  LAB_TEST = 'LAB_TEST',
+  INVENTORY_ITEM = 'INVENTORY_ITEM',
+  EVENT_FEE = 'EVENT_FEE',
+  VENUE_BOOKING = 'VENUE_BOOKING',
+  MAINTENANCE = 'MAINTENANCE',
+  MISCELLANEOUS_AS_SERVICE = 'MISCELLANEOUS_AS_SERVICE',
+  MISCELLANEOUS_AT_BILLING = 'MISCELLANEOUS_AT_BILLING',
+  CARRY_FORWARD = 'CARRY_FORWARD',
+}
+
+/** Billed per period (in advance for MONTHLY, prorated for CUSTOM). */
+export const RECURRING_SERVICE_TYPES = [ServiceType.RENT, ServiceType.CARE_PACKAGE, ServiceType.FOOD_PACKAGE] as const
+
+/** Billed once per source record, by service date. */
+export const USAGE_SERVICE_TYPES = [
+  ServiceType.FOOD_ORDER,
+  ServiceType.ADDITIONAL_TASK,
+  ServiceType.DOCTOR_CONSULTATION,
+  ServiceType.LAB_TEST,
+  ServiceType.INVENTORY_ITEM,
+  ServiceType.EVENT_FEE,
+  ServiceType.VENUE_BOOKING,
+  ServiceType.MAINTENANCE,
+  ServiceType.MISCELLANEOUS_AS_SERVICE,
+] as const
 
 export enum PaymentMethod {
   CASH = 'CASH',
-  BANK_TRANSFER = 'BANK_TRANSFER',
-  CHEQUE = 'CHEQUE',
   UPI = 'UPI',
-  NEFT = 'NEFT',
-  RTGS = 'RTGS',
+  CHEQUE = 'CHEQUE',
   CARD = 'CARD',
+  NET_BANKING = 'NET_BANKING',
   OTHER = 'OTHER',
 }
 
-export enum PaymentStatus {
-  PENDING = 'PENDING',
-  CONFIRMED = 'CONFIRMED',
-  FAILED = 'FAILED',
-  REVERSED = 'REVERSED',
-}
-
-// ── Billing Runs ──────────────────────────────────────────────────────────────
-
-export enum BillingRunType {
-  SCHEDULED = 'SCHEDULED',
-  MANUAL = 'MANUAL',
-  PREVIEW = 'PREVIEW',
-}
-
-export enum BillingRunStatus {
-  QUEUED = 'QUEUED',
-  RUNNING = 'RUNNING',
-  COMPLETED = 'COMPLETED',
-  FAILED = 'FAILED',
-}
-
-// ── Ledger ────────────────────────────────────────────────────────────────────
-
-export enum LedgerEntryType {
+export enum InvoiceDocumentType {
   INVOICE = 'INVOICE',
-  PAYMENT = 'PAYMENT',
-  CREDIT_NOTE = 'CREDIT_NOTE',
-  DEBIT_NOTE = 'DEBIT_NOTE',
-  CREDIT_APPLIED = 'CREDIT_APPLIED',
-  REFUND = 'REFUND',
+  RECEIPT = 'RECEIPT',
 }
