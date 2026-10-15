@@ -7,6 +7,7 @@ import ticketMobileRouter from './ticketMobile.routes.js'
 import gnsRouter from './gns.routes.js'
 import eventMobileRouter, { eventVenueMobileRouter, eventRequestMobileRouter } from './eventMobile.routes.js'
 import appointmentMobileRouter from './appointmentMobile.routes.js'
+import medicalHistoryMobileRouter from './medicalHistoryMobile.routes.js'
 import assistantMobileRouter from './assistantMobile.routes.js'
 import feedbackMobileRouter, { advertisementMobileRouter } from './feedbackMobile.routes.js'
 
@@ -60,6 +61,9 @@ l1MobileRouter.use('/event-requests', eventRequestMobileRouter)
 // ── Medical Appointments (/api/v1/mobile/l1/medical/appointments) ──
 l1MobileRouter.use('/medical/appointments', appointmentMobileRouter)
 l1MobileRouter.use('/appointments', appointmentMobileRouter)
+
+// ── Medical History (/api/v1/mobile/l1/medical/history) ──
+l1MobileRouter.use('/medical/history', medicalHistoryMobileRouter)
 
 // ── Feedback & Advertisements (/api/v1/mobile/l1/feedback-forms, /advertisements) ──
 l1MobileRouter.use('/feedback-forms', feedbackMobileRouter)

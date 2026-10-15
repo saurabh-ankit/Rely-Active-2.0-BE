@@ -50,7 +50,7 @@ type ShiftDateWithAssignment = ShiftDate & {
   shiftAssignment?: AssignmentWithRelations
 }
 
-async function resolveResidentContext(req: AuthenticatedRequest): Promise<{
+export async function resolveResidentContext(req: AuthenticatedRequest): Promise<{
   residentId: string
   locationId: string
   isFamilyMember: boolean
@@ -511,7 +511,7 @@ export async function listVisitingDoctorAppointments(req: AuthenticatedRequest, 
 
 /**
  * GET /medical/appointments/inhouse
- * Upcoming in-house doctor shift days whose roster scope covers this resident's unit.
+ * Today's in-house doctor shifts whose roster scope covers this resident's unit.
  */
 export async function listInhouseDoctorAppointments(req: AuthenticatedRequest, res: Response): Promise<void> {
   try {
@@ -521,26 +521,25 @@ export async function listInhouseDoctorAppointments(req: AuthenticatedRequest, r
       return
     }
 
+    const today = todayYmdLocal()
+
     const unitScope = await resolveResidentUnitScope(ctx.residentId)
     if (!unitScope) {
       res.status(200).json({
         success: true,
         message: 'Resident unit not found',
-        data: { appointments: [] },
+        data: { date: today, appointments: [] },
       })
       return
     }
 
     const inhouseIds = await getInhouseDoctorIds(ctx.locationId)
     if (inhouseIds.size === 0) {
-      res.status(200).json({ success: true, message: 'No in-house doctor shifts', data: { appointments: [] } })
+      res
+        .status(200)
+        .json({ success: true, message: 'No in-house doctor shifts', data: { date: today, appointments: [] } })
       return
     }
-
-    const today = todayYmdLocal()
-    const horizon = new Date()
-    horizon.setDate(horizon.getDate() + 45)
-    const horizonStr = todayYmdLocal(horizon)
 
     const assignments = (await ShiftAssignment.findAll({
       where: {
@@ -548,7 +547,7 @@ export async function listInhouseDoctorAppointments(req: AuthenticatedRequest, r
         employeeId: { [Op.in]: [...inhouseIds] },
         isDeleted: false,
         endDate: { [Op.gte]: today },
-        startDate: { [Op.lte]: horizonStr },
+        startDate: { [Op.lte]: today },
         [Op.or]: [
           { unitId: unitScope.unitId },
           ...(unitScope.floorId ? [{ floorId: unitScope.floorId }] : []),
@@ -587,11 +586,13 @@ export async function listInhouseDoctorAppointments(req: AuthenticatedRequest, r
     })[]
 
     const coveringAssignments = assignments.filter((a) => assignmentCoversResidentUnit(a, unitScope))
-    await ensureShiftDatesForAssignments(ctx.locationId, coveringAssignments, today, horizonStr)
+    await ensureShiftDatesForAssignments(ctx.locationId, coveringAssignments, today, today)
 
     const coveringAssignmentIds = new Set(coveringAssignments.map((a) => a.id))
     if (coveringAssignmentIds.size === 0) {
-      res.status(200).json({ success: true, message: 'No in-house doctor shifts', data: { appointments: [] } })
+      res
+        .status(200)
+        .json({ success: true, message: 'No in-house doctor shifts', data: { date: today, appointments: [] } })
       return
     }
 
@@ -599,7 +600,7 @@ export async function listInhouseDoctorAppointments(req: AuthenticatedRequest, r
       where: {
         locationId: ctx.locationId,
         isDeleted: false,
-        date: { [Op.between]: [today, horizonStr] },
+        date: today,
         status: { [Op.notIn]: [ShiftEmployeeDateStatus.DAY_OFF, ShiftEmployeeDateStatus.ABSENT] },
         employeeShiftAssignmentId: { [Op.in]: [...coveringAssignmentIds] },
       },
@@ -692,11 +693,12 @@ export async function listInhouseDoctorAppointments(req: AuthenticatedRequest, r
           scopeLabel: buildInhouseScopeLabel(assignment, unitScope),
         }
       })
+      .sort((a, b) => (a.effectiveTime || '').localeCompare(b.effectiveTime || ''))
 
     res.status(200).json({
       success: true,
       message: 'In-house doctor appointments retrieved successfully',
-      data: { appointments },
+      data: { date: today, appointments },
     })
   } catch (err) {
     console.error('List In-house Doctor Appointments Error:', err)
@@ -722,12 +724,19 @@ export async function listMyAppointmentBookings(req: AuthenticatedRequest, res: 
     const categoryFilter: DoctorCategory | null =
       categoryRaw === 'VISITING' || categoryRaw === 'INHOUSE' ? categoryRaw : null
 
+    const statusRaw = String(req.query.status || '')
+      .trim()
+      .toUpperCase()
+    const statusFilter = Object.values(AppointmentStatus).find(
+      (s) => s === statusRaw && s !== AppointmentStatus.CANCELLED,
+    )
+
     const rows = await DoctorAppointment.findAll({
       where: {
         locationId: ctx.locationId,
         residentId: ctx.residentId,
         isDeleted: false,
-        status: { [Op.ne]: AppointmentStatus.CANCELLED },
+        status: statusFilter ?? { [Op.ne]: AppointmentStatus.CANCELLED },
       },
       include: [
         {
@@ -786,6 +795,7 @@ export async function listMyAppointmentBookings(req: AuthenticatedRequest, res: 
           slotTimeRange: data.slotTimeRange,
           status: data.status,
           bookedAt: data.bookedAt,
+          attendedAt: data.attendedAt || null,
           notes: data.notes,
           familyMemberId: data.familyMemberId,
           memberName,
@@ -808,9 +818,74 @@ export async function listMyAppointmentBookings(req: AuthenticatedRequest, res: 
   }
 }
 
+type ResidentDiagnosisStatus = 'COMPLETED' | 'IN_PROGRESS' | 'NOT_STARTED'
+
+type AppointmentWithDiagnosisRelations = DoctorAppointment & {
+  familyMember?: ResidentFamilyMember | null
+  doctor?: (User & { profile?: UserDetail }) | null
+}
+
+const appointmentDiagnosisInclude = () => [
+  {
+    model: ResidentFamilyMember,
+    as: 'familyMember',
+    attributes: ['id', 'firstName', 'lastName', 'relation'],
+    required: false,
+  },
+  {
+    model: User,
+    as: 'doctor',
+    attributes: ['id', 'email'],
+    include: [{ model: UserDetail, as: 'profile', attributes: ['firstName', 'lastName'] }],
+  },
+]
+
+const resolveResidentDiagnosisStatus = (
+  appointment: DoctorAppointment | null,
+  consultant: Consultant | null,
+): ResidentDiagnosisStatus => {
+  if (appointment?.status === AppointmentStatus.ATTENDED && consultant?.status === DiagnosisStatus.COMPLETED) {
+    return 'COMPLETED'
+  }
+  return consultant ? 'IN_PROGRESS' : 'NOT_STARTED'
+}
+
+/**
+ * Resident-facing diagnosis payload. Consultant content is only included once COMPLETED,
+ * so draft notes are never exposed to residents.
+ */
+const buildResidentDiagnosisPayload = (
+  appointment: AppointmentWithDiagnosisRelations | null,
+  consultant: Consultant | null,
+  fallback: { doctorName: string; appointmentDate: string | null; slotTimeRange: string | null },
+) => {
+  const diagnosisStatus = resolveResidentDiagnosisStatus(appointment, consultant)
+  const data = appointment ? (appointment.toJSON() as AppointmentWithDiagnosisRelations) : null
+  const doctorProfile = data?.doctor?.profile
+  const doctorName =
+    (doctorProfile ? `${doctorProfile.firstName || ''} ${doctorProfile.lastName || ''}`.trim() : '') ||
+    data?.doctor?.email ||
+    fallback.doctorName
+  const fm = data?.familyMember
+  const memberName = fm ? `${fm.firstName || ''} ${fm.lastName || ''}`.trim() : 'Self'
+
+  return {
+    ...(diagnosisStatus === 'COMPLETED' && consultant ? formatConsultant(consultant) : {}),
+    diagnosisStatus,
+    appointmentId: data?.id || null,
+    doctorName,
+    appointmentDate: data?.appointmentDate || fallback.appointmentDate,
+    slotTimeRange: data?.slotTimeRange || fallback.slotTimeRange,
+    memberName,
+    memberRelation: fm?.relation || 'Self',
+    appointmentStatus: data?.status || null,
+    attendedAt: data?.attendedAt || null,
+  }
+}
+
 /**
  * GET /medical/appointments/bookings/:appointmentId/diagnosis
- * Resident-facing read of COMPLETED consultant diagnosis for an ATTENDED booking.
+ * Resident-facing diagnosis for a booking; returns diagnosisStatus when not yet completed.
  */
 export async function getMyBookingDiagnosis(req: AuthenticatedRequest, res: Response): Promise<void> {
   try {
@@ -826,79 +901,113 @@ export async function getMyBookingDiagnosis(req: AuthenticatedRequest, res: Resp
       return
     }
 
-    const appointment = await DoctorAppointment.findOne({
+    const appointment = (await DoctorAppointment.findOne({
       where: {
         id: appointmentId,
         residentId: ctx.residentId,
         locationId: ctx.locationId,
         isDeleted: false,
       },
-      include: [
-        {
-          model: ResidentFamilyMember,
-          as: 'familyMember',
-          attributes: ['id', 'firstName', 'lastName', 'relation'],
-          required: false,
-        },
-        {
-          model: User,
-          as: 'doctor',
-          attributes: ['id', 'email'],
-          include: [{ model: UserDetail, as: 'profile', attributes: ['firstName', 'lastName'] }],
-        },
-      ],
-    })
+      include: appointmentDiagnosisInclude(),
+    })) as AppointmentWithDiagnosisRelations | null
 
     if (!appointment) {
       res.status(404).json({ success: false, message: 'Appointment not found' })
       return
     }
 
-    if (appointment.status !== AppointmentStatus.ATTENDED) {
-      res.status(404).json({ success: false, message: 'Diagnosis is only available for attended appointments' })
-      return
-    }
-
     const consultant = await Consultant.findOne({
-      where: {
-        appointmentId: appointment.id,
-        status: DiagnosisStatus.COMPLETED,
-        isDeleted: false,
-      },
+      where: { appointmentId: appointment.id, isDeleted: false },
     })
 
-    if (!consultant) {
-      res.status(404).json({ success: false, message: 'Diagnosis not found for this appointment' })
-      return
-    }
-
-    const data = appointment.toJSON() as DoctorAppointment & {
-      familyMember?: ResidentFamilyMember
-      doctor?: User & { profile?: UserDetail }
-    }
-    const doctorProfile = data.doctor?.profile
-    const doctorName = doctorProfile
-      ? `${doctorProfile.firstName || ''} ${doctorProfile.lastName || ''}`.trim()
-      : data.doctor?.email || 'Doctor'
-    const fm = data.familyMember
-    const memberName = fm ? `${fm.firstName || ''} ${fm.lastName || ''}`.trim() : 'Self'
+    const payload = buildResidentDiagnosisPayload(appointment, consultant, {
+      doctorName: 'Doctor',
+      appointmentDate: null,
+      slotTimeRange: null,
+    })
 
     res.status(200).json({
       success: true,
-      message: 'Appointment diagnosis retrieved successfully',
-      data: {
-        ...formatConsultant(consultant),
-        doctorName,
-        appointmentDate: data.appointmentDate,
-        slotTimeRange: data.slotTimeRange,
-        memberName,
-        memberRelation: fm?.relation || 'Self',
-        appointmentStatus: data.status,
-        attendedAt: data.attendedAt || null,
-      },
+      message:
+        payload.diagnosisStatus === 'COMPLETED'
+          ? 'Appointment diagnosis retrieved successfully'
+          : 'Diagnosis has not been completed by the doctor yet',
+      data: payload,
     })
   } catch (err) {
     console.error('Get My Booking Diagnosis Error:', err)
+    res.status(500).json({ success: false, message: 'Failed to fetch diagnosis' })
+  }
+}
+
+/**
+ * GET /medical/appointments/inhouse/:shiftEmployeeDateId/diagnosis
+ * Resident's diagnosis for an in-house doctor shift day covering their unit.
+ */
+export async function getInhouseShiftDiagnosis(req: AuthenticatedRequest, res: Response): Promise<void> {
+  try {
+    const ctx = await resolveResidentContext(req)
+    if (!ctx) {
+      res.status(401).json({ success: false, message: 'Unable to resolve resident context' })
+      return
+    }
+
+    const shiftEmployeeDateId = asParamString(req.params.shiftEmployeeDateId)
+    if (!shiftEmployeeDateId) {
+      res.status(400).json({ success: false, message: 'Shift id is required' })
+      return
+    }
+
+    const shiftDate = await loadShiftDateContext(ctx.locationId, shiftEmployeeDateId)
+    const assignment = shiftDate?.shiftAssignment
+    const employeeId = assignment?.employeeId
+    if (!shiftDate || !assignment || !employeeId) {
+      res.status(404).json({ success: false, message: 'In-house doctor shift not found' })
+      return
+    }
+
+    const [inhouseIds, unitScope] = await Promise.all([
+      getInhouseDoctorIds(ctx.locationId),
+      resolveResidentUnitScope(ctx.residentId),
+    ])
+    if (!inhouseIds.has(employeeId) || !unitScope || !assignmentCoversResidentUnit(assignment, unitScope)) {
+      res.status(404).json({ success: false, message: 'In-house doctor shift not found' })
+      return
+    }
+
+    const appointment = (await DoctorAppointment.findOne({
+      where: {
+        shiftEmployeeDateId,
+        residentId: ctx.residentId,
+        locationId: ctx.locationId,
+        isDeleted: false,
+        status: { [Op.ne]: AppointmentStatus.CANCELLED },
+      },
+      include: appointmentDiagnosisInclude(),
+      order: [['bookedAt', 'DESC']],
+    })) as AppointmentWithDiagnosisRelations | null
+
+    const consultant = appointment
+      ? await Consultant.findOne({ where: { appointmentId: appointment.id, isDeleted: false } })
+      : null
+
+    const shift = assignment.shift
+    const payload = buildResidentDiagnosisPayload(appointment, consultant, {
+      doctorName: formatDoctor(assignment.employee)?.fullName || 'In-house Doctor',
+      appointmentDate: shiftDate.date,
+      slotTimeRange: assignment.slotTimeRange || (shift ? `${shift.startTime} - ${shift.endTime}` : null),
+    })
+
+    res.status(200).json({
+      success: true,
+      message:
+        payload.diagnosisStatus === 'COMPLETED'
+          ? 'In-house diagnosis retrieved successfully'
+          : 'Diagnosis has not been completed by the doctor yet',
+      data: payload,
+    })
+  } catch (err) {
+    console.error('Get In-house Shift Diagnosis Error:', err)
     res.status(500).json({ success: false, message: 'Failed to fetch diagnosis' })
   }
 }
