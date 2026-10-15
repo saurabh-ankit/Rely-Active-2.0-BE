@@ -16,6 +16,9 @@ import { TicketActivityType, TicketFeedbackRating } from '../../../enums/ticket.
 import { TicketPriority, TicketStatus } from '../../../enums/ticket.enum.js'
 import type { AuthenticatedRequest } from '../../../middlewares/authenticate.js'
 import { uploadFileToS3, uploadBase64ToS3 } from '../../../middlewares/s3/index.js'
+import { resolveNotificationActor } from '../../../services/notifications/notificationAudience.service.js'
+import { buildTatUpdatedNotificationContent } from '../../../services/notifications/ticketNotificationContent.service.js'
+import { publishTicketNotificationSafe } from '../../../services/notifications/ticketNotification.service.js'
 import { resolveHousehold } from '../../../utils/household.util.js'
 
 /**
@@ -624,6 +627,21 @@ export async function createResidentTicket(req: AuthenticatedRequest, res: Respo
       attachments: ticketAttachments,
     })
 
+    await publishTicketNotificationSafe({
+      ticket: newTicket,
+      eventCode: 'TICKET_CREATED',
+      title: 'New ticket created',
+      message: `${newTicket.title || 'Ticket'} has been created (${newTicket.ticketNumber}).`,
+      actor: resolveNotificationActor(req, residentName),
+      dedupeKey: `ticket-created:${newTicket.id}`,
+      payload: {
+        status: newTicket.status,
+        priority: newTicket.priority,
+        category: newTicket.category,
+        areaType: isCommonArea ? 'COMMON_AREA' : 'IN_FLAT',
+      },
+    })
+
     const uNum = resident.unit?.unit_number || 'A-101'
 
     res.status(201).json({
@@ -742,6 +760,7 @@ export async function updateTicketTat(req: AuthenticatedRequest, res: Response):
     }
 
     const previousTat = ticket.tatOption
+    const previousTatDeadline = ticket.customTatDeadline
 
     if (tatOption) ticket.tatOption = tatOption
     if (customTatDeadline) {
@@ -773,6 +792,35 @@ export async function updateTicketTat(req: AuthenticatedRequest, res: Response):
       activityType: TicketActivityType.UPDATED,
       comment: `${TAT_LOG_PREFIX} ${previousTat || 'not set'} -> ${ticket.tatOption || 'not set'}`,
       ...(staffUserId ? { createdBy: staffUserId } : {}),
+    })
+
+    const tatNotification = buildTatUpdatedNotificationContent({
+      ticketTitle: ticket.title,
+      ticketNumber: ticket.ticketNumber,
+      updatedByName: updatedByName || 'Resident',
+      previousTat: {
+        option: previousTat,
+        deadline: previousTatDeadline,
+      },
+      updatedTat: {
+        option: ticket.tatOption,
+        deadline: ticket.customTatDeadline,
+      },
+    })
+
+    await publishTicketNotificationSafe({
+      ticket,
+      eventCode: 'TICKET_TAT_UPDATED',
+      title: tatNotification.title,
+      message: tatNotification.message,
+      actor: resolveNotificationActor(req, updatedByName || 'Resident'),
+      payload: {
+        ...tatNotification.payload,
+        previousTat,
+        previousTatDeadline,
+        tatOption: ticket.tatOption,
+        customTatDeadline: ticket.customTatDeadline,
+      },
     })
 
     res.status(200).json({
@@ -830,6 +878,19 @@ export async function escalateTicket(req: AuthenticatedRequest, res: Response): 
     ticket.escalationReason = String(reason).trim()
 
     await ticket.save()
+
+    await publishTicketNotificationSafe({
+      ticket,
+      eventCode: 'TICKET_ESCALATED',
+      title: 'Ticket escalated',
+      message: `${ticket.title || 'Ticket'} (${ticket.ticketNumber}) was escalated to ${newPriority} priority.`,
+      actor: resolveNotificationActor(req, escalatedByName || 'Resident'),
+      payload: {
+        priority: ticket.priority,
+        reason: ticket.escalationReason,
+        escalatedAt: ticket.escalatedAt,
+      },
+    })
 
     res.status(200).json({
       success: true,
@@ -890,6 +951,19 @@ export async function submitTicketFeedback(req: AuthenticatedRequest, res: Respo
       existing.rating = rating
       existing.comment = comment || null
       await existing.save()
+
+      await publishTicketNotificationSafe({
+        ticket,
+        eventCode: 'TICKET_FEEDBACK_UPDATED',
+        title: 'Ticket feedback updated',
+        message: `Feedback was updated for ${ticket.title || 'ticket'} (${ticket.ticketNumber}).`,
+        actor: resolveNotificationActor(req, 'Resident'),
+        payload: {
+          rating,
+          comment: comment || null,
+        },
+      })
+
       res.status(200).json({ success: true, message: 'Feedback updated', data: existing })
       return
     }
@@ -900,6 +974,18 @@ export async function submitTicketFeedback(req: AuthenticatedRequest, res: Respo
       familyMemberId: household.familyMemberId,
       rating,
       comment: comment || null,
+    })
+
+    await publishTicketNotificationSafe({
+      ticket,
+      eventCode: 'TICKET_FEEDBACK_SUBMITTED',
+      title: 'Ticket feedback submitted',
+      message: `Feedback was submitted for ${ticket.title || 'ticket'} (${ticket.ticketNumber}).`,
+      actor: resolveNotificationActor(req, 'Resident'),
+      payload: {
+        rating,
+        comment: comment || null,
+      },
     })
 
     res.status(201).json({ success: true, message: 'Thanks for your feedback', data: feedback })

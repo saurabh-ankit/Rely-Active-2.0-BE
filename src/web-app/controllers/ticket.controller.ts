@@ -25,9 +25,11 @@ import {
   ShiftArea,
   ShiftAssignment,
 } from '../../models/index.js'
+import { NotificationRecipientType } from '../../enums/notification.enum.js'
 import { TicketActivityType, TicketPriority, TicketStatus } from '../../enums/ticket.enum.js'
 import { uploadFileToS3 } from '../../middlewares/s3/index.js'
 import { resolveNotificationActor } from '../../services/notifications/notificationAudience.service.js'
+import { buildTatUpdatedNotificationContent } from '../../services/notifications/ticketNotificationContent.service.js'
 import { publishTicketNotificationSafe } from '../../services/notifications/ticketNotification.service.js'
 
 /**
@@ -834,6 +836,9 @@ export async function updateTicketOptions(req: AuthenticatedRequest, res: Respon
     const { categoryId, subCategoryId, tatOption, priority, status, invoiceAmount, resolutionNotes } = req.body
     const userId = req.user?.id || null
     const userName = req.user?.email || 'User'
+    const previousStatus = ticket.status
+    const previousPriority = ticket.priority
+    const previousTatOption = ticket.tatOption
 
     const updatePayload: Partial<Ticket> = {}
 
@@ -854,6 +859,38 @@ export async function updateTicketOptions(req: AuthenticatedRequest, res: Respon
       activityType: TicketActivityType.UPDATED,
       comment: `Updated options (TAT: ${tatOption || ticket.tatOption}, Priority: ${priority || ticket.priority})`,
       createdBy: userId,
+    })
+
+    const tatChanged = tatOption !== undefined && tatOption !== previousTatOption
+    const statusChanged = status !== undefined && status !== previousStatus
+
+    const tatNotification = tatChanged
+      ? buildTatUpdatedNotificationContent({
+          ticketTitle: ticket.title,
+          ticketNumber: ticket.ticketNumber,
+          updatedByName: userName,
+          previousTat: { option: previousTatOption, deadline: null },
+          updatedTat: { option: ticket.tatOption, deadline: null },
+        })
+      : null
+
+    await publishTicketNotificationSafe({
+      ticket,
+      eventCode: tatChanged ? 'TICKET_TAT_UPDATED' : statusChanged ? 'TICKET_STATUS_UPDATED' : 'TICKET_UPDATED',
+      title: tatNotification?.title || 'Ticket updated',
+      message:
+        tatNotification?.message || `${ticket.title || 'Ticket'} (${ticket.ticketNumber}) was updated by ${userName}.`,
+      actor: resolveNotificationActor(req, userName),
+      payload: {
+        action: tatChanged ? 'TICKET_TAT_UPDATED' : statusChanged ? 'TICKET_STATUS_UPDATED' : 'TICKET_UPDATED',
+        previousStatus,
+        status: ticket.status,
+        previousPriority,
+        priority: ticket.priority,
+        previousTatOption,
+        tatOption: ticket.tatOption,
+        ...(tatNotification?.payload || {}),
+      },
     })
 
     res.status(200).json({
@@ -923,6 +960,19 @@ export async function verifyTicket(req: AuthenticatedRequest, res: Response): Pr
       createdBy: userId,
     })
 
+    await publishTicketNotificationSafe({
+      ticket,
+      eventCode: 'TICKET_VERIFIED',
+      title: 'Ticket verified and closed',
+      message: `${ticket.title || 'Ticket'} (${ticket.ticketNumber}) was verified and closed by ${verifierName}.`,
+      actor: resolveNotificationActor(req, verifierName),
+      payload: {
+        previousStatus,
+        status: ticket.status,
+        verificationNotes: ticket.verificationNotes || null,
+      },
+    })
+
     res.status(200).json({
       success: true,
       message: 'Ticket verified and closed successfully',
@@ -977,6 +1027,49 @@ export async function assignTicket(req: AuthenticatedRequest, res: Response): Pr
       createdBy: userId,
     })
 
+    const assignedUser = await User.findByPk(assignTarget, {
+      attributes: ['id', 'username', 'email'],
+      include: [{ model: UserDetail, as: 'profile', attributes: ['firstName', 'lastName'], required: false }],
+    })
+
+    const assignedUserWithProfile = assignedUser as (User & { profile?: UserDetail | null }) | null
+
+    const assignedName = assignedUserWithProfile
+      ? `${assignedUserWithProfile.profile?.firstName || ''} ${assignedUserWithProfile.profile?.lastName || ''}`.trim() ||
+        assignedUserWithProfile.username ||
+        assignedUserWithProfile.email ||
+        'assigned staff'
+      : 'assigned staff'
+
+    const directRecipients = [] as Array<{ recipientType: NotificationRecipientType; recipientUserId: string }>
+    if (userId) {
+      directRecipients.push({
+        recipientType: NotificationRecipientType.USER,
+        recipientUserId: userId,
+      })
+    }
+    if (assignTarget) {
+      directRecipients.push({
+        recipientType: NotificationRecipientType.USER,
+        recipientUserId: assignTarget,
+      })
+    }
+
+    await publishTicketNotificationSafe({
+      ticket,
+      eventCode: 'TICKET_ASSIGNED',
+      title: 'Ticket assigned',
+      message: `${ticket.title || 'Ticket'} (${ticket.ticketNumber}) was assigned to ${assignedName}.`,
+      actor: resolveNotificationActor(req, userName),
+      payload: {
+        status: ticket.status,
+        previousStatus,
+        assignedToUserId: assignTarget,
+        assignedByUserId: userId,
+      },
+      extraRecipients: directRecipients,
+    })
+
     res.status(200).json({
       success: true,
       message: 'Ticket assigned successfully',
@@ -1023,6 +1116,18 @@ export async function addTicketComment(req: AuthenticatedRequest, res: Response)
       comment,
       attachments: finalAttachments.length > 0 ? finalAttachments : null,
       createdBy: userId,
+    })
+
+    await publishTicketNotificationSafe({
+      ticket,
+      eventCode: 'TICKET_COMMENT_ADDED',
+      title: 'Ticket comment added',
+      message: `${userName} added a comment on ${ticket.title || 'ticket'} (${ticket.ticketNumber}).`,
+      actor: resolveNotificationActor(req, userName),
+      payload: {
+        comment: comment || null,
+        attachments: finalAttachments,
+      },
     })
 
     res.status(201).json({
