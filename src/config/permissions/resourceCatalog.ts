@@ -130,13 +130,10 @@ export const RESOURCE_CATALOG = [
   {
     key: 'BILLING',
     name: 'Billing',
-    description: 'Invoices, payments & ledgers',
+    description: 'Invoices & receipts',
     children: [
-      { key: 'BILLING.INVOICES', name: 'Invoices & bills', description: 'Invoices and bills' },
-      { key: 'BILLING.LEDGER', name: 'Ledger', description: 'Ledger entries' },
-      { key: 'BILLING.PARTIES', name: 'Folio & payers', description: 'Billing accounts and payers' },
-      { key: 'BILLING.SUBSCRIPTIONS', name: 'Recurring services', description: 'Recurring services' },
-      { key: 'BILLING.USAGE', name: 'Pending usage', description: 'Usage awaiting billing' },
+      { key: 'BILLING.INVOICES', name: 'Invoices', description: 'Flat invoices and miscellaneous charges' },
+      { key: 'BILLING.RECEIPTS', name: 'Receipts & payments', description: 'Record payments and view receipts' },
     ],
   },
   {

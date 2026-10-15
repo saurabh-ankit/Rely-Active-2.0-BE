@@ -30,6 +30,7 @@ import {
   type DoctorSpecializationSummary,
 } from '../../../services/doctorSpecialization.service.js'
 import { formatConsultant } from '../../L3/controllers/doctorDiagnosis.controller.js'
+import { doctorConsultationFee } from '../../../services/billing/consultationFee.js'
 
 const ACTIVE_BOOKING_STATUSES = [AppointmentStatus.PENDING, AppointmentStatus.CONFIRMED, AppointmentStatus.ATTENDED]
 
@@ -1245,6 +1246,7 @@ export async function bookVisitingDoctorAppointment(req: AuthenticatedRequest, r
         slotTimeRange: normalizedSlot,
         status: AppointmentStatus.CONFIRMED,
         bookedAt: new Date(),
+        fee: await doctorConsultationFee(doctorId, transaction),
         notes: notes || null,
         createdBy: req.user?.id || null,
         updatedBy: req.user?.id || null,

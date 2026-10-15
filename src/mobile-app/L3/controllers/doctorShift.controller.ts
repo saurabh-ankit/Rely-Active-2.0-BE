@@ -20,6 +20,7 @@ import {
 } from '../../../models/index.js'
 import { todayYmdLocal } from '../../../utils/roster.util.js'
 import { resolveUserLocationId } from './medical.controller.js'
+import { doctorConsultationFee } from '../../../services/billing/consultationFee.js'
 
 const ACTIVE_BOOKING_STATUSES = [AppointmentStatus.PENDING, AppointmentStatus.CONFIRMED, AppointmentStatus.ATTENDED]
 
@@ -868,6 +869,7 @@ export async function ensureDoctorShiftAppointment(req: AuthenticatedRequest, re
       slotTimeRange: timeRange,
       status: AppointmentStatus.CONFIRMED,
       bookedAt: new Date(),
+      fee: await doctorConsultationFee(doctorId),
       isActive: true,
       isDeleted: false,
       createdBy: doctorId,

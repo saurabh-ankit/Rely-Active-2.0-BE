@@ -17,6 +17,8 @@ export interface DoctorAppointmentAttributes extends BaseAttributes {
   cancellationReason?: string | null
   attendedAt?: Date | null
   notes?: string | null
+  /** Doctor's consultation fee captured at booking (billed when attended). */
+  fee?: number | null
   isActive: boolean
   isDeleted: boolean
 }
@@ -30,6 +32,7 @@ export type DoctorAppointmentCreationAttributes = Optional<
   | 'cancellationReason'
   | 'attendedAt'
   | 'notes'
+  | 'fee'
   | 'isActive'
   | 'isDeleted'
   | 'createdBy'
@@ -55,6 +58,7 @@ export class DoctorAppointment
   declare cancellationReason: string | null
   declare attendedAt: Date | null
   declare notes: string | null
+  declare fee: number | null
   declare isActive: boolean
   declare isDeleted: boolean
 }
@@ -79,6 +83,14 @@ DoctorAppointment.init(
     cancellationReason: { type: DataTypes.STRING(500), allowNull: true },
     attendedAt: { type: DataTypes.DATE, allowNull: true },
     notes: { type: DataTypes.TEXT, allowNull: true },
+    fee: {
+      type: DataTypes.DECIMAL(10, 2),
+      allowNull: true,
+      get(this: DoctorAppointment) {
+        const val = this.getDataValue('fee')
+        return val === null || val === undefined ? null : Number(val)
+      },
+    },
     isActive: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: true },
     isDeleted: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: false },
   },

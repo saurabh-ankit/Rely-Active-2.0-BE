@@ -14,6 +14,8 @@ export interface ResidentCareTaskCompletionAttributes extends BaseAttributes {
   residentCareTaskAssignmentId: string
 
   residentId: string
+  /** Set when the package / task belongs to a family member of the resident. */
+  familyMemberId?: string | null
   taskId: string
 
   propertyId?: string | null
@@ -33,6 +35,7 @@ export interface ResidentCareTaskCompletionAttributes extends BaseAttributes {
 export type ResidentCareTaskCompletionCreationAttributes = Optional<
   ResidentCareTaskCompletionAttributes,
   | 'id'
+  | 'familyMemberId'
   | 'propertyId'
   | 'completedBy'
   | 'status'
@@ -53,6 +56,7 @@ export class ResidentCareTaskCompletion
   declare residentCareTaskAssignmentId: string
 
   declare residentId: string
+  declare familyMemberId: string | null
   declare taskId: string
 
   declare propertyId: string | null
@@ -90,6 +94,11 @@ ResidentCareTaskCompletion.init(
       type: DataTypes.UUID,
       allowNull: false,
       comment: 'FK -> residents.id',
+    },
+    familyMemberId: {
+      type: DataTypes.UUID,
+      allowNull: true,
+      comment: 'FK -> resident_family_members.id',
     },
 
     taskId: {

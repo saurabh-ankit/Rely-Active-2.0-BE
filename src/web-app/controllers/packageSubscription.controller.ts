@@ -9,6 +9,7 @@ import {
   CareTask,
   CarePackageFeaturesMap,
   Resident,
+  ResidentFamilyMember,
   PropertyUnit,
   AdditionalTaskCharge,
   User,
@@ -54,6 +55,12 @@ export const getAllPackageSubscriptions = async (
     const subscriptions = await PackageSubscription.findAll({
       where: whereClause,
       include: [
+        {
+          model: ResidentFamilyMember,
+          as: 'familyMember',
+          attributes: ['id', 'firstName', 'lastName', 'relation'],
+          required: false,
+        },
         {
           model: Resident,
           as: 'resident',
@@ -393,6 +400,8 @@ export const changePackage = async (req: AuthenticatedRequest, res: Response, ne
     }
 
     const { residentId, carePackageId: oldPackageId, propertyId } = currentSubscription
+    // The resident's own package, or a family member's: changes stay within that person.
+    const familyMemberId = currentSubscription.familyMemberId ?? null
 
     // Find current and new package
     const oldPackage = await Package.findByPk(oldPackageId, { transaction })
@@ -419,6 +428,7 @@ export const changePackage = async (req: AuthenticatedRequest, res: Response, ne
       {
         where: {
           residentId,
+          familyMemberId,
           status: SubscriptionStatus.ACTIVE,
           isDeleted: false,
           id: { [Op.ne]: id },
@@ -467,6 +477,7 @@ export const changePackage = async (req: AuthenticatedRequest, res: Response, ne
       {
         where: {
           residentId,
+          familyMemberId,
           source: 'PACKAGE',
           isDeleted: false,
         },
@@ -478,6 +489,7 @@ export const changePackage = async (req: AuthenticatedRequest, res: Response, ne
     const newSubscription = await PackageSubscription.create(
       {
         residentId,
+        familyMemberId,
         carePackageId: newCarePackageId,
         propertyId,
         startDate: newStartDate,
@@ -510,11 +522,13 @@ export const changePackage = async (req: AuthenticatedRequest, res: Response, ne
       await PackageSubscriptionFeature.bulkCreate(featuresToCreate, { transaction })
     }
 
-    // Update resident's current carePackageId
-    await Resident.update(
-      { carePackageId: newCarePackageId, updatedBy: operatorId },
-      { where: { id: residentId }, transaction },
-    )
+    // Update resident's current carePackageId (only for the resident's own package)
+    if (!familyMemberId) {
+      await Resident.update(
+        { carePackageId: newCarePackageId, updatedBy: operatorId },
+        { where: { id: residentId }, transaction },
+      )
+    }
 
     await transaction.commit()
     await syncPackageTasksForResidents(residentId, newSubscription.propertyId, taskSchedules)
@@ -572,6 +586,7 @@ export const updateSubscriptionStatus = async (
       const existingActive = await PackageSubscription.findOne({
         where: {
           residentId: subscription.residentId,
+          familyMemberId: subscription.familyMemberId ?? null,
           status: SubscriptionStatus.ACTIVE,
           isDeleted: false,
           id: { [Op.ne]: id },
@@ -616,6 +631,7 @@ export const updateSubscriptionStatus = async (
         {
           where: {
             residentId: subscription.residentId,
+            familyMemberId: subscription.familyMemberId ?? null,
             [Op.or]: [
               { packageSubscriptionId: subscription.id },
               { carePackageId: subscription.carePackageId, source: 'PACKAGE' },
@@ -634,22 +650,25 @@ export const updateSubscriptionStatus = async (
       const remainingActiveSub = await PackageSubscription.findOne({
         where: {
           residentId: subscription.residentId,
+          familyMemberId: null,
           status: SubscriptionStatus.ACTIVE,
           isDeleted: false,
           id: { [Op.ne]: subscription.id },
         },
       })
-      if (!remainingActiveSub) {
+      if (!remainingActiveSub && !subscription.familyMemberId) {
         await Resident.update(
           { carePackageId: null, updatedBy: operatorId },
           { where: { id: subscription.residentId } },
         )
       }
     } else if (newStatus === SubscriptionStatus.ACTIVE) {
-      await Resident.update(
-        { carePackageId: subscription.carePackageId, updatedBy: operatorId },
-        { where: { id: subscription.residentId } },
-      )
+      if (!subscription.familyMemberId) {
+        await Resident.update(
+          { carePackageId: subscription.carePackageId, updatedBy: operatorId },
+          { where: { id: subscription.residentId } },
+        )
+      }
       await PackageSubscriptionFeature.update(
         { isDeleted: false, updatedBy: operatorId },
         { where: { packageSubscriptionId: subscription.id } },
