@@ -1015,6 +1015,14 @@ export async function assignTicket(req: AuthenticatedRequest, res: Response): Pr
 
     const assignTarget = assignedToUserId || userId
     const previousStatus = ticket.status
+    const previousAssignedToUserId = ticket.assignedToUserId
+    const isReassignment = Boolean(previousAssignedToUserId && previousAssignedToUserId !== assignTarget)
+
+    const formatAssigneeName = (staffUser: (User & { profile?: UserDetail | null }) | null): string => {
+      if (!staffUser) return 'assigned staff'
+      const fullName = `${staffUser.profile?.firstName || ''} ${staffUser.profile?.lastName || ''}`.trim()
+      return fullName || staffUser.username || staffUser.email || 'assigned staff'
+    }
 
     // Assigning does not start the work: the ticket stays OPEN until the
     // assigned staff member taps "Start Work" in the L3 app.
@@ -1035,7 +1043,7 @@ export async function assignTicket(req: AuthenticatedRequest, res: Response): Pr
       activityType: TicketActivityType.ASSIGNED,
       fromStatus: previousStatus,
       toStatus: ticket.status,
-      comment: `Ticket assigned to employee`,
+      comment: isReassignment ? `Ticket reassigned to employee` : `Ticket assigned to employee`,
       createdBy: userId,
     })
 
@@ -1044,14 +1052,21 @@ export async function assignTicket(req: AuthenticatedRequest, res: Response): Pr
       include: [{ model: UserDetail, as: 'profile', attributes: ['firstName', 'lastName'], required: false }],
     })
 
-    const assignedUserWithProfile = assignedUser as (User & { profile?: UserDetail | null }) | null
+    const previousAssignedUser =
+      previousAssignedToUserId && previousAssignedToUserId !== assignTarget
+        ? await User.findByPk(previousAssignedToUserId, {
+            attributes: ['id', 'username', 'email'],
+            include: [{ model: UserDetail, as: 'profile', attributes: ['firstName', 'lastName'], required: false }],
+          })
+        : null
 
-    const assignedName = assignedUserWithProfile
-      ? `${assignedUserWithProfile.profile?.firstName || ''} ${assignedUserWithProfile.profile?.lastName || ''}`.trim() ||
-        assignedUserWithProfile.username ||
-        assignedUserWithProfile.email ||
-        'assigned staff'
-      : 'assigned staff'
+    const assignedUserWithProfile = assignedUser as (User & { profile?: UserDetail | null }) | null
+    const previousAssignedUserWithProfile = previousAssignedUser as (User & { profile?: UserDetail | null }) | null
+
+    const assignedName = formatAssigneeName(assignedUserWithProfile)
+    const previousAssignedName = previousAssignedToUserId
+      ? formatAssigneeName(previousAssignedUserWithProfile)
+      : 'unassigned'
 
     const directRecipients = [] as Array<{ recipientType: NotificationRecipientType; recipientUserId: string }>
     if (userId) {
@@ -1066,17 +1081,32 @@ export async function assignTicket(req: AuthenticatedRequest, res: Response): Pr
         recipientUserId: assignTarget,
       })
     }
+    if (previousAssignedToUserId && previousAssignedToUserId !== assignTarget) {
+      directRecipients.push({
+        recipientType: NotificationRecipientType.USER,
+        recipientUserId: previousAssignedToUserId,
+      })
+    }
+
+    const notificationTitle = isReassignment ? 'Ticket reassigned' : 'Ticket assigned'
+    const notificationMessage = isReassignment
+      ? `${ticket.title || 'Ticket'} (${ticket.ticketNumber}) was reassigned from ${previousAssignedName} to ${assignedName} by ${userName}.`
+      : `${ticket.title || 'Ticket'} (${ticket.ticketNumber}) was assigned to ${assignedName}.`
 
     await publishTicketNotificationSafe({
       ticket,
-      eventCode: 'TICKET_ASSIGNED',
-      title: 'Ticket assigned',
-      message: `${ticket.title || 'Ticket'} (${ticket.ticketNumber}) was assigned to ${assignedName}.`,
+      eventCode: isReassignment ? 'TICKET_REASSIGNED' : 'TICKET_ASSIGNED',
+      title: notificationTitle,
+      message: notificationMessage,
       actor: resolveNotificationActor(req, userName),
       payload: {
+        action: isReassignment ? 'TICKET_REASSIGNED' : 'TICKET_ASSIGNED',
         status: ticket.status,
         previousStatus,
+        previousAssignedToUserId: previousAssignedToUserId || null,
+        previousAssignedToName: previousAssignedToUserId ? previousAssignedName : null,
         assignedToUserId: assignTarget,
+        assignedToName: assignedName,
         assignedByUserId: userId,
       },
       extraRecipients: directRecipients,
@@ -1161,6 +1191,22 @@ export async function deleteTicket(req: AuthenticatedRequest, res: Response): Pr
       res.status(404).json({ success: false, message: 'Ticket not found' })
       return
     }
+
+    const userName = req.user?.email || 'User'
+    const userId = req.user?.id || null
+
+    await publishTicketNotificationSafe({
+      ticket,
+      eventCode: 'TICKET_DELETED',
+      title: 'Ticket deleted',
+      message: `${ticket.title || 'Ticket'} (${ticket.ticketNumber}) was deleted by ${userName}.`,
+      actor: resolveNotificationActor(req, userName),
+      payload: {
+        action: 'TICKET_DELETED',
+        status: ticket.status,
+        deletedByUserId: userId,
+      },
+    })
 
     await ticket.destroy()
     res.status(200).json({

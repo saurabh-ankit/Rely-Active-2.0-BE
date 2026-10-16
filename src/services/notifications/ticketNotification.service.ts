@@ -1,7 +1,8 @@
-import { NotificationActionType, NotificationModule, NotificationRecipientType } from '../../enums/notification.enum.js'
+import { NotificationActionType, NotificationModule } from '../../enums/notification.enum.js'
 import type { Ticket } from '../../models/index.js'
 import type { NotificationActorInput } from './notificationAudience.service.js'
 import { createNotificationEvent, type NotificationRecipientInput } from './notification.service.js'
+import { resolveTicketAudience } from './ticketNotificationAudienceResolver.service.js'
 
 export interface PublishTicketNotificationInput {
   ticket: Ticket
@@ -15,48 +16,18 @@ export interface PublishTicketNotificationInput {
   extraRecipients?: NotificationRecipientInput[]
 }
 
-function collectTicketRecipients(ticket: Ticket): NotificationRecipientInput[] {
-  const recipients: NotificationRecipientInput[] = []
-
-  if (ticket.raisedByUserId) {
-    recipients.push({ recipientType: NotificationRecipientType.USER, recipientUserId: ticket.raisedByUserId })
-  }
-  if (ticket.assignedToUserId) {
-    recipients.push({ recipientType: NotificationRecipientType.USER, recipientUserId: ticket.assignedToUserId })
-  }
-  if (ticket.approvedByUserId) {
-    recipients.push({ recipientType: NotificationRecipientType.USER, recipientUserId: ticket.approvedByUserId })
-  }
-  if (ticket.workStartedByUserId) {
-    recipients.push({ recipientType: NotificationRecipientType.USER, recipientUserId: ticket.workStartedByUserId })
-  }
-  if (ticket.completedByUserId) {
-    recipients.push({ recipientType: NotificationRecipientType.USER, recipientUserId: ticket.completedByUserId })
-  }
-  if (ticket.verifiedByUserId) {
-    recipients.push({ recipientType: NotificationRecipientType.USER, recipientUserId: ticket.verifiedByUserId })
-  }
-
-  if (ticket.residentId) {
-    recipients.push({ recipientType: NotificationRecipientType.RESIDENT, recipientResidentId: ticket.residentId })
-  }
-  if (ticket.familyMemberId) {
-    recipients.push({
-      recipientType: NotificationRecipientType.FAMILY_MEMBER,
-      recipientFamilyMemberId: ticket.familyMemberId,
-    })
-  }
-
-  return recipients
-}
-
 /**
  * Builds and publishes ticket notifications in one shared place.
  * Every ticket flow reuses this so recipients and message format stay consistent.
  */
 export async function publishTicketNotification(input: PublishTicketNotificationInput): Promise<void> {
   const ticket = input.ticket
-  const recipients = [...collectTicketRecipients(ticket), ...(input.extraRecipients || [])]
+  const recipients = await resolveTicketAudience({
+    ticket,
+    actor: input.actor || null,
+    extraRecipients: input.extraRecipients || [],
+  })
+
   if (recipients.length === 0) {
     return
   }
