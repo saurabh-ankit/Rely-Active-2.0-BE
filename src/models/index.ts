@@ -78,6 +78,7 @@ import { FnbFoodDelivery } from './fnbFoodDelivery.model.js'
 import { EventVenue } from './eventVenue.model.js'
 import { Event } from './event.model.js'
 import { EventRegistration } from './eventRegistration.model.js'
+import { EventAttendee } from './eventAttendee.model.js'
 import { EventRequest } from './eventRequest.model.js'
 import { EventGlobalService } from './eventGlobalService.model.js'
 import { EventGlobalServiceProperty } from './eventGlobalServiceProperty.model.js'
@@ -772,9 +773,15 @@ Event.belongsTo(Property, { foreignKey: 'locationId', as: 'location' })
 
 Event.hasMany(EventRegistration, { foreignKey: 'eventId', as: 'registrations' })
 EventRegistration.belongsTo(Event, { foreignKey: 'eventId', as: 'event' })
+EventRegistration.belongsTo(User, { foreignKey: 'attendanceMarkedBy', as: 'attendanceMarker' })
 
 Resident.hasMany(EventRegistration, { foreignKey: 'residentId', as: 'eventRegistrations' })
 EventRegistration.belongsTo(Resident, { foreignKey: 'residentId', as: 'resident' })
+EventRegistration.belongsTo(ResidentFamilyMember, { foreignKey: 'familyMemberId', as: 'familyMember' })
+EventRegistration.hasMany(EventAttendee, { foreignKey: 'registrationId', as: 'attendees' })
+EventAttendee.belongsTo(EventRegistration, { foreignKey: 'registrationId', as: 'registration' })
+EventAttendee.belongsTo(ResidentFamilyMember, { foreignKey: 'familyMemberId', as: 'familyMember' })
+EventAttendee.belongsTo(User, { foreignKey: 'markedBy', as: 'marker' })
 
 // ── F&B Food Attendance Associations ───────────────────────────────────────
 FnbFoodAttendance.belongsTo(Property, { foreignKey: 'locId', as: 'property' })
@@ -1128,6 +1135,7 @@ export {
   EventVenue,
   Event,
   EventRegistration,
+  EventAttendee,
   EventRequest,
   EventGlobalService,
   EventGlobalServiceProperty,

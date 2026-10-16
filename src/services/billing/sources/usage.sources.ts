@@ -279,6 +279,8 @@ export const eventFeeSource: UsageSource = {
       return usageLine(ServiceType.EVENT_FEE, {
         sourceId: reg.id,
         residentId: reg.residentId,
+        // Walk-ins at events without reservations are recorded per person.
+        familyMemberId: flatFamilyMemberId(ctx, reg.familyMemberId),
         name: `Event – ${reg.event?.title || 'Community Event'}`,
         description: `${seats} seat${seats > 1 ? 's' : ''} (on ${day})`,
         quantity: seats,

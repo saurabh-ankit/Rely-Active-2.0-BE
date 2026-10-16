@@ -57,6 +57,13 @@ async function ensureStandardDepartmentsAndJobCategories() {
       jobCategories: [{ code: 'EVT_OPS', name: 'Event Operations', description: 'Event Operations' }],
     },
     {
+      // Marks residents' dine-in and event attendance from the L3 app.
+      code: 'ATT',
+      name: 'Attendance',
+      description: 'Dine-in and event attendance',
+      jobCategories: [{ code: 'ATT_OPS', name: 'Attendance Operations', description: 'Attendance Operations' }],
+    },
+    {
       code: 'MED',
       name: 'Medical',
       description: 'Medical & Healthcare Services',
@@ -67,8 +74,8 @@ async function ensureStandardDepartmentsAndJobCategories() {
     },
   ]
 
-  // Find obsolete departments (NUR, DOC, ADM, ATT, FIN)
-  const obsoleteDepts = await Department.findAll({ where: { code: ['NUR', 'DOC', 'ADM', 'ATT', 'FIN'] } })
+  // Find obsolete departments (NUR, DOC, ADM, FIN)
+  const obsoleteDepts = await Department.findAll({ where: { code: ['NUR', 'DOC', 'ADM', 'FIN'] } })
   const obsoleteDeptIds = obsoleteDepts.map((d) => d.id)
 
   const OBSOLETE_JOB_CAT_NAMES = [
@@ -102,7 +109,7 @@ async function ensureStandardDepartmentsAndJobCategories() {
     'Linen & Laundry Attendant',
   ]
 
-  // Hard delete obsolete job categories (including any under MED, NUR, DOC, ADM, ATT, FIN)
+  // Hard delete obsolete job categories (including any under NUR, DOC, ADM, FIN)
   await JobCategory.destroy({
     where: {
       [Op.or]: [
@@ -112,9 +119,9 @@ async function ensureStandardDepartmentsAndJobCategories() {
     },
   })
 
-  // Hard delete obsolete departments (NUR, DOC, ADM, ATT, FIN)
+  // Hard delete obsolete departments (NUR, DOC, ADM, FIN)
   await Department.destroy({
-    where: { code: ['NUR', 'DOC', 'ADM', 'ATT', 'FIN'] },
+    where: { code: ['NUR', 'DOC', 'ADM', 'FIN'] },
   })
 
   for (const deptData of TARGET_DEPARTMENTS) {

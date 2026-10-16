@@ -1,6 +1,13 @@
 import type { Response } from 'express'
 import { Op, fn, col } from 'sequelize'
-import { Event, EventRegistration, EventRequest, EventVenue, Resident } from '../../../models/index.js'
+import {
+  Event,
+  EventRegistration,
+  EventRequest,
+  EventVenue,
+  Resident,
+  ResidentFamilyMember,
+} from '../../../models/index.js'
 import { EventRequestStatus, RegistrationStatus } from '../../../enums/event.enum.js'
 import type { AuthenticatedRequest } from '../../../middlewares/authenticate.js'
 import {
@@ -52,6 +59,12 @@ async function resolveResidentContext(req: AuthenticatedRequest): Promise<{
   const resident = await Resident.findByPk(residentId)
   if (!resident?.locId) return null
   return { residentId, locationId: resident.locId }
+}
+
+/** People in the resident's household who can attend: the resident plus residing family members. */
+async function householdSize(residentId: string): Promise<number> {
+  const family = await ResidentFamilyMember.count({ where: { residentId, isDeleted: false, isResiding: true } })
+  return 1 + family
 }
 
 async function getActiveSeatSum(eventId: string, locationId: string): Promise<number> {
@@ -239,6 +252,7 @@ export async function getResidentEventById(req: AuthenticatedRequest, res: Respo
       where: {
         eventId: event.id,
         residentId: ctx.residentId,
+        familyMemberId: null,
         registrationDate,
         isDeleted: false,
         status: { [Op.ne]: RegistrationStatus.CANCELLED },
@@ -257,6 +271,8 @@ export async function getResidentEventById(req: AuthenticatedRequest, res: Respo
         eventType: event.eventType,
         allowReservation: event.allowReservation,
         reservationPerFlat: event.reservationPerFlat,
+        /** Seats can't exceed the people in the household. */
+        householdSize: await householdSize(ctx.residentId),
         occupancy: event.occupancy,
         maxCapacity: event.maxCapacity,
         entryFee: event.entryFee,
@@ -347,6 +363,15 @@ export async function reserveEventSeats(req: AuthenticatedRequest, res: Response
       return
     }
 
+    const people = await householdSize(ctx.residentId)
+    if (seatCount > people) {
+      res.status(400).json({
+        success: false,
+        message: `Your household has ${people} member(s), so you can reserve at most ${people} seat(s)`,
+      })
+      return
+    }
+
     const venue = event.venue
     const totalCapacity = event.maxCapacity ?? venue?.occupancy ?? 0
     const activeSeats = await getActiveSeatSum(event.id, ctx.locationId)
@@ -365,6 +390,7 @@ export async function reserveEventSeats(req: AuthenticatedRequest, res: Response
       where: {
         eventId: event.id,
         residentId: ctx.residentId,
+        familyMemberId: null,
         registrationDate,
         isDeleted: false,
         status: { [Op.ne]: RegistrationStatus.CANCELLED },
@@ -389,6 +415,7 @@ export async function reserveEventSeats(req: AuthenticatedRequest, res: Response
       where: {
         eventId: event.id,
         residentId: ctx.residentId,
+        familyMemberId: null,
         registrationDate,
       },
     })

@@ -8,7 +8,7 @@ import { AuthorizationService } from '../../../services/authorization.service.js
 import { registerDeviceTokenSafe } from '../../../services/notifications/notificationDeviceToken.service.js'
 import type { AuthenticatedRequest } from '../../../middlewares/authenticate.js'
 
-const ALLOWED_L3_DEPT_CODES = ['FNB', 'SEC', 'CON', 'RNM', 'HK', 'HOUSEKEEPING', 'EVT', 'EVENTS', 'MED']
+const ALLOWED_L3_DEPT_CODES = ['FNB', 'SEC', 'CON', 'RNM', 'HK', 'HOUSEKEEPING', 'EVT', 'EVENTS', 'MED', 'ATT']
 
 export function isAllowedL3Department(deptName?: string | null, deptCode?: string | null): boolean {
   if (deptCode && ALLOWED_L3_DEPT_CODES.includes(deptCode.toUpperCase())) {
@@ -132,7 +132,7 @@ export async function staffLogin(req: Request, res: Response): Promise<void> {
       res.status(403).json({
         success: false,
         message:
-          'Access restricted: Only staff members assigned to Food & Beverage, Gate & Security, Concierge, Repair & Maintenance, Housekeeping, Event, or Medical/Nursing departments can log in to the L3 Mobile App.',
+          'Access restricted: Only staff members assigned to Food & Beverage, Gate & Security, Concierge, Repair & Maintenance, Housekeeping, Event, Attendance, or Medical/Nursing departments can log in to the L3 Mobile App.',
       })
       return
     }
