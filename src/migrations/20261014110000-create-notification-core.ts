@@ -10,10 +10,18 @@ const idColumn = {
 }
 
 const auditColumns = {
-  createdBy: { type: DataTypes.CHAR(36), allowNull: true },
-  updatedBy: { type: DataTypes.CHAR(36), allowNull: true },
-  createdAt: { type: DataTypes.DATE, allowNull: false, defaultValue: DataTypes.NOW },
-  updatedAt: { type: DataTypes.DATE, allowNull: false, defaultValue: DataTypes.NOW },
+  createdBy: { type: DataTypes.UUID, allowNull: true },
+  updatedBy: { type: DataTypes.UUID, allowNull: true },
+  createdAt: {
+    type: DataTypes.DATE,
+    allowNull: false,
+    defaultValue: DataTypes.NOW,
+  },
+  updatedAt: {
+    type: DataTypes.DATE,
+    allowNull: false,
+    defaultValue: DataTypes.NOW,
+  },
 }
 
 async function getTableNames(queryInterface: QueryInterface): Promise<string[]> {
