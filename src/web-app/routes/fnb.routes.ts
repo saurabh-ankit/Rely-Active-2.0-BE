@@ -1,5 +1,6 @@
 import { Router } from 'express'
 import { authenticate } from '../../middlewares/authenticate.js'
+import { resourceGuard } from '../../middlewares/authorizeResource.js'
 import { upload } from '../../middlewares/upload.js'
 import {
   addOrUpdateMenuItem,
@@ -56,6 +57,43 @@ const router = Router()
 
 // All routes require authentication
 router.use(authenticate)
+
+// Sub-module permissions. Reference data several tabs read (dishes, meal slots, packages,
+// special slots) only needs Food access to read; changes need that tab's permission.
+const FNB_READ = 'FNB' as const
+router.use(
+  resourceGuard(
+    [
+      { match: '/attendance', keys: 'FNB.ATTENDANCE' },
+      { match: '/members', keys: 'FNB.ATTENDANCE' },
+      { match: '/members-by-flat', keys: 'FNB.ATTENDANCE' },
+      { match: '/summary', keys: 'FNB.ATTENDANCE' },
+      { match: '/menus', keys: 'FNB.MENU_PLANNER' },
+      { match: '/menu-items', keys: 'FNB.MENU_PLANNER' },
+      { match: '/global-special-slots', keys: 'FNB.MENU_PLANNER', readKeys: FNB_READ },
+      { match: '/special-slots', keys: 'FNB.MENU_PLANNER', readKeys: FNB_READ },
+      { match: '/property-special-slots', keys: 'FNB.MENU_PLANNER', readKeys: FNB_READ },
+      { match: '/property-special-dishes', keys: 'FNB.MENU_PLANNER' },
+      { match: '/meal-slots', keys: 'FNB.MEAL_SLOTS', readKeys: FNB_READ },
+      { match: '/global-meal-slots', keys: 'FNB.MEAL_SLOTS', readKeys: FNB_READ },
+      { match: '/property-meal-slots', keys: 'FNB.MEAL_SLOTS', readKeys: FNB_READ },
+      { match: '/global-packages', keys: 'FNB.PACKAGES', readKeys: FNB_READ },
+      { match: '/packages', keys: 'FNB.PACKAGES', readKeys: FNB_READ },
+      { match: '/property-packages', keys: 'FNB.PACKAGES', readKeys: FNB_READ },
+      { match: /^\/properties\/[^/]+\/packages/, keys: 'FNB.PACKAGES', readKeys: FNB_READ },
+      { match: '/dishes', keys: 'FNB.DISHES', readKeys: FNB_READ },
+      { match: '/property-dishes', keys: 'FNB.DISHES', readKeys: FNB_READ },
+      { match: /^\/properties\/[^/]+\/dishes/, keys: 'FNB.DISHES', readKeys: FNB_READ },
+      // A resident's food package is also managed from the Resident screens.
+      { match: /^\/residents\/[^/]+\/(package|cancel-package)/, keys: ['FNB.PACKAGES', 'RESIDENT'] },
+      { match: '/resident-package', keys: ['FNB.PACKAGES', 'RESIDENT'] },
+      { match: '/resident-orders', keys: 'FNB.ORDERS' },
+      { match: /^\/properties\/[^/]+\/resident-orders/, keys: 'FNB.ORDERS' },
+      { match: '/staff-employees', keys: 'FNB.ORDERS' },
+    ],
+    'FNB',
+  ),
+)
 
 // ── Food Attendance ──────────────────────────────────────────────────────────
 router.get('/attendance/members', getResidingMembersAndFlats)

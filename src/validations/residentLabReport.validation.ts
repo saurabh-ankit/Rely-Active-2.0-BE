@@ -1,9 +1,14 @@
 import { z } from 'zod'
-import { PaymentMethod } from '../enums/billing.enum.js'
+import { LabPaymentMethod } from '../enums/labReport.enum.js'
 import { LAB_REPORT_SEVERITIES } from '../models/residentLabReport.model.js'
 
 export const residentIdParamSchema = z.object({
   residentId: z.string().uuid('Valid resident ID is required'),
+})
+
+export const residentClinicalItemParamSchema = z.object({
+  residentId: z.string().uuid('Valid resident ID is required'),
+  id: z.string().uuid('Valid record ID is required'),
 })
 
 const optionalCost = z
@@ -16,10 +21,10 @@ const optionalCost = z
   .optional()
 
 const optionalPaymentMethod = z
-  .union([z.nativeEnum(PaymentMethod), z.literal(''), z.null(), z.undefined()])
-  .transform((val): PaymentMethod | null => {
+  .union([z.nativeEnum(LabPaymentMethod), z.literal(''), z.null(), z.undefined()])
+  .transform((val): LabPaymentMethod | null => {
     if (val === null || val === undefined || val === '') return null
-    return val as PaymentMethod
+    return val as LabPaymentMethod
   })
   .optional()
 
@@ -52,4 +57,15 @@ export const createResidentLabReportSchema = z.object({
     .or(z.literal('').transform(() => null)),
 })
 
+export const updateResidentLabReportSchema = createResidentLabReportSchema
+  .omit({ locationId: true, appointmentId: true })
+  .partial()
+  .extend({
+    removeReceipt: z
+      .union([z.boolean(), z.enum(['true', 'false'])])
+      .transform((val) => val === true || val === 'true')
+      .optional(),
+  })
+
 export type CreateResidentLabReportInput = z.infer<typeof createResidentLabReportSchema>
+export type UpdateResidentLabReportInput = z.infer<typeof updateResidentLabReportSchema>

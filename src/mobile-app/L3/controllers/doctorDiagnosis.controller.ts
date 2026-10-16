@@ -3,7 +3,7 @@ import type { Response } from 'express'
 import type { AuthenticatedRequest } from '../../../middlewares/authenticate.js'
 import sequelize from '../../../config/db/index.js'
 import { AppointmentStatus } from '../../../enums/appointment.enum.js'
-import { DiagnosisStatus } from '../../../enums/diagnosis.enum.js'
+import { DiagnosisCondition, DiagnosisStatus } from '../../../enums/diagnosis.enum.js'
 import {
   Consultant,
   DoctorAppointment,
@@ -13,25 +13,25 @@ import {
 } from '../../../models/index.js'
 import type {
   ConsultantAllergyEntry,
+  ConsultantFileEntry,
+  ConsultantFileType,
   ConsultantInsulinEntry,
   ConsultantMedicationEntry,
   ConsultantVitalEntry,
 } from '../../../models/consultant.model.js'
-import type {
-  MedicationMealTiming,
-  MedicationRoute,
-  MedicationTimeOfDay,
-  MedicationTiming,
-} from '../../../models/residentMedication.model.js'
+import { uploadFileToS3 } from '../../../middlewares/s3/index.js'
+import type { MedicationTimeOfDay, MedicationTiming } from '../../../models/residentMedication.model.js'
+import { MedicationMealTiming, MedicationRoute } from '../../../enums/medication.enum.js'
 import { syncAppointmentMedications } from '../../../services/residentMedication.service.js'
 import { syncAppointmentInsulin } from '../../../services/residentInsulin.service.js'
 import { syncAppointmentVitals } from '../../../services/residentVital.service.js'
 import { syncAppointmentAllergies } from '../../../services/residentAllergy.service.js'
+import { getResidentPreviousClinical } from '../../../services/residentClinical.service.js'
 import { isAdminOrSuperAdmin } from './medical.controller.js'
 
 const TIME_OF_DAY: MedicationTimeOfDay[] = ['morning', 'afternoon', 'evening', 'night']
-const ROUTES: MedicationRoute[] = ['oral', 'iv', 'im', 'sc', 'topical', 'inhalation', 'rectal', 'other']
-const MEAL_TIMINGS: MedicationMealTiming[] = ['before_food', 'after_food', 'with_food', 'none']
+const ROUTES = Object.values(MedicationRoute)
+const MEAL_TIMINGS = Object.values(MedicationMealTiming)
 
 function asArray<T>(value: unknown): T[] {
   return Array.isArray(value) ? (value as T[]) : []
@@ -50,6 +50,9 @@ export function formatConsultant(row: Consultant) {
     medications: asArray<ConsultantMedicationEntry>(data.medications),
     insulin: asArray<ConsultantInsulinEntry>(data.insulin),
     note: data.note || null,
+    attachments: asArray<ConsultantFileEntry>(data.attachments),
+    voiceNotes: asArray<ConsultantFileEntry>(data.voiceNotes),
+    condition: data.condition || null,
     status: data.status,
     completedAt: data.completedAt || null,
     createdAt: data.createdAt,
@@ -69,6 +72,9 @@ function emptyDraft(appointment: DoctorAppointment) {
     medications: [] as ConsultantMedicationEntry[],
     insulin: [] as ConsultantInsulinEntry[],
     note: null as string | null,
+    attachments: [] as ConsultantFileEntry[],
+    voiceNotes: [] as ConsultantFileEntry[],
+    condition: null as DiagnosisCondition | null,
     status: DiagnosisStatus.DRAFT,
     completedAt: null,
     createdAt: null,
@@ -110,6 +116,15 @@ async function assertAppointmentAccess(
   return { ok: true, appointment }
 }
 
+const CONDITIONS = Object.values(DiagnosisCondition)
+
+function parseCondition(value: unknown): DiagnosisCondition | null | { error: string } {
+  if (value === null || value === '') return null
+  const normalized = typeof value === 'string' ? value.trim().toUpperCase() : ''
+  if (CONDITIONS.includes(normalized as DiagnosisCondition)) return normalized as DiagnosisCondition
+  return { error: `condition must be one of ${CONDITIONS.join(', ')}` }
+}
+
 function parseRecordedAt(value: unknown): string {
   if (typeof value === 'string' && value.trim()) {
     const d = new Date(value)
@@ -135,9 +150,9 @@ function parseTimings(value: unknown): MedicationTiming[] | null {
     const item = raw as Record<string, unknown>
     const timeOfDay = String(item.timeOfDay || '') as MedicationTimeOfDay
     if (!TIME_OF_DAY.includes(timeOfDay)) return null
-    const route = String(item.route || 'oral') as MedicationRoute
+    const route = String(item.route || MedicationRoute.ORAL) as MedicationRoute
     if (!ROUTES.includes(route)) return null
-    const mealTiming = String(item.mealTiming || 'none') as MedicationMealTiming
+    const mealTiming = String(item.mealTiming || MedicationMealTiming.NONE) as MedicationMealTiming
     if (!MEAL_TIMINGS.includes(mealTiming)) return null
     const dose = Number(item.dose)
     if (!Number.isFinite(dose) || dose < 0) return null
@@ -303,14 +318,20 @@ export async function getAppointmentDiagnosis(req: AuthenticatedRequest, res: Re
     }
 
     const { appointment } = access
-    const existing = await Consultant.findOne({
-      where: { appointmentId, isDeleted: false },
-    })
+    const [existing, previous] = await Promise.all([
+      Consultant.findOne({
+        where: { appointmentId, isDeleted: false },
+      }),
+      getResidentPreviousClinical(appointment.residentId, appointment.id),
+    ])
 
     res.status(200).json({
       success: true,
       message: existing ? 'Diagnosis fetched successfully' : 'Diagnosis draft',
-      data: existing ? formatConsultant(existing) : emptyDraft(appointment),
+      data: {
+        ...(existing ? formatConsultant(existing) : emptyDraft(appointment)),
+        previous,
+      },
     })
   } catch (err) {
     console.error('Get Appointment Diagnosis Error:', err)
@@ -343,19 +364,12 @@ export async function upsertAppointmentDiagnosis(req: AuthenticatedRequest, res:
       where: { appointmentId, isDeleted: false },
     })
 
-    if (row && row.status === DiagnosisStatus.COMPLETED) {
-      res.status(400).json({
-        success: false,
-        message: 'Diagnosis is already completed and cannot be edited',
-      })
-      return
-    }
-
     let allergies = row ? asArray<ConsultantAllergyEntry>(row.allergies) : []
     let vitals = row ? asArray<ConsultantVitalEntry>(row.vitals) : []
     let medications = row ? asArray<ConsultantMedicationEntry>(row.medications) : []
     let insulin = row ? asArray<ConsultantInsulinEntry>(row.insulin) : []
     let note = row?.note ?? null
+    let condition = row?.condition ?? null
 
     if (req.body?.allergies !== undefined) {
       const parsed = parseAllergies(req.body.allergies)
@@ -397,6 +411,15 @@ export async function upsertAppointmentDiagnosis(req: AuthenticatedRequest, res:
       note = typeof req.body.note === 'string' ? req.body.note.trim() || null : null
     }
 
+    if (req.body?.condition !== undefined) {
+      const parsed = parseCondition(req.body.condition)
+      if (typeof parsed === 'object' && parsed !== null) {
+        res.status(400).json({ success: false, message: parsed.error })
+        return
+      }
+      condition = parsed
+    }
+
     if (!row) {
       row = await Consultant.create({
         appointmentId: appointment.id,
@@ -408,6 +431,7 @@ export async function upsertAppointmentDiagnosis(req: AuthenticatedRequest, res:
         medications,
         insulin,
         note,
+        condition,
         status: DiagnosisStatus.DRAFT,
         createdBy: userId,
         updatedBy: userId,
@@ -418,6 +442,7 @@ export async function upsertAppointmentDiagnosis(req: AuthenticatedRequest, res:
       row.medications = medications
       row.insulin = insulin
       row.note = note
+      row.condition = condition
       row.updatedBy = userId
       await row.save()
     }
@@ -500,14 +525,7 @@ export async function submitAppointmentDiagnosis(req: AuthenticatedRequest, res:
       transaction,
     })
 
-    if (consultant && consultant.status === DiagnosisStatus.COMPLETED) {
-      await transaction.rollback()
-      res.status(400).json({
-        success: false,
-        message: 'Diagnosis is already completed for this appointment',
-      })
-      return
-    }
+    const alreadyCompleted = consultant?.status === DiagnosisStatus.COMPLETED
 
     // Allow final payload on submit
     let allergies = consultant ? asArray<ConsultantAllergyEntry>(consultant.allergies) : []
@@ -515,6 +533,7 @@ export async function submitAppointmentDiagnosis(req: AuthenticatedRequest, res:
     let medications = consultant ? asArray<ConsultantMedicationEntry>(consultant.medications) : []
     let insulin = consultant ? asArray<ConsultantInsulinEntry>(consultant.insulin) : []
     let note = consultant?.note ?? null
+    let condition = consultant?.condition ?? null
 
     if (req.body?.allergies !== undefined) {
       const parsed = parseAllergies(req.body.allergies)
@@ -555,8 +574,24 @@ export async function submitAppointmentDiagnosis(req: AuthenticatedRequest, res:
     if (req.body?.note !== undefined) {
       note = typeof req.body.note === 'string' ? req.body.note.trim() || null : null
     }
+    if (req.body?.condition !== undefined) {
+      const parsed = parseCondition(req.body.condition)
+      if (typeof parsed === 'object' && parsed !== null) {
+        await transaction.rollback()
+        res.status(400).json({ success: false, message: parsed.error })
+        return
+      }
+      condition = parsed
+    }
+    if (!condition) {
+      await transaction.rollback()
+      res.status(400).json({ success: false, message: 'Please select the resident condition' })
+      return
+    }
 
     const now = new Date()
+    const completedAt = alreadyCompleted && consultant?.completedAt ? consultant.completedAt : now
+    const attendedAt = alreadyCompleted && appointment.attendedAt ? appointment.attendedAt : now
 
     if (!consultant) {
       consultant = await Consultant.create(
@@ -570,6 +605,7 @@ export async function submitAppointmentDiagnosis(req: AuthenticatedRequest, res:
           medications,
           insulin,
           note,
+          condition,
           status: DiagnosisStatus.COMPLETED,
           completedAt: now,
           createdBy: userId,
@@ -583,8 +619,9 @@ export async function submitAppointmentDiagnosis(req: AuthenticatedRequest, res:
       consultant.medications = medications
       consultant.insulin = insulin
       consultant.note = note
+      consultant.condition = condition
       consultant.status = DiagnosisStatus.COMPLETED
-      consultant.completedAt = now
+      consultant.completedAt = completedAt
       consultant.updatedBy = userId
       await consultant.save({ transaction })
     }
@@ -592,7 +629,7 @@ export async function submitAppointmentDiagnosis(req: AuthenticatedRequest, res:
     await appointment.update(
       {
         status: AppointmentStatus.ATTENDED,
-        attendedAt: now,
+        attendedAt,
         cancelledAt: null,
         cancellationReason: null,
         updatedBy: userId,
@@ -638,13 +675,13 @@ export async function submitAppointmentDiagnosis(req: AuthenticatedRequest, res:
 
     res.status(200).json({
       success: true,
-      message: 'Diagnosis submitted successfully',
+      message: alreadyCompleted ? 'Diagnosis updated successfully' : 'Diagnosis submitted successfully',
       data: {
         diagnosis: formatConsultant(consultant),
         appointment: {
           id: appointment.id,
           status: AppointmentStatus.ATTENDED,
-          attendedAt: now,
+          attendedAt,
           residentId: appointment.residentId,
         },
       },
@@ -653,6 +690,221 @@ export async function submitAppointmentDiagnosis(req: AuthenticatedRequest, res:
     await transaction.rollback()
     console.error('Submit Appointment Diagnosis Error:', err)
     res.status(500).json({ success: false, message: 'Failed to submit diagnosis' })
+  }
+}
+
+// ── Diagnosis note attachments (S3) ─────────────────────────────────────────
+
+export const MAX_DIAGNOSIS_FILES = 5
+export const MAX_DIAGNOSIS_VOICE_NOTES = 5
+
+const IMAGE_EXTENSIONS = /\.(jpe?g|png|webp|gif|heic|heif)$/i
+const PDF_EXTENSIONS = /\.pdf$/i
+const AUDIO_EXTENSIONS = /\.(m4a|aac|mp3|mp4|wav|ogg|oga|opus|3gp|amr|webm|caf)$/i
+
+function getAttachmentFileType(file: Express.Multer.File): ConsultantFileType | null {
+  const name = file.originalname || ''
+  if (file.mimetype === 'application/pdf' || PDF_EXTENSIONS.test(name)) return 'PDF'
+  if (file.mimetype.startsWith('image/') || IMAGE_EXTENSIONS.test(name)) return 'IMAGE'
+  return null
+}
+
+function isAudioFile(file: Express.Multer.File): boolean {
+  return file.mimetype.startsWith('audio/') || AUDIO_EXTENSIONS.test(file.originalname || '')
+}
+
+async function uploadDiagnosisFiles(
+  files: Express.Multer.File[],
+  folder: string,
+  userId: string,
+  resolveType: (file: Express.Multer.File) => ConsultantFileType,
+): Promise<ConsultantFileEntry[]> {
+  const uploaded: ConsultantFileEntry[] = []
+  for (const file of files) {
+    const result = await uploadFileToS3(file, folder)
+    uploaded.push({
+      id: randomUUID(),
+      url: result.location,
+      key: result.key,
+      name: file.originalname || result.key.split('/').pop() || 'file',
+      contentType: result.contentType,
+      size: result.size,
+      fileType: resolveType(file),
+      uploadedAt: new Date().toISOString(),
+      uploadedByUserId: userId,
+    })
+  }
+  return uploaded
+}
+
+/**
+ * POST /doctor/appointments/:appointmentId/diagnosis/attachments  (multipart/form-data)
+ * Files: files[] (image/PDF, max 5 per diagnosis), voiceNotes[] (audio, max 5 per diagnosis).
+ * Uploads to S3 and appends to the consultant (draft or completed).
+ */
+export async function uploadDiagnosisAttachments(req: AuthenticatedRequest, res: Response): Promise<void> {
+  try {
+    const appointmentId = String(req.params.appointmentId || '').trim()
+    if (!appointmentId) {
+      res.status(400).json({ success: false, message: 'Appointment ID is required' })
+      return
+    }
+
+    const access = await assertAppointmentAccess(req, appointmentId)
+    if (!access.ok) {
+      res.status(access.status).json({ success: false, message: access.message })
+      return
+    }
+
+    const { appointment } = access
+    const userId = req.user?.id || null
+
+    const uploadedFiles = req.files as { [fieldname: string]: Express.Multer.File[] } | undefined
+    const attachmentFiles = uploadedFiles?.files || []
+    const voiceNoteFiles = uploadedFiles?.voiceNotes || []
+
+    if (attachmentFiles.length === 0 && voiceNoteFiles.length === 0) {
+      res.status(400).json({ success: false, message: 'Provide at least one file or voice note' })
+      return
+    }
+
+    const invalidFile = attachmentFiles.find((f) => !getAttachmentFileType(f))
+    if (invalidFile) {
+      res.status(400).json({
+        success: false,
+        message: `"${invalidFile.originalname}" is not a supported file. Upload an image or PDF`,
+      })
+      return
+    }
+    const invalidAudio = voiceNoteFiles.find((f) => !isAudioFile(f))
+    if (invalidAudio) {
+      res.status(400).json({
+        success: false,
+        message: `"${invalidAudio.originalname}" is not a supported audio file`,
+      })
+      return
+    }
+
+    let row = await Consultant.findOne({
+      where: { appointmentId, isDeleted: false },
+    })
+
+    const existingAttachments = row ? asArray<ConsultantFileEntry>(row.attachments) : []
+    const existingVoiceNotes = row ? asArray<ConsultantFileEntry>(row.voiceNotes) : []
+
+    if (existingAttachments.length + attachmentFiles.length > MAX_DIAGNOSIS_FILES) {
+      res.status(400).json({
+        success: false,
+        message: `You can attach up to ${MAX_DIAGNOSIS_FILES} files to a diagnosis`,
+      })
+      return
+    }
+    if (existingVoiceNotes.length + voiceNoteFiles.length > MAX_DIAGNOSIS_VOICE_NOTES) {
+      res.status(400).json({
+        success: false,
+        message: `You can add up to ${MAX_DIAGNOSIS_VOICE_NOTES} voice notes to a diagnosis`,
+      })
+      return
+    }
+
+    const [newAttachments, newVoiceNotes] = await Promise.all([
+      uploadDiagnosisFiles(
+        attachmentFiles,
+        `diagnosis/${appointmentId}/files`,
+        String(userId),
+        (file) => getAttachmentFileType(file) as ConsultantFileType,
+      ),
+      uploadDiagnosisFiles(voiceNoteFiles, `diagnosis/${appointmentId}/voice-notes`, String(userId), () => 'AUDIO'),
+    ])
+
+    // Assign new arrays (not in-place pushes) so Sequelize detects the JSON change.
+    const attachments = [...existingAttachments, ...newAttachments]
+    const voiceNotes = [...existingVoiceNotes, ...newVoiceNotes]
+
+    if (!row) {
+      row = await Consultant.create({
+        appointmentId: appointment.id,
+        residentId: appointment.residentId,
+        locationId: appointment.locationId,
+        doctorId: appointment.doctorId,
+        attachments,
+        voiceNotes,
+        status: DiagnosisStatus.DRAFT,
+        createdBy: userId,
+        updatedBy: userId,
+      })
+    } else {
+      row.attachments = attachments
+      row.voiceNotes = voiceNotes
+      row.changed('attachments', true)
+      row.changed('voiceNotes', true)
+      row.updatedBy = userId
+      await row.save()
+    }
+
+    res.status(200).json({
+      success: true,
+      message: 'Attachments uploaded successfully',
+      data: formatConsultant(row),
+    })
+  } catch (err) {
+    console.error('Upload Diagnosis Attachments Error:', err)
+    res.status(500).json({ success: false, message: 'Failed to upload attachments' })
+  }
+}
+
+/**
+ * DELETE /doctor/appointments/:appointmentId/diagnosis/attachments/:fileId
+ * Removes a file or voice note from the consultant.
+ */
+export async function deleteDiagnosisAttachment(req: AuthenticatedRequest, res: Response): Promise<void> {
+  try {
+    const appointmentId = String(req.params.appointmentId || '').trim()
+    const fileId = String(req.params.fileId || '').trim()
+    if (!appointmentId || !fileId) {
+      res.status(400).json({ success: false, message: 'Appointment ID and file ID are required' })
+      return
+    }
+
+    const access = await assertAppointmentAccess(req, appointmentId)
+    if (!access.ok) {
+      res.status(access.status).json({ success: false, message: access.message })
+      return
+    }
+
+    const row = await Consultant.findOne({
+      where: { appointmentId, isDeleted: false },
+    })
+    if (!row) {
+      res.status(404).json({ success: false, message: 'Attachment not found' })
+      return
+    }
+
+    const attachments = asArray<ConsultantFileEntry>(row.attachments)
+    const voiceNotes = asArray<ConsultantFileEntry>(row.voiceNotes)
+    const nextAttachments = attachments.filter((f) => f.id !== fileId)
+    const nextVoiceNotes = voiceNotes.filter((f) => f.id !== fileId)
+
+    if (nextAttachments.length === attachments.length && nextVoiceNotes.length === voiceNotes.length) {
+      res.status(404).json({ success: false, message: 'Attachment not found' })
+      return
+    }
+
+    row.attachments = nextAttachments
+    row.voiceNotes = nextVoiceNotes
+    row.changed('attachments', true)
+    row.changed('voiceNotes', true)
+    row.updatedBy = req.user?.id || null
+    await row.save()
+
+    res.status(200).json({
+      success: true,
+      message: 'Attachment removed successfully',
+      data: formatConsultant(row),
+    })
+  } catch (err) {
+    console.error('Delete Diagnosis Attachment Error:', err)
+    res.status(500).json({ success: false, message: 'Failed to remove attachment' })
   }
 }
 

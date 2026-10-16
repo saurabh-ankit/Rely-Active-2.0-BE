@@ -1,6 +1,23 @@
 import { Request, Response } from 'express'
 import { Op } from 'sequelize'
-import { GateEntry, GatePreapproved, PropertyUnit } from '../../models/index.js'
+import {
+  GateEntry,
+  GatePreapproved,
+  PropertyUnit,
+  Resident,
+  ResidentFamilyMember,
+  User,
+  UserDetail,
+} from '../../models/index.js'
+import { approverFromRequest, gateRaisedByIncludes, raisedByOf } from '../../services/gateApproval.service.js'
+
+/** Staff who checked a visitor in or out, with just enough to show a name. */
+const staffInclude = (as: string) => ({
+  model: User,
+  as,
+  attributes: ['id', 'username', 'email'],
+  include: [{ model: UserDetail, as: 'profile', attributes: ['firstName', 'lastName'] }],
+})
 
 export const getDashboardStats = async (req: Request, res: Response) => {
   try {
@@ -91,16 +108,23 @@ export const getEntries = async (req: Request, res: Response) => {
 
     const { rows, count } = await GateEntry.findAndCountAll({
       where: whereClause,
-      include: [{ model: PropertyUnit, as: 'unit', attributes: ['id', 'unit_number'] }],
+      include: [
+        { model: PropertyUnit, as: 'unit', attributes: ['id', 'unit_number'] },
+        staffInclude('clockedInByUser'),
+        staffInclude('clockedOutByUser'),
+        ...gateRaisedByIncludes(),
+      ],
       order: [['createdAt', 'DESC']],
       limit: limitNum,
       offset,
+      distinct: true,
     })
 
     return res.status(200).json({
       success: true,
       data: {
-        rows,
+        // raisedBy: the resident behind a pre-approval, or the guard who raised a walk-in.
+        rows: rows.map((r) => ({ ...r.toJSON(), raisedBy: raisedByOf(r.toJSON()) })),
         count,
         page: pageNum,
         totalPages: Math.ceil(count / limitNum),
@@ -145,7 +169,12 @@ export const getPreapproved = async (req: Request, res: Response) => {
 
     const { rows, count } = await GatePreapproved.findAndCountAll({
       where: whereClause,
-      include: [{ model: PropertyUnit, as: 'unit', attributes: ['id', 'unit_number'] }],
+      include: [
+        { model: PropertyUnit, as: 'unit', attributes: ['id', 'unit_number'] },
+        // The resident household that pre-approved the visitor, and the family member if one made it.
+        { model: Resident, as: 'resident', attributes: ['id', 'firstName', 'lastName'] },
+        { model: ResidentFamilyMember, as: 'createdByFamilyMember', attributes: ['id', 'firstName', 'lastName'] },
+      ],
       order: [['createdAt', 'DESC']],
       limit: limitNum,
       offset,
@@ -175,12 +204,18 @@ export const updateEntryStatus = async (req: Request, res: Response) => {
 
     const updateData: Record<string, unknown> = { status }
 
+    // Record the admin who decided, unless someone already did.
+    if ((status === 'Approved' || status === 'Rejected') && !entry.approverType) {
+      Object.assign(updateData, await approverFromRequest(req))
+    }
+
     if (status === 'Approved') {
       // If approved from dashboard, auto clock-in as well
       updateData.status = 'Inside'
       if (!entry.clockedInAt) {
         updateData.clockedInAt = new Date()
-        updateData.clockedInBy = (req as Request & { user?: { id: string } }).user?.id || null
+        // The guard who raised the walk-in lets the visitor in; fall back to the admin approving it.
+        updateData.clockedInBy = entry.createdBy || (req as Request & { user?: { id: string } }).user?.id || null
       }
     } else if (status === 'Completed' && !entry.clockedOutAt) {
       updateData.clockedOutAt = new Date()

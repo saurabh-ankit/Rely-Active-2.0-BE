@@ -1,91 +1,70 @@
 import express from 'express'
 import multer from 'multer'
 import { authenticate } from '../../middlewares/authenticate.js'
+import { resourceGuard } from '../../middlewares/authorizeResource.js'
 import {
-  addBillingParty,
-  cancelEvent,
-  cancelSubscription,
-  createBillingAccount,
-  createPayment,
-  createSubscription,
-  generateInvoice,
-  getBillingAccountById,
-  getBillingAccounts,
-  getBillingRuns,
-  getInvoiceById,
+  createInvoice,
+  createMiscItem,
+  deleteMiscItem,
+  downloadDocument,
+  getInvoice,
+  getInvoiceData,
   getInvoices,
-  getLedgerStatement,
-  getPaymentsForAccount,
-  getPendingEvents,
-  getSubscriptions,
+  getMiscItems,
+  getReceipts,
   getTaxSettings,
-  getUnitBilling360,
-  getUnitsBillingSummary,
-  ingestEvent,
-  pauseSubscription,
-  previewInvoice,
-  resumeSubscription,
-  triggerBatchRun,
-  updateBillingAccount,
-  updateBillingParty,
+  getUnbilledServices,
+  getUnits,
+  recordPayment,
+  updateInvoice,
   updateTaxSettings,
-  updateEvent,
-  uploadEventAttachment,
+  uploadBillingAttachment,
 } from '../controllers/billing.controller.js'
 
-const router = express.Router()
-const eventBillUpload = multer({
+const router = express.Router({ mergeParams: true })
+const attachmentUpload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 10 * 1024 * 1024, files: 1 },
 }).single('file')
 
-// Authenticate all billing routes
 router.use(authenticate)
+router.use(
+  resourceGuard(
+    [
+      { match: /^\/invoice\/[^/]+\/record-payment$/, keys: 'BILLING.RECEIPTS', action: 'create' },
+      { match: '/receipts', keys: 'BILLING.RECEIPTS' },
+      // Generating a missing PDF is part of viewing a document.
+      { match: /^\/invoice\/[^/]+\/download\//, keys: ['BILLING.INVOICES', 'BILLING.RECEIPTS'], action: 'view' },
+      { match: '/attachments', keys: ['BILLING.INVOICES', 'BILLING.RECEIPTS'], action: 'create' },
+      { match: '/settings', keys: ['BILLING', 'SETTINGS'] },
+    ],
+    'BILLING.INVOICES',
+  ),
+)
 
-// ── 0. Flat-Centric Directory & Unit 360° Folio ─────────────────────────────
-router.get('/units-summary', getUnitsBillingSummary)
-router.get('/units/:unitId/360', getUnitBilling360)
+// ── Flats directory ──────────────────────────────────────────────────────────
+router.get('/units', getUnits)
 
-// ── 1. Billing Accounts (Folios) ─────────────────────────────────────────────
-router.post('/accounts', createBillingAccount)
-router.get('/accounts', getBillingAccounts)
-router.get('/accounts/:id', getBillingAccountById)
-router.put('/accounts/:id', updateBillingAccount)
-router.get('/accounts/:accountId/ledger', getLedgerStatement)
+// ── Invoices (ported from Rely Assist, keyed on the flat) ───────────────────
+router.get('/invoice/:unitId', getInvoiceData)
+router.get('/unbilled-services/:unitId', getUnbilledServices)
+router.post('/invoice/:unitId', createInvoice)
+router.patch('/invoice/:invoiceId', updateInvoice)
+router.get('/invoices/:unitId', getInvoices)
+router.get('/invoice-detail/:invoiceId', getInvoice)
 
-// ── 2. Billing Parties (Who Pays) ────────────────────────────────────────────
-router.post('/parties', addBillingParty)
-router.put('/parties/:partyId', updateBillingParty)
+// ── Payments & documents ─────────────────────────────────────────────────────
+router.post('/invoice/:invoiceId/record-payment', recordPayment)
+router.get('/receipts/:unitId', getReceipts)
+router.get('/invoice/:invoiceId/download/:documentType', downloadDocument)
+router.post('/attachments', attachmentUpload, uploadBillingAttachment)
 
-// ── 3. Subscriptions (Recurring Charges) ─────────────────────────────────────
-router.post('/subscriptions', createSubscription)
-router.get('/accounts/:accountId/subscriptions', getSubscriptions)
-router.put('/subscriptions/:id/pause', pauseSubscription)
-router.put('/subscriptions/:id/resume', resumeSubscription)
-router.delete('/subscriptions/:id', cancelSubscription)
+// ── Miscellaneous charges logged against a flat ──────────────────────────────
+router.get('/misc-items/:unitId', getMiscItems)
+router.post('/misc-items', createMiscItem)
+router.delete('/misc-items/:itemId', deleteMiscItem)
 
-// ── 4. Usage Events (Consumption Facts) ──────────────────────────────────────
-router.post('/events', ingestEvent)
-router.put('/events/:eventId', updateEvent)
-router.post('/events/:eventId/attachments', eventBillUpload, uploadEventAttachment)
-router.get('/accounts/:accountId/events/pending', getPendingEvents)
-router.put('/events/:eventId/cancel', cancelEvent)
-
-// ── 5. Invoicing ─────────────────────────────────────────────────────────────
-router.post('/invoices/preview', previewInvoice)
-router.post('/invoices/generate', generateInvoice)
-router.get('/invoices', getInvoices)
-router.get('/invoices/:id', getInvoiceById)
-
-// ── 6. Payments & Allocations ───────────────────────────────────────────────
-router.post('/payments', createPayment)
-router.get('/accounts/:accountId/payments', getPaymentsForAccount)
-
-// ── 7. Batch Billing Runs ───────────────────────────────────────────────────
-router.post('/runs', triggerBatchRun)
-router.get('/runs', getBillingRuns)
-
-// ── 8. Global GST / Tax Settings ────────────────────────────────────────────
+// ── Global GST / tax settings ────────────────────────────────────────────────
 router.get('/settings/tax', getTaxSettings)
 router.put('/settings/tax', updateTaxSettings)
 

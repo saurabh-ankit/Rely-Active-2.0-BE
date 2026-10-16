@@ -23,7 +23,7 @@ import {
 } from '../../models/index.js'
 import { CareLevel, ResidentStatus } from '../../enums/resident.enum.js'
 import { OccupancyStatus, UnitStatus } from '../../enums/propertyUnit.enum.js'
-import { InvoiceStatus } from '../../enums/billing.enum.js'
+import { InvoiceStatus, OPEN_INVOICE_STATUSES, VOID_INVOICE_STATUSES } from '../../enums/billing.enum.js'
 import { TicketPriority, TicketStatus } from '../../enums/ticket.enum.js'
 import { AppointmentStatus } from '../../enums/appointment.enum.js'
 
@@ -377,7 +377,10 @@ export async function getDashboardStats(req: Request, res: Response): Promise<vo
     if (locId && locId !== 'ALL') packageSubWhere.propertyId = locId
 
     const [invoicesAgg, activeCareSubscriptions, activeFnbPackagesCount] = await Promise.all([
-      Invoice.findAll({ where: invoiceWhere, attributes: ['amountPaid', 'amountDue', 'grandTotal', 'status'] }),
+      Invoice.findAll({
+        where: { ...invoiceWhere, status: { [Op.notIn]: [...VOID_INVOICE_STATUSES] } },
+        attributes: ['paidAmount', 'discountedAmount', 'status', 'isCarriedForward'],
+      }),
       PackageSubscription.findAll({ where: packageSubWhere, attributes: ['id', 'totalCost'] }),
       FnbResidentPackage.count({ where: { status: 'active' } }),
     ])
@@ -393,9 +396,10 @@ export async function getDashboardStats(req: Request, res: Response): Promise<vo
     let draftCount = 0
 
     for (const inv of invoicesAgg) {
-      const paid = Number(inv.amountPaid || 0)
-      const due = Number(inv.amountDue || 0)
-      const total = Number(inv.grandTotal || 0)
+      const paid = Number(inv.paidAmount || 0)
+      // A carried-forward balance is owed on the newer invoice, so only its payments count here.
+      const total = inv.isCarriedForward ? paid : Number(inv.discountedAmount || 0)
+      const due = Math.max(0, total - paid)
       totalCollected += paid
       totalPendingAmount += due
       grandTotalSum += total
@@ -405,14 +409,12 @@ export async function getDashboardStats(req: Request, res: Response): Promise<vo
       else if (inv.status === InvoiceStatus.OVERDUE) {
         overdueCount++
         overdueAmount += due
-      } else if (inv.status === InvoiceStatus.SENT || inv.status === InvoiceStatus.FINALIZED) sentCount++
-      else if (inv.status === InvoiceStatus.DRAFT || inv.status === InvoiceStatus.PREVIEW) draftCount++
+      } else if (inv.status === InvoiceStatus.PENDING) sentCount++
+      else if (inv.status === InvoiceStatus.DRAFT) draftCount++
     }
 
     const pendingInvoicesCount = invoicesAgg.filter((inv) =>
-      [InvoiceStatus.FINALIZED, InvoiceStatus.SENT, InvoiceStatus.PARTIALLY_PAID, InvoiceStatus.OVERDUE].includes(
-        inv.status,
-      ),
+      (OPEN_INVOICE_STATUSES as readonly InvoiceStatus[]).includes(inv.status),
     ).length
 
     const collectionEfficiency =

@@ -8,8 +8,12 @@ import {
   getSetupStatus,
   updateCompany,
 } from '../controllers/company.controller.js'
+import { authenticate } from '../../middlewares/authenticate.js'
 
 const router = express.Router()
+
+// Every company route needs a signed-in user.
+router.use(authenticate)
 
 const uploadFields = upload.fields([
   { name: 'documents', maxCount: 5 },

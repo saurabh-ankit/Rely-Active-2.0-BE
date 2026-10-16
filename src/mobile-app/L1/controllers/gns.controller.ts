@@ -5,6 +5,7 @@ import QRCode from 'qrcode'
 import { uploadBase64ToS3 } from '../../../middlewares/s3/index.js'
 import type { AuthenticatedRequest } from '../../../middlewares/authenticate.js'
 import { resolveHousehold } from '../../../utils/household.util.js'
+import { approverFromRequest } from '../../../services/gateApproval.service.js'
 
 export const createPreapproved = async (req: Request, res: Response) => {
   try {
@@ -85,6 +86,8 @@ export const createPreapproved = async (req: Request, res: Response) => {
           unitId: activeUnitId,
           locId: finalLocId,
           residentId: activeResidentId,
+          // The resident or family member who made the pre-approval.
+          createdBy: (req as AuthenticatedRequest).user?.id ?? null,
           visitorPhotos: finalPhotoUrls.length > 0 ? finalPhotoUrls : null,
           vehicleNumber,
           notes,
@@ -309,13 +312,18 @@ export const updateWalkinStatus = async (req: Request, res: Response) => {
     const entry = await GateEntry.findByPk(id as string)
     if (!entry) return res.status(404).json({ success: false, message: 'Walkin not found' })
 
+    // The resident (or family member) making the decision is the approver.
+    const approver = await approverFromRequest(req)
     if (status === 'Approved') {
+      // Approval lets the visitor straight in; the guard who raised the walk-in is at the gate with them.
       await entry.update({
         status: 'Inside',
         clockedInAt: new Date(),
+        clockedInBy: entry.clockedInBy ?? entry.createdBy ?? null,
+        ...approver,
       })
     } else if (status === 'Rejected') {
-      await entry.update({ status: 'Rejected' })
+      await entry.update({ status: 'Rejected', ...approver })
     }
 
     return res.status(200).json({ success: true, data: entry })

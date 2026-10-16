@@ -7,6 +7,7 @@ import sequelize from './config/db/index.js'
 import { logger } from './config/logger.js'
 import './models/index.js'
 import { startMonthlyPackageResetCron } from './services/cron/monthlyPackageReset.js'
+import { syncResourceCatalog } from './services/resourceCatalog.service.js'
 
 const port = Number(process.env.PORT) || 3002
 const corsOrigins = (process.env.CORS_ORIGINS || 'http://localhost:5173,http://localhost:5174')
@@ -25,6 +26,13 @@ async function startServer() {
     await sequelize.sync()
     console.log('✅ Database models synchronized successfully!')
     logger.info('Database models synchronized successfully')
+
+    // Keep permission resources (modules / sub-modules) in step with the catalogue.
+    try {
+      await syncResourceCatalog()
+    } catch (catalogError) {
+      logger.error({ err: catalogError }, 'Resource catalogue sync failed')
+    }
 
     // Start monthly package subscription reset cron job (runs daily at midnight)
     startMonthlyPackageResetCron()

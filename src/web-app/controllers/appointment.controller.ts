@@ -17,6 +17,7 @@ import { generateAppointmentSlots, isSlotInPast, resolveEffectiveWindow } from '
 import { asParamString } from '../../utils/roster.util.js'
 import { errorResponse, successResponse } from '../../utils/response/index.js'
 import sequelize from '../../config/db/index.js'
+import { doctorConsultationFee } from '../../services/billing/consultationFee.js'
 
 const ACTIVE_BOOKING_STATUSES = [AppointmentStatus.PENDING, AppointmentStatus.CONFIRMED, AppointmentStatus.ATTENDED]
 
@@ -524,6 +525,7 @@ export const bookAppointment = async (req: AuthenticatedRequest, res: Response) 
         slotTimeRange: String(slotTimeRange).trim(),
         status: AppointmentStatus.CONFIRMED,
         bookedAt: new Date(),
+        fee: await doctorConsultationFee(doctorId, transaction),
         notes: notes || null,
         createdBy,
         updatedBy: createdBy,

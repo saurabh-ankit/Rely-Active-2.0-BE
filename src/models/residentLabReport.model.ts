@@ -1,15 +1,16 @@
 import { DataTypes, Optional } from 'sequelize'
 import sequelize from '../config/db/index.js'
-import { PaymentMethod } from '../enums/billing.enum.js'
+import { LabPaymentMethod } from '../enums/labReport.enum.js'
 import { BaseAttributes, BaseModel, baseModelColumns } from './base.model.js'
 import type { Resident } from './resident.model.js'
 import type { DoctorAppointment } from './doctorAppointment.model.js'
 import type { LabTestSetting } from './labTestSetting.model.js'
+import type { User } from './user.model.js'
 
 export const LAB_REPORT_SEVERITIES = ['normal', 'abnormal', 'severe'] as const
 export type LabReportSeverity = (typeof LAB_REPORT_SEVERITIES)[number]
 
-export const LAB_REPORT_PAYMENT_METHODS = Object.values(PaymentMethod) as PaymentMethod[]
+export const LAB_REPORT_PAYMENT_METHODS = Object.values(LabPaymentMethod) as LabPaymentMethod[]
 
 export interface ResidentLabReportAttributes extends BaseAttributes {
   residentId: string
@@ -20,7 +21,7 @@ export interface ResidentLabReportAttributes extends BaseAttributes {
   reportDate: string
   notes?: string | null
   cost?: number | null
-  paymentMethod?: PaymentMethod | null
+  paymentMethod?: LabPaymentMethod | null
   reportFileUrl: string
   receiptFileUrl?: string | null
   isActive?: boolean
@@ -55,7 +56,7 @@ export class ResidentLabReport
   declare reportDate: string
   declare notes: string | null
   declare cost: number | null
-  declare paymentMethod: PaymentMethod | null
+  declare paymentMethod: LabPaymentMethod | null
   declare reportFileUrl: string
   declare receiptFileUrl: string | null
   declare isActive: boolean
@@ -64,6 +65,7 @@ export class ResidentLabReport
   declare resident?: Resident
   declare appointment?: DoctorAppointment
   declare labTestSetting?: LabTestSetting
+  declare creator?: User
 }
 
 ResidentLabReport.init(

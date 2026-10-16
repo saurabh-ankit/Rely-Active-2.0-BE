@@ -6,6 +6,7 @@ import {
   CareTask,
   CareTaskAssignment,
   Resident,
+  ResidentFamilyMember,
   Property,
   User,
   UserDetail,
@@ -16,16 +17,7 @@ import {
   CarePackageFeaturesMap,
   SubscriptionStatus,
   ResidentCareTaskCompletion,
-  BillingAccount,
-  BillingEvent,
-  BillingProduct,
 } from '../../models/index.js'
-import {
-  BillingProductCategory,
-  BillingEventStatus,
-  BillingEventSourceModule,
-  ChargeType,
-} from '../../enums/billing.enum.js'
 import type {
   CreateCareTaskAssignmentInput,
   UpdateCareTaskAssignmentInput,
@@ -90,9 +82,11 @@ export async function syncPackageTasksForResidents(
 
     for (const r of residentsWithPkg) {
       if (!r.carePackageId) continue
+      // Resident.carePackageId is the resident's own package; family members' packages are separate.
       const activeSubForThisPkg = await PackageSubscription.findOne({
         where: {
           residentId: r.id,
+          familyMemberId: null,
           carePackageId: r.carePackageId,
           status: SubscriptionStatus.ACTIVE,
           isDeleted: false,
@@ -111,6 +105,7 @@ export async function syncPackageTasksForResidents(
           {
             where: {
               residentId: r.id,
+              familyMemberId: null,
               source: 'PACKAGE',
               isDeleted: false,
             },
@@ -119,7 +114,7 @@ export async function syncPackageTasksForResidents(
 
         // Check if there are any existing subscriptions for this resident (e.g. stopped/inactive)
         const anySub = await PackageSubscription.findOne({
-          where: { residentId: r.id, isDeleted: false },
+          where: { residentId: r.id, familyMemberId: null, isDeleted: false },
         })
         if (anySub) {
           // Resident's package was stopped or inactive; do NOT auto-create a new active one!
@@ -251,7 +246,9 @@ export async function syncPackageTasksForResidents(
       for (const feature of features) {
         if (!feature.featureId) continue
 
-        const sched = taskSchedules?.find((s) => s.taskId === feature.featureId)
+        // Schedules picked on the form are for the resident's own package; a family member's tasks
+        // start at the default time and can be rescheduled from the Medical page.
+        const sched = sub.familyMemberId ? undefined : taskSchedules?.find((s) => s.taskId === feature.featureId)
 
         // Fetch all current active package assignments for this feature & subscription
         const existingAssignments = await CareTaskAssignment.findAll({
@@ -307,6 +304,7 @@ export async function syncPackageTasksForResidents(
           } else {
             await CareTaskAssignment.create({
               residentId: sub.residentId,
+              familyMemberId: sub.familyMemberId ?? null,
               taskId: feature.featureId,
               propertyId: sub.propertyId || (locationId && locationId !== 'all' ? locationId : null),
               packageSubscriptionId: sub.id,
@@ -501,6 +499,7 @@ export async function getAllCareTaskAssignments(req: Request, res: Response): Pr
       attributes: [
         'id',
         'residentId',
+        'familyMemberId',
         'taskId',
         'propertyId',
         'packageSubscriptionId',
@@ -532,6 +531,12 @@ export async function getAllCareTaskAssignments(req: Request, res: Response): Pr
           as: 'task',
           attributes: ['id', 'careTaskName', 'billingType', 'price'],
           where: taskIncludeWhere,
+          required: false,
+        },
+        {
+          model: ResidentFamilyMember,
+          as: 'familyMember',
+          attributes: ['id', 'firstName', 'lastName', 'relation'],
           required: false,
         },
         {
@@ -660,7 +665,8 @@ export async function getAllCareTaskAssignments(req: Request, res: Response): Pr
 
     for (const sub of activeSubs) {
       for (const feat of sub.packageSubscriptionFeatures || []) {
-        subFeatureMap.set(`${sub.residentId}_${feat.featureId}`, {
+        // Keyed per person: the resident and each family member have their own quota.
+        subFeatureMap.set(`${sub.residentId}_${sub.familyMemberId ?? ''}_${feat.featureId}`, {
           isIncludedInPackage: true,
           packageName: sub.carePackage?.packageName || 'Care Package',
           packageSubscriptionId: sub.id,
@@ -693,7 +699,7 @@ export async function getAllCareTaskAssignments(req: Request, res: Response): Pr
         const json = typeof a.toJSON === 'function' ? a.toJSON() : a
         const isPkg = a.source === 'PACKAGE' && Boolean(a.packageSubscriptionId || a.carePackageId)
         const pkgInfo = isPkg
-          ? subFeatureMap.get(`${a.residentId}_${a.taskId}`) || {
+          ? subFeatureMap.get(`${a.residentId}_${a.familyMemberId ?? ''}_${a.taskId}`) || {
               isIncludedInPackage: true,
               packageName: a.carePackage?.packageName || 'Care Package',
               complimentaryCount: 0,
@@ -743,6 +749,8 @@ export async function getAllCareTaskAssignments(req: Request, res: Response): Pr
     interface GroupedCareAssignment {
       groupKey: string
       residentId: string
+      /** Set when the task is for a family member of the resident. */
+      familyMember: { id: string; name: string; relation: string | null } | null
       taskId: string
       propertyId: string | null
       source: string
@@ -791,7 +799,8 @@ export async function getAllCareTaskAssignments(req: Request, res: Response): Pr
     for (const item of enrichedAssignments as Array<Record<string, unknown>>) {
       const resId = String(item.residentId || '')
       const tId = String(item.taskId || '')
-      const groupKey = `${resId}_${tId}`
+      const fmObj = item.familyMember as Record<string, unknown> | null | undefined
+      const groupKey = `${resId}_${String(item.familyMemberId || '')}_${tId}`
 
       const taskObj = item.task as Record<string, unknown> | undefined
       const resObj = item.resident as Record<string, unknown> | undefined
@@ -802,6 +811,13 @@ export async function getAllCareTaskAssignments(req: Request, res: Response): Pr
         groupMap.set(groupKey, {
           groupKey,
           residentId: resId,
+          familyMember: fmObj
+            ? {
+                id: String(fmObj.id || ''),
+                name: `${String(fmObj.firstName || '')} ${String(fmObj.lastName || '')}`.trim(),
+                relation: (fmObj.relation as string | null) || null,
+              }
+            : null,
           taskId: tId,
           propertyId: (item.propertyId as string | null) || null,
           source: String(item.source || 'ADDON'),
@@ -1079,6 +1095,7 @@ export async function getCareTaskAssignmentById(req: Request, res: Response): Pr
       const activeSub = await PackageSubscription.findOne({
         where: {
           residentId: assignment.residentId,
+          familyMemberId: assignment.familyMemberId ?? null,
           status: SubscriptionStatus.ACTIVE,
           isDeleted: false,
         },
@@ -1361,6 +1378,7 @@ export async function completeCareTask(req: Request, res: Response): Promise<voi
           where: {
             id: assignment.packageSubscriptionId || undefined,
             residentId: assignment.residentId,
+            familyMemberId: assignment.familyMemberId ?? null,
             status: SubscriptionStatus.ACTIVE,
             isDeleted: false,
           },
@@ -1416,6 +1434,7 @@ export async function completeCareTask(req: Request, res: Response): Promise<voi
           if (taskPrice > 0 && completingNurseId) {
             chargeRecord = await AdditionalTaskCharge.create({
               residentId: assignment.residentId,
+              familyMemberId: assignment.familyMemberId ?? null,
               featureId: assignment.taskId,
               nurseId: completingNurseId,
               price: taskPrice,
@@ -1477,6 +1496,7 @@ export async function completeCareTask(req: Request, res: Response): Promise<voi
 
                 chargeRecord = await AdditionalTaskCharge.create({
                   residentId: assignment.residentId,
+                  familyMemberId: assignment.familyMemberId ?? null,
                   featureId: assignment.taskId,
                   nurseId: completingNurseId,
                   price: proration.amount,
@@ -1503,6 +1523,7 @@ export async function completeCareTask(req: Request, res: Response): Promise<voi
             if (taskPrice > 0) {
               chargeRecord = await AdditionalTaskCharge.create({
                 residentId: assignment.residentId,
+                familyMemberId: assignment.familyMemberId ?? null,
                 featureId: assignment.taskId,
                 nurseId: completingNurseId,
                 price: taskPrice,
@@ -1566,6 +1587,7 @@ export async function completeCareTask(req: Request, res: Response): Promise<voi
 
               chargeRecord = await AdditionalTaskCharge.create({
                 residentId: assignment.residentId,
+                familyMemberId: assignment.familyMemberId ?? null,
                 featureId: assignment.taskId,
                 nurseId: completingNurseId,
                 price: proration.amount,
@@ -1592,6 +1614,7 @@ export async function completeCareTask(req: Request, res: Response): Promise<voi
           if (taskPrice > 0) {
             chargeRecord = await AdditionalTaskCharge.create({
               residentId: assignment.residentId,
+              familyMemberId: assignment.familyMemberId ?? null,
               featureId: assignment.taskId,
               nurseId: completingNurseId,
               price: taskPrice,
@@ -1610,67 +1633,6 @@ export async function completeCareTask(req: Request, res: Response): Promise<voi
             charged = false
           }
         }
-      }
-    }
-
-    // ── Emit real-time unbilled BillingEvent if charge was incurred ──
-    if (charged && chargeRecord) {
-      try {
-        const resObj = await Resident.findByPk(assignment.residentId)
-        if (resObj && resObj.unitId) {
-          const billingAccount = await BillingAccount.findOne({
-            where: { unitId: resObj.unitId, isActive: true },
-          })
-          if (billingAccount) {
-            let careTaskProduct = await BillingProduct.findOne({
-              where: { category: BillingProductCategory.CARE, chargeType: ChargeType.USAGE, isActive: true },
-            })
-            if (!careTaskProduct && billingAccount.companyId) {
-              careTaskProduct = await BillingProduct.create({
-                companyId: billingAccount.companyId,
-                category: BillingProductCategory.CARE,
-                chargeType: ChargeType.USAGE,
-                productCode: 'PROD-CARE-TASK',
-                productName: 'Additional Care Task',
-                description: 'Additional Care Task Session',
-                isTaxable: false,
-                defaultTaxRate: 0,
-                isActive: true,
-              })
-            }
-            if (careTaskProduct) {
-              const unitPrice =
-                chargeRecord.unitPrice && Number(chargeRecord.unitPrice) > 0
-                  ? Number(chargeRecord.unitPrice)
-                  : Number(chargeRecord.price)
-              const qty = unitPrice > 0 ? Math.round(Number(chargeRecord.price) / unitPrice) || 1 : 1
-              const taskName = chargeRecord.taskName || assignment.task?.careTaskName || 'Additional Care Task'
-              const serviceDate = chargeRecord.completedAt
-                ? new Date(chargeRecord.completedAt).toISOString().slice(0, 10)
-                : new Date().toISOString().slice(0, 10)
-
-              await BillingEvent.create({
-                billingAccountId: billingAccount.id,
-                unitId: resObj.unitId,
-                residentId: chargeRecord.residentId,
-                propertyId: billingAccount.propertyId,
-                sourceModule: BillingEventSourceModule.CARE,
-                sourceType: 'ADDITIONAL_TASK',
-                sourceId: chargeRecord.id,
-                productId: careTaskProduct.id,
-                chargeType: 'USAGE',
-                description: taskName,
-                quantity: qty,
-                unitPrice,
-                amount: Number(chargeRecord.price),
-                serviceDate,
-                status: BillingEventStatus.PENDING,
-              })
-            }
-          }
-        }
-      } catch (billingErr) {
-        console.error('Failed to ingest real-time billing event for care task completion:', billingErr)
       }
     }
 
@@ -1740,6 +1702,7 @@ export async function completeCareTask(req: Request, res: Response): Promise<voi
     const completionRecord = await ResidentCareTaskCompletion.create({
       residentCareTaskAssignmentId: assignment.id,
       residentId: assignment.residentId,
+      familyMemberId: assignment.familyMemberId ?? null,
       taskId: assignment.taskId,
       propertyId: assignment.propertyId || null,
       completedBy: completingNurseId || null,
@@ -1887,6 +1850,12 @@ export async function getCareTaskCompletions(req: Request, res: Response): Promi
           model: Resident,
           as: 'resident',
           attributes: ['id', 'firstName', 'lastName', 'phone'],
+          required: false,
+        },
+        {
+          model: ResidentFamilyMember,
+          as: 'familyMember',
+          attributes: ['id', 'firstName', 'lastName', 'relation'],
           required: false,
         },
         {

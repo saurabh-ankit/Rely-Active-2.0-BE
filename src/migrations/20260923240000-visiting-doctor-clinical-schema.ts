@@ -562,6 +562,18 @@ export async function up({ context: queryInterface }: { context: QueryInterface 
         type: DataTypes.TEXT,
         allowNull: true,
       },
+      attachments: {
+        type: DataTypes.JSON,
+        allowNull: true,
+      },
+      voiceNotes: {
+        type: DataTypes.JSON,
+        allowNull: true,
+      },
+      condition: {
+        type: DataTypes.ENUM('CRITICAL', 'STABLE', 'RECOVERING', 'GOOD'),
+        allowNull: true,
+      },
       status: {
         type: DataTypes.ENUM('DRAFT', 'COMPLETED'),
         allowNull: false,
@@ -604,6 +616,18 @@ export async function up({ context: queryInterface }: { context: QueryInterface 
       type: DataTypes.JSON,
       allowNull: false,
       defaultValue: [],
+    })
+    await addColumnIfMissing(queryInterface, 'consultants', 'attachments', {
+      type: DataTypes.JSON,
+      allowNull: true,
+    })
+    await addColumnIfMissing(queryInterface, 'consultants', 'voiceNotes', {
+      type: DataTypes.JSON,
+      allowNull: true,
+    })
+    await addColumnIfMissing(queryInterface, 'consultants', 'condition', {
+      type: DataTypes.ENUM('CRITICAL', 'STABLE', 'RECOVERING', 'GOOD'),
+      allowNull: true,
     })
   }
 

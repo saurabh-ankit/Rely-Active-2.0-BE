@@ -22,6 +22,8 @@ export interface PropertyUnitAttributes extends BaseAttributes {
   price_per_sqft?: number | null
   status: UnitStatus
   occupancyStatus?: OccupancyStatus
+  /** Type-specific details, e.g. { plot_area, storeys, garden }. */
+  attributes?: Record<string, unknown> | null
   isActive?: boolean
   isDeleted?: boolean
 }
@@ -41,6 +43,7 @@ export type PropertyUnitCreationAttributes = Optional<
   | 'price'
   | 'price_per_sqft'
   | 'occupancyStatus'
+  | 'attributes'
   | 'isActive'
   | 'isDeleted'
   | 'createdBy'
@@ -69,6 +72,7 @@ export class PropertyUnit
   declare price_per_sqft: number | null
   declare status: UnitStatus
   declare occupancyStatus: OccupancyStatus
+  declare attributes: Record<string, unknown> | null
   declare isActive: boolean
   declare isDeleted: boolean
   declare floor?: PropertyFloor
@@ -88,7 +92,20 @@ PropertyUnit.init(
       comment: 'Unit / Flat number e.g. "101", "A-201"',
     },
     unit_type: {
-      type: DataTypes.ENUM('1BHK', '2BHK', '3BHK', '4BHK', 'studio', 'penthouse', 'shop', 'office'),
+      type: DataTypes.ENUM(
+        '1BHK',
+        '2BHK',
+        '3BHK',
+        '4BHK',
+        '5BHK',
+        'studio',
+        'penthouse',
+        'shop',
+        'office',
+        'villa',
+        'duplex',
+        'triplex',
+      ),
       allowNull: false,
       defaultValue: '2BHK',
     },
@@ -141,6 +158,10 @@ PropertyUnit.init(
       type: DataTypes.ENUM('available', 'booked', 'sold', 'on_hold'),
       allowNull: false,
       defaultValue: 'available',
+    },
+    attributes: {
+      type: DataTypes.JSON,
+      allowNull: true,
     },
     occupancyStatus: {
       type: DataTypes.ENUM('VACANT', 'OWNER_OCCUPIED', 'TENANT_OCCUPIED'),

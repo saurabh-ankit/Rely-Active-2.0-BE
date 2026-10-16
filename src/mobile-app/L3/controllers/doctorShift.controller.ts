@@ -20,6 +20,7 @@ import {
 } from '../../../models/index.js'
 import { todayYmdLocal } from '../../../utils/roster.util.js'
 import { resolveUserLocationId } from './medical.controller.js'
+import { doctorConsultationFee } from '../../../services/billing/consultationFee.js'
 
 const ACTIVE_BOOKING_STATUSES = [AppointmentStatus.PENDING, AppointmentStatus.CONFIRMED, AppointmentStatus.ATTENDED]
 
@@ -185,7 +186,7 @@ function assignmentIncludeForLocation() {
     {
       model: PropertyFloor,
       as: 'floor',
-      attributes: ['id', 'floor_name', 'floor_number'],
+      attributes: ['id', 'floor_name', 'floor_number', 'is_virtual'],
       required: false,
     },
     {
@@ -672,7 +673,7 @@ export async function getDoctorShiftResidents(req: AuthenticatedRequest, res: Re
             {
               model: PropertyFloor,
               as: 'floor',
-              attributes: ['id', 'floor_number', 'floor_name', 'blockId'],
+              attributes: ['id', 'floor_number', 'floor_name', 'blockId', 'is_virtual'],
               include: [
                 {
                   model: PropertyBlock,
@@ -868,6 +869,7 @@ export async function ensureDoctorShiftAppointment(req: AuthenticatedRequest, re
       slotTimeRange: timeRange,
       status: AppointmentStatus.CONFIRMED,
       bookedAt: new Date(),
+      fee: await doctorConsultationFee(doctorId),
       isActive: true,
       isDeleted: false,
       createdBy: doctorId,
