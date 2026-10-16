@@ -254,7 +254,13 @@ export async function listNotificationsForViewer(viewer: NotificationViewer, que
         ],
       },
     ],
-    order: [['createdAt', 'DESC']],
+    // Newest first. One action can raise several notifications at once, so break ties on the
+    // inbox time and then the row id, keeping the order stable between refreshes.
+    order: [
+      [{ model: NotificationEvent, as: 'event' }, 'occurredAt', 'DESC'],
+      ['createdAt', 'DESC'],
+      ['id', 'DESC'],
+    ],
     limit,
     offset: (page - 1) * limit,
   })

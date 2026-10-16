@@ -168,7 +168,8 @@ NotificationEvent.init(
       unique: true,
     },
     occurredAt: {
-      type: DataTypes.DATE,
+      // Millisecond precision so notifications raised in the same second stay in order
+      type: DataTypes.DATE(3),
       allowNull: false,
       defaultValue: DataTypes.NOW,
     },
