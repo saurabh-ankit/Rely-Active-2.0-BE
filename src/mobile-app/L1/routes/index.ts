@@ -11,6 +11,7 @@ import medicalHistoryMobileRouter from './medicalHistoryMobile.routes.js'
 import assistantMobileRouter from './assistantMobile.routes.js'
 import feedbackMobileRouter, { advertisementMobileRouter } from './feedbackMobile.routes.js'
 import billingMobileRouter from './billingMobile.routes.js'
+import notificationRouter from '../../../web-app/routes/notification.routes.js'
 
 export const l1MobileRouter = Router()
 
@@ -71,5 +72,8 @@ l1MobileRouter.use('/billing', billingMobileRouter)
 // ── Feedback & Advertisements (/api/v1/mobile/l1/feedback-forms, /advertisements) ──
 l1MobileRouter.use('/feedback-forms', feedbackMobileRouter)
 l1MobileRouter.use('/advertisements', advertisementMobileRouter)
+
+// ── In-app notifications & push devices (/api/v1/mobile/l1/notifications), same API as the web ──
+l1MobileRouter.use('/notifications', notificationRouter)
 
 export default l1MobileRouter

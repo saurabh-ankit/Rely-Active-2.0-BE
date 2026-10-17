@@ -11,6 +11,16 @@ export interface SendPushToTokensInput {
   title: string
   body: string
   data?: Record<string, string>
+  /**
+   * Data-only push (no `notification` block): Android hands it to the app's background
+   * handler even when the app is closed, so the app can show its own notification
+   * (e.g. with Approve / Deny buttons). Web still gets a visible notification.
+   */
+  dataOnly?: boolean
+  /** Android notification channel the app created for this kind of push. */
+  androidChannelId?: string
+  /** Drop the push if it can't be delivered within this time (e.g. a gate approval). */
+  ttlSeconds?: number
 }
 
 export interface PushBatchResult {
@@ -108,28 +118,40 @@ export async function sendPushToTokens(input: SendPushToTokensInput): Promise<Se
     }
   }
 
-  const messageBase: Omit<MulticastMessage, 'tokens'> = {
-    notification: {
-      title: input.title,
-      body: input.body,
-    },
-    ...(input.data ? { data: input.data } : {}),
-    android: {
-      priority: 'high',
-    },
-    apns: {
-      payload: {
-        aps: {
-          sound: 'default',
+  const ttl = input.ttlSeconds ? input.ttlSeconds * 1000 : undefined
+  const messageBase: Omit<MulticastMessage, 'tokens'> = input.dataOnly
+    ? {
+        data: { ...(input.data || {}), title: input.title, body: input.body },
+        android: { priority: 'high', ...(ttl ? { ttl } : {}) },
+        webpush: {
+          headers: { Urgency: 'high' },
+          notification: { title: input.title, body: input.body },
         },
-      },
-    },
-    webpush: {
-      headers: {
-        Urgency: 'high',
-      },
-    },
-  }
+      }
+    : {
+        notification: {
+          title: input.title,
+          body: input.body,
+        },
+        ...(input.data ? { data: input.data } : {}),
+        android: {
+          priority: 'high',
+          ...(ttl ? { ttl } : {}),
+          ...(input.androidChannelId ? { notification: { channelId: input.androidChannelId, sound: 'default' } } : {}),
+        },
+        apns: {
+          payload: {
+            aps: {
+              sound: 'default',
+            },
+          },
+        },
+        webpush: {
+          headers: {
+            Urgency: 'high',
+          },
+        },
+      }
 
   let successCount = 0
   let failureCount = 0

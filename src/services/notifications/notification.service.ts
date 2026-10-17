@@ -286,9 +286,10 @@ export async function getUnreadCountForViewer(viewer: NotificationViewer): Promi
 }
 
 export async function markNotificationRead(viewer: NotificationViewer, notificationId: string): Promise<boolean> {
+  // Accepts the inbox row id, or the event id that push notifications carry (mobile tap-to-open)
   const target = await NotificationInbox.findOne({
     where: {
-      id: notificationId,
+      [Op.or]: [{ id: notificationId }, { eventId: notificationId }],
       ...viewerWhere(viewer),
     },
   })
