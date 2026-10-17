@@ -11,7 +11,9 @@ import {
   TicketFeedback,
   User,
   UserDetail,
+  UserLocation,
 } from '../../../models/index.js'
+import { NotificationRecipientType } from '../../../enums/notification.enum.js'
 import { TicketActivityType, TicketFeedbackRating } from '../../../enums/ticket.enum.js'
 import { TicketPriority, TicketStatus } from '../../../enums/ticket.enum.js'
 import type { AuthenticatedRequest } from '../../../middlewares/authenticate.js'
@@ -627,6 +629,25 @@ export async function createResidentTicket(req: AuthenticatedRequest, res: Respo
       attachments: ticketAttachments,
     })
 
+    const locationStaff = await UserLocation.findAll({
+      where: {
+        locId: resident.locId,
+        isDeleted: false,
+      },
+      attributes: ['userId'],
+    })
+
+    const locationUserRecipients = Array.from(
+      new Set(
+        locationStaff
+          .map((entry) => entry.userId)
+          .filter((value): value is string => typeof value === 'string' && value.length > 0),
+      ),
+    ).map((userId) => ({
+      recipientType: NotificationRecipientType.USER,
+      recipientUserId: userId,
+    }))
+
     await publishTicketNotificationSafe({
       ticket: newTicket,
       eventCode: 'TICKET_CREATED',
@@ -640,6 +661,7 @@ export async function createResidentTicket(req: AuthenticatedRequest, res: Respo
         category: newTicket.category,
         areaType: isCommonArea ? 'COMMON_AREA' : 'IN_FLAT',
       },
+      extraRecipients: locationUserRecipients,
     })
 
     const uNum = resident.unit?.unit_number || 'A-101'

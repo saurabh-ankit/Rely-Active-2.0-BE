@@ -1,6 +1,7 @@
 import { z } from 'zod'
 import { PropertyEntityType, STRUCTURE_LEVEL_SETS, StructureLevel } from '../enums/propertyEntity.enum.js'
 import { UnitType } from '../enums/propertyUnit.enum.js'
+import { propertyAmenitySelectionSchema } from './amenity.validation.js'
 
 export const PINCODE_REGEX = /^[1-9][0-9]{5}$/
 
@@ -24,7 +25,8 @@ export const createPropertySchema = z
         message: 'Total area must be a positive number',
       }),
     area_unit: z.string().optional().nullable(),
-    amenities: z.any().optional().nullable(),
+    amenities: z.array(z.string()).optional().nullable(),
+    propertyAmenities: z.array(propertyAmenitySelectionSchema).optional().nullable(),
     launch_date: z.string().optional().nullable(),
     property_types: z.array(z.enum(PropertyEntityType)).optional().nullable(),
     blocks: z.array(z.any()).optional().nullable(),

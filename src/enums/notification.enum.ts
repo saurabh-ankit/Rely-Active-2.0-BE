@@ -47,4 +47,5 @@ export enum NotificationSeverity {
 
 export enum NotificationModule {
   TICKETS = 'TICKETS',
+  AMENITIES = 'AMENITIES',
 }
