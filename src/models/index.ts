@@ -12,6 +12,11 @@ import { BaseModel, baseModelColumns, type BaseAttributes, type BaseCreationAttr
 import { Company } from './company.model.js'
 import { CompanyCustomField } from './companyCustomField.model.js'
 import { Property } from './property.model.js'
+import { Amenity } from './amenity.model.js'
+import { PropertyAmenity } from './propertyAmenity.model.js'
+import { AmenitySlotConfig } from './amenitySlotConfig.model.js'
+import { AmenitySlotBooking } from './amenitySlotBooking.model.js'
+import { AmenitySlotBlock } from './amenitySlotBlock.model.js'
 import { PropertyBlock } from './propertyBlock.model.js'
 import { PropertyEntity } from './propertyEntity.model.js'
 import { PropertyFloor } from './propertyFloor.model.js'
@@ -270,6 +275,25 @@ CompanyCustomField.belongsTo(Company, { foreignKey: 'companyId', as: 'company' }
 
 Company.hasMany(Property, { foreignKey: 'companyId', as: 'properties' })
 Property.belongsTo(Company, { foreignKey: 'companyId', as: 'company' })
+
+// ── Property amenities ───────────────────────────────────────────────────────
+Property.hasMany(PropertyAmenity, { foreignKey: 'propertyId', as: 'propertyAmenities' })
+PropertyAmenity.belongsTo(Property, { foreignKey: 'propertyId', as: 'property' })
+
+Amenity.hasMany(PropertyAmenity, { foreignKey: 'amenityId', as: 'propertyAmenities' })
+PropertyAmenity.belongsTo(Amenity, { foreignKey: 'amenityId', as: 'amenity' })
+
+PropertyAmenity.hasOne(AmenitySlotConfig, { foreignKey: 'propertyAmenityId', as: 'slotConfig' })
+AmenitySlotConfig.belongsTo(PropertyAmenity, { foreignKey: 'propertyAmenityId', as: 'propertyAmenity' })
+
+AmenitySlotConfig.hasMany(AmenitySlotBooking, { foreignKey: 'slotConfigId', as: 'bookings' })
+AmenitySlotBooking.belongsTo(AmenitySlotConfig, { foreignKey: 'slotConfigId', as: 'slotConfig' })
+
+AmenitySlotConfig.hasMany(AmenitySlotBlock, { foreignKey: 'slotConfigId', as: 'blocks' })
+AmenitySlotBlock.belongsTo(AmenitySlotConfig, { foreignKey: 'slotConfigId', as: 'slotConfig' })
+
+Resident.hasMany(AmenitySlotBooking, { foreignKey: 'residentId', as: 'amenitySlotBookings' })
+AmenitySlotBooking.belongsTo(Resident, { foreignKey: 'residentId', as: 'resident' })
 
 // ── Property → Entity → Block → Floor → Unit ────────────────────────────────
 Property.hasMany(PropertyEntity, { foreignKey: 'propertyId', as: 'entities' })
@@ -1071,6 +1095,11 @@ export {
   Company,
   CompanyCustomField,
   Property,
+  Amenity,
+  PropertyAmenity,
+  AmenitySlotConfig,
+  AmenitySlotBooking,
+  AmenitySlotBlock,
   PropertyBlock,
   PropertyEntity,
   PropertyFloor,

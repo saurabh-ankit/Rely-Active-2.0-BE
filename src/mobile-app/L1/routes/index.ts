@@ -12,6 +12,7 @@ import assistantMobileRouter from './assistantMobile.routes.js'
 import feedbackMobileRouter, { advertisementMobileRouter } from './feedbackMobile.routes.js'
 import billingMobileRouter from './billingMobile.routes.js'
 import notificationRouter from '../../../web-app/routes/notification.routes.js'
+import amenityMobileRouter from './amenityMobile.routes.js'
 
 export const l1MobileRouter = Router()
 
@@ -66,6 +67,10 @@ l1MobileRouter.use('/appointments', appointmentMobileRouter)
 
 // ── Medical History (/api/v1/mobile/l1/medical/history) ──
 l1MobileRouter.use('/medical/history', medicalHistoryMobileRouter)
+
+// ── Amenities (/api/v1/mobile/l1/amenities) ──
+l1MobileRouter.use('/amenities', amenityMobileRouter)
+
 // ── Bills (/api/v1/mobile/l1/billing) ──
 l1MobileRouter.use('/billing', billingMobileRouter)
 
