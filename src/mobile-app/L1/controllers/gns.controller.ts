@@ -6,6 +6,7 @@ import { uploadBase64ToS3 } from '../../../middlewares/s3/index.js'
 import type { AuthenticatedRequest } from '../../../middlewares/authenticate.js'
 import { resolveHousehold } from '../../../utils/household.util.js'
 import { approverFromRequest } from '../../../services/gateApproval.service.js'
+import { publishGateDecisionSafe, type GateDecision } from '../../../services/notifications/gateNotification.service.js'
 
 export const createPreapproved = async (req: Request, res: Response) => {
   try {
@@ -304,16 +305,32 @@ export const getWalkins = async (req: Request, res: Response) => {
   }
 }
 
-export const updateWalkinStatus = async (req: Request, res: Response) => {
-  try {
-    const { id } = req.params
-    const { status } = req.body
+/**
+ * Approves or denies walk-ins the guard raised for the caller's flat. Only entries still waiting
+ * are changed; the guard and the rest of the household are notified once.
+ */
+async function decideWalkins(req: Request, entryIds: string[], status: GateDecision) {
+  const household = resolveHousehold(req as AuthenticatedRequest)
+  const resident = household ? await Resident.findByPk(household.residentId, { attributes: ['id', 'unitId'] }) : null
+  if (!resident?.unitId) return { code: 403, message: 'No flat is linked to this account.' } as const
 
-    const entry = await GateEntry.findByPk(id as string)
-    if (!entry) return res.status(404).json({ success: false, message: 'Walkin not found' })
+  const entries = await GateEntry.findAll({ where: { id: entryIds, unitId: resident.unitId } })
+  if (!entries.length) return { code: 404, message: 'Walk-in not found' } as const
 
-    // The resident (or family member) making the decision is the approver.
-    const approver = await approverFromRequest(req)
+  const pending = entries.filter((e) => e.status === 'PendingApproval')
+  if (!pending.length) {
+    const done = entries[0]!
+    const outcome = done.status === 'Rejected' ? 'denied' : 'approved'
+    return {
+      code: 409,
+      message: `Already ${outcome}${done.approverName ? ` by ${done.approverName}` : ''}.`,
+      data: entries,
+    } as const
+  }
+
+  // The resident (or family member) making the decision is the approver.
+  const approver = await approverFromRequest(req)
+  for (const entry of pending) {
     if (status === 'Approved') {
       // Approval lets the visitor straight in; the guard who raised the walk-in is at the gate with them.
       await entry.update({
@@ -322,11 +339,64 @@ export const updateWalkinStatus = async (req: Request, res: Response) => {
         clockedInBy: entry.clockedInBy ?? entry.createdBy ?? null,
         ...approver,
       })
-    } else if (status === 'Rejected') {
+    } else {
       await entry.update({ status: 'Rejected', ...approver })
     }
+  }
 
-    return res.status(200).json({ success: true, data: entry })
+  void publishGateDecisionSafe(pending, status, {
+    residentId: household?.residentId ?? null,
+    familyMemberId: household?.familyMemberId ?? null,
+    name: approver?.approverName ?? null,
+  })
+  return { code: 200, data: entries } as const
+}
+
+const isDecision = (status: unknown): status is GateDecision => status === 'Approved' || status === 'Rejected'
+
+export const updateWalkinStatus = async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params
+    const { status } = req.body
+    if (!isDecision(status)) {
+      return res.status(400).json({ success: false, message: 'status must be Approved or Rejected' })
+    }
+    const result = await decideWalkins(req, [String(id)], status)
+    if (result.code !== 200) {
+      return res
+        .status(result.code)
+        .json({ success: false, message: result.message, data: 'data' in result ? result.data : undefined })
+    }
+    return res.status(200).json({ success: true, data: result.data[0] })
+  } catch (error) {
+    return res.status(500).json({ success: false, message: 'Error updating walkin status', error })
+  }
+}
+
+/**
+ * PUT /gns/preapproved/walkins/decision  { entryIds: string[], status: 'Approved' | 'Rejected' }
+ * One decision for every visitor the guard raised together (the approval popup / notification).
+ */
+export const decideWalkinRequest = async (req: Request, res: Response) => {
+  try {
+    const { entryIds, status } = req.body || {}
+    const ids = Array.isArray(entryIds) ? entryIds.map(String).filter(Boolean) : []
+    if (!ids.length || !isDecision(status)) {
+      return res
+        .status(400)
+        .json({ success: false, message: 'entryIds and status (Approved or Rejected) are required' })
+    }
+    const result = await decideWalkins(req, ids, status)
+    if (result.code !== 200) {
+      return res
+        .status(result.code)
+        .json({ success: false, message: result.message, data: 'data' in result ? result.data : undefined })
+    }
+    return res.status(200).json({
+      success: true,
+      message: status === 'Approved' ? 'Visitor approved' : 'Visitor denied',
+      data: result.data,
+    })
   } catch (error) {
     return res.status(500).json({ success: false, message: 'Error updating walkin status', error })
   }

@@ -1405,6 +1405,20 @@ export async function updateOrderStatus(req: Request, res: Response): Promise<vo
     }
 
     const nextStatus = String(orderStatus).toLowerCase()
+    // F&B staff complete dine-in orders here. This does not mark attendance: Attendance staff mark
+    // dine-in attendance separately (/mobile/l3/attendance/dine-in/mark).
+    // Dine-in orders are accepted, prepared and marked food-ready by the super admin on the web;
+    // L3 staff only complete them, once the food is ready.
+    if (order.serviceType === 'dine_in') {
+      if (nextStatus !== 'completed' && nextStatus !== 'delivered') {
+        res.status(403).json({ success: false, message: 'Dine-in orders can only be completed here.' })
+        return
+      }
+      if (order.orderStatus !== 'ready' && order.orderStatus !== nextStatus) {
+        res.status(400).json({ success: false, message: 'This order can be completed once the food is ready.' })
+        return
+      }
+    }
     order.orderStatus = nextStatus
 
     const now = new Date()

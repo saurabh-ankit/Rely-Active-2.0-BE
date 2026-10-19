@@ -1,6 +1,7 @@
 import type { Request, Response } from 'express'
 import bcrypt from 'bcryptjs'
 import { Op } from 'sequelize'
+import { NotificationAppSurface, NotificationRecipientType } from '../../../enums/notification.enum.js'
 import {
   FnbGlobalMealSlot,
   FnbGlobalPackage,
@@ -13,6 +14,7 @@ import {
   Resident,
   ResidentFamilyMember,
 } from '../../../models/index.js'
+import { registerDeviceTokenSafe } from '../../../services/notifications/notificationDeviceToken.service.js'
 import { generateToken, verifyToken } from '../../../utils/jwt.js'
 import { uploadFileToS3, uploadBase64ToS3 } from '../../../middlewares/s3/index.js'
 
@@ -36,7 +38,7 @@ interface PkgType {
 
 export async function residentLogin(req: Request, res: Response): Promise<void> {
   try {
-    const { username, password } = req.body || {}
+    const { username, password, fcmToken, deviceId, platform, appVersion } = req.body || {}
 
     if (!username || !password) {
       res.status(400).json({
@@ -125,6 +127,17 @@ export async function residentLogin(req: Request, res: Response): Promise<void> 
         roles: ['RESIDENT_FAMILY_MEMBER'],
       })
 
+      await registerDeviceTokenSafe({
+        recipientType: NotificationRecipientType.FAMILY_MEMBER,
+        recipientFamilyMemberId: familyMember.id,
+        appSurface: NotificationAppSurface.MOBILE_L1,
+        platform,
+        fcmToken,
+        deviceId,
+        appVersion,
+        createdBy: familyMember.id,
+      })
+
       res.status(200).json({
         success: true,
         message: 'Family member mobile login successful',
@@ -174,6 +187,17 @@ export async function residentLogin(req: Request, res: Response): Promise<void> 
       companyId: resident.companyId,
       defaultLocationId: resident.locId,
       roles: ['RESIDENT'],
+    })
+
+    await registerDeviceTokenSafe({
+      recipientType: NotificationRecipientType.RESIDENT,
+      recipientResidentId: resident.id,
+      appSurface: NotificationAppSurface.MOBILE_L1,
+      platform,
+      fcmToken,
+      deviceId,
+      appVersion,
+      createdBy: resident.id,
     })
 
     res.status(200).json({

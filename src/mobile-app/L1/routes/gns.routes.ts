@@ -5,6 +5,7 @@ import {
   getPreapproved,
   getWalkins,
   updateWalkinStatus,
+  decideWalkinRequest,
   updatePreapproved,
   deletePreapproved,
   getGuestMasterList,
@@ -27,6 +28,8 @@ router.get('/preapproved', getPreapproved)
 router.put('/preapproved/:id', updatePreapproved)
 router.delete('/preapproved/:id', deletePreapproved)
 router.get('/preapproved/walkins', getWalkins)
+// One decision for all visitors of a guard's request (approval popup / notification buttons)
+router.put('/preapproved/walkins/decision', decideWalkinRequest)
 router.put('/preapproved/walkins/:id/status', updateWalkinStatus)
 
 // Guest Master

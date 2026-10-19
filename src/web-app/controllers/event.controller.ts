@@ -8,6 +8,7 @@ import {
   Property,
   EventVenue,
   EventRegistration,
+  EventAttendee,
   EventRequest,
   Resident,
   EventGlobalServiceProperty,
@@ -15,7 +16,11 @@ import {
   PropertyUnit,
   PropertyFloor,
   PropertyBlock,
+  User,
+  UserDetail,
+  ResidentFamilyMember,
 } from '../../models/index.js'
+import { AuthorizationService } from '../../services/authorization.service.js'
 import { AddOnService } from '../../models/eventVenue.model.js'
 import {
   generateRecurringEventDates,
@@ -257,12 +262,21 @@ const buildEventRowData = (
   endDate: occurrence.eventEndDate,
 })
 
+/** The event type asked for, honoured only for a super admin; otherwise the fallback. */
+async function resolveEventType(req: AuthenticatedRequest, fallback: EventType): Promise<EventType> {
+  const requested = req.body?.eventType
+  if (requested !== EventType.SPECIAL && requested !== EventType.REGULAR) return fallback
+  const userId = req.user?.id
+  if (!userId) return fallback
+  const ctx = await AuthorizationService.getUserAuthorizationContext(userId)
+  return ctx.isSuperAdmin ? (requested as EventType) : fallback
+}
+
 export const createEvent = async (req: AuthenticatedRequest, res: Response) => {
   const transaction = await sequelize.transaction()
 
   try {
     const {
-      eventType,
       title,
       description,
       startDate,
@@ -319,8 +333,14 @@ export const createEvent = async (req: AuthenticatedRequest, res: Response) => {
       return res.status(400).json(errorResponse(selectedResult.error))
     }
 
-    const resolvedEventType = (eventType as EventType) || EventType.SPECIAL
+    // Staff-created events are regular; a super admin may create a special event (as are events
+    // confirmed from a resident's request).
+    const resolvedEventType = await resolveEventType(req, EventType.REGULAR)
     const resolvedFrequency = (frequencyType as FrequencyType) || FrequencyType.ONCE
+    if (resolvedEventType === EventType.SPECIAL && resolvedFrequency !== FrequencyType.ONCE) {
+      await transaction.rollback()
+      return res.status(400).json(errorResponse('Special events happen once: set the frequency to "Once"'))
+    }
 
     let eventDates: Array<{ eventStartDate: Date; eventEndDate: Date }> = []
 
@@ -457,7 +477,21 @@ export const getAllEvents = async (req: AuthenticatedRequest, res: Response) => 
       ]
     }
 
-    if (eventType) whereClause.eventType = eventType
+    // Filter: regular, special (staff-created special events) or resident (from residents' requests).
+    if (eventType === 'resident' || eventType === 'special') {
+      const requestEventIds = (
+        await EventRequest.findAll({
+          where: { confirmedEventId: { [Op.ne]: null } },
+          attributes: ['confirmedEventId'],
+        })
+      ).map((r) => r.confirmedEventId as string)
+      if (eventType === 'resident') {
+        whereClause.id = requestEventIds.length ? requestEventIds : ['00000000-0000-0000-0000-000000000000']
+      } else {
+        whereClause.eventType = EventType.SPECIAL
+        if (requestEventIds.length) whereClause.id = { [Op.notIn]: requestEventIds }
+      }
+    } else if (eventType) whereClause.eventType = eventType
     if (venueId) whereClause.venueId = venueId
 
     if (dateFrom || dateTo) {
@@ -472,13 +506,22 @@ export const getAllEvents = async (req: AuthenticatedRequest, res: Response) => 
     }
 
     const isAll = limit === 'all' || limit === 'ALL'
+    const now = sequelize.escape(new Date())
     const queryOptions: Record<string, unknown> = {
       where: whereClause,
       include: [
         { model: EventVenue, as: 'venue', attributes: ['id', 'name', 'occupancy', 'price', 'coverPhoto'] },
         { model: Property, as: 'location', attributes: ['id', 'property_name'] },
       ],
-      order: [[String(sortBy), String(sortOrder)]],
+      // sortBy=schedule: upcoming and ongoing events first (soonest first), then past events (latest first).
+      order:
+        sortBy === 'schedule'
+          ? [
+              [Sequelize.literal(`CASE WHEN \`Event\`.\`endDate\` >= ${now} THEN 0 ELSE 1 END`), 'ASC'],
+              [Sequelize.literal(`CASE WHEN \`Event\`.\`endDate\` >= ${now} THEN \`Event\`.\`startDate\` END`), 'ASC'],
+              ['startDate', 'DESC'],
+            ]
+          : [[String(sortBy), String(sortOrder)]],
     }
 
     if (!isAll) {
@@ -494,10 +537,21 @@ export const getAllEvents = async (req: AuthenticatedRequest, res: Response) => 
       col: 'id',
     })
 
+    // Which of these events were confirmed from a resident's request (others are staff-created).
+    const fromRequests = new Set(
+      rows.length
+        ? (
+            await EventRequest.findAll({
+              where: { confirmedEventId: rows.map((r) => r.id) },
+              attributes: ['confirmedEventId'],
+            })
+          ).map((r) => r.confirmedEventId)
+        : [],
+    )
     const events = rows.map((event) => {
       const json = event.toJSON() as Event & { venue?: EventVenue | null; poster?: string | null }
       json.poster = resolveResidentRequestEventPoster(json, json.venue)
-      return json
+      return { ...json, fromResidentRequest: fromRequests.has(event.id) }
     })
 
     const responseData: Record<string, unknown> = { events }
@@ -553,8 +607,10 @@ export const getEventById = async (req: AuthenticatedRequest, res: Response) => 
 
     const json = event.toJSON() as Event & { venue?: EventVenue | null; poster?: string | null }
     json.poster = resolveResidentRequestEventPoster(json, json.venue)
+    // Events confirmed from a resident's request are always special (type cannot be changed).
+    const fromResidentRequest = (await EventRequest.count({ where: { confirmedEventId: event.id } })) > 0
 
-    return res.status(200).json(successResponse('Event fetched successfully', json))
+    return res.status(200).json(successResponse('Event fetched successfully', { ...json, fromResidentRequest }))
   } catch (error) {
     console.error('Get Event Error:', error)
     return res.status(500).json(errorResponse('Failed to fetch event'))
@@ -566,7 +622,6 @@ export const updateEvent = async (req: AuthenticatedRequest, res: Response) => {
     const locationId = req.params.locationId as string
     const id = req.params.id as string
     const {
-      eventType,
       title,
       description,
       startDate,
@@ -625,8 +680,16 @@ export const updateEvent = async (req: AuthenticatedRequest, res: Response) => {
       resolvedSelectedServices = null
     }
 
-    const resolvedEventType = (eventType as EventType) || event.eventType
+    // A super admin may switch regular / special, except on events confirmed from a resident's
+    // request, which stay special.
+    const fromResidentRequest = (await EventRequest.count({ where: { confirmedEventId: event.id } })) > 0
+    const resolvedEventType = fromResidentRequest
+      ? EventType.SPECIAL
+      : await resolveEventType(req, event.eventType as EventType)
     const freqType = (frequencyType as FrequencyType) || event.frequencyType
+    if (resolvedEventType === EventType.SPECIAL && freqType !== FrequencyType.ONCE) {
+      return res.status(400).json(errorResponse('Special events happen once: set the frequency to "Once"'))
+    }
 
     let eventDates: Array<{ eventStartDate: Date; eventEndDate: Date }> = []
 
@@ -939,9 +1002,25 @@ export const getEventsCalendar = async (req: AuthenticatedRequest, res: Response
       order: [['startDate', 'ASC']],
     })
 
+    // Which events were confirmed from a resident's request ("Resident event").
+    const fromRequests = new Set(
+      events.length
+        ? (
+            await EventRequest.findAll({
+              where: { confirmedEventId: events.map((e) => e.id) },
+              attributes: ['confirmedEventId'],
+            })
+          ).map((r) => r.confirmedEventId)
+        : [],
+    )
     const serializedEvents = events.map((event) => {
-      const json = event.toJSON() as Event & { venue?: EventVenue | null; poster?: string | null }
+      const json = event.toJSON() as Event & {
+        venue?: EventVenue | null
+        poster?: string | null
+        fromResidentRequest?: boolean
+      }
       json.poster = resolveResidentRequestEventPoster(json, json.venue)
+      json.fromResidentRequest = fromRequests.has(event.id)
       return json
     })
 
@@ -1077,7 +1156,28 @@ export const getEventRegistrations = async (req: AuthenticatedRequest, res: Resp
         {
           model: Resident,
           as: 'resident',
-          attributes: ['id', 'firstName', 'lastName', 'username', 'photoUrl', 'email', 'phone', 'dob', 'gender'],
+          attributes: [
+            'id',
+            'firstName',
+            'lastName',
+            'username',
+            'photoUrl',
+            'email',
+            'phone',
+            'dob',
+            'gender',
+            'unitId',
+          ],
+          include: [
+            { model: PropertyUnit, as: 'unit', attributes: ['id', 'unit_number'], required: false },
+            {
+              model: ResidentFamilyMember,
+              as: 'familyMembers',
+              attributes: ['id', 'firstName', 'lastName', 'relation'],
+              where: { isDeleted: false, isResiding: true },
+              required: false,
+            },
+          ],
           where: search
             ? {
                 [Op.or]: [
@@ -1092,7 +1192,42 @@ export const getEventRegistrations = async (req: AuthenticatedRequest, res: Resp
             : { isDeleted: false },
           required: true,
         },
+        {
+          model: ResidentFamilyMember,
+          as: 'familyMember',
+          attributes: ['id', 'firstName', 'lastName', 'relation', 'phone', 'email'],
+          required: false,
+        },
+        {
+          model: User,
+          as: 'attendanceMarker',
+          attributes: ['id'],
+          required: false,
+          include: [{ model: UserDetail, as: 'profile', attributes: ['firstName', 'lastName'] }],
+        },
+        {
+          model: EventAttendee,
+          as: 'attendees',
+          attributes: ['id', 'familyMemberId', 'markedAt'],
+          required: false,
+          include: [
+            {
+              model: ResidentFamilyMember,
+              as: 'familyMember',
+              attributes: ['id', 'firstName', 'lastName', 'relation'],
+              required: false,
+            },
+            {
+              model: User,
+              as: 'marker',
+              attributes: ['id'],
+              required: false,
+              include: [{ model: UserDetail, as: 'profile', attributes: ['firstName', 'lastName'] }],
+            },
+          ],
+        },
       ],
+      distinct: true,
       order: [['registeredAt', 'DESC']],
       limit: parseInt(String(limit)),
       offset,
@@ -1112,6 +1247,78 @@ export const getEventRegistrations = async (req: AuthenticatedRequest, res: Resp
         cancelledAt: regData.cancelledAt,
         cancellationReason: regData.cancellationReason,
         attendedAt: regData.attendedAt,
+        /** Set when the attendee was a family member of the resident (walk-in). */
+        familyMember: (() => {
+          const fm = (reg as EventRegistration & { familyMember?: ResidentFamilyMember | null }).familyMember
+          return fm
+            ? {
+                id: fm.id,
+                name: `${fm.firstName} ${fm.lastName || ''}`.trim(),
+                relation: fm.relation || null,
+                phone: fm.phone || null,
+                email: fm.email || null,
+              }
+            : null
+        })(),
+        /** People living in the resident's household: the resident plus residing family members. */
+        householdSize:
+          1 +
+          ((reg as EventRegistration & { resident?: Resident & { familyMembers?: ResidentFamilyMember[] } }).resident
+            ?.familyMembers?.length ?? 0),
+        /**
+         * Everyone the reservation covers (the resident and residing family members) with when each
+         * came and who marked them: people from the same flat may arrive at different times.
+         */
+        people: (() => {
+          type Marked = EventAttendee & {
+            familyMember?: ResidentFamilyMember | null
+            marker?: (User & { profile?: UserDetail | null }) | null
+          }
+          const row = reg as EventRegistration & {
+            resident?: Resident & { familyMembers?: ResidentFamilyMember[] }
+            attendees?: Marked[]
+          }
+          const name = (p?: { firstName?: string | null; lastName?: string | null } | null) =>
+            `${p?.firstName ?? ''} ${p?.lastName ?? ''}`.trim()
+          const person = (familyMemberId: string | null, personName: string, relation: string | null) => {
+            const a = (row.attendees ?? []).find((x) => (x.familyMemberId ?? null) === familyMemberId)
+            return {
+              familyMemberId,
+              name: personName,
+              relation,
+              attended: !!a,
+              markedAt: a?.markedAt ?? null,
+              markedBy: a ? name(a.marker?.profile) || 'Staff' : null,
+            }
+          }
+          return [
+            person(null, name(row.resident), null),
+            ...(row.resident?.familyMembers ?? []).map((f) => person(f.id, name(f), f.relation || null)),
+          ]
+        })(),
+        /** People who came under a reservation (marked one by one in the L3 app). */
+        attendees: (
+          (
+            reg as EventRegistration & {
+              attendees?: (EventAttendee & { familyMember?: ResidentFamilyMember | null })[]
+            }
+          ).attendees ?? []
+        ).map((a) => ({
+          familyMemberId: a.familyMemberId,
+          name: a.familyMember
+            ? `${a.familyMember.firstName} ${a.familyMember.lastName || ''}`.trim()
+            : `${regData.resident?.firstName ?? ''} ${regData.resident?.lastName || ''}`.trim(),
+          relation: a.familyMember ? a.familyMember.relation || null : null,
+          markedAt: a.markedAt,
+        })),
+        /** Staff member who marked Attended / No-show (from the L3 app or here). */
+        attendanceMarkedBy: (() => {
+          const marker = (reg as EventRegistration & { attendanceMarker?: User & { profile?: UserDetail | null } })
+            .attendanceMarker
+          return marker
+            ? `${marker.profile?.firstName ?? ''} ${marker.profile?.lastName ?? ''}`.trim() || 'Staff'
+            : null
+        })(),
         notes: regData.notes,
         resident: regData.resident
           ? {
@@ -1127,6 +1334,10 @@ export const getEventRegistrations = async (req: AuthenticatedRequest, res: Resp
               gender: regData.resident.gender,
             }
           : null,
+        /** The resident's flat, e.g. "B-21". */
+        unitNumber:
+          (reg as EventRegistration & { resident?: Resident & { unit?: PropertyUnit | null } }).resident?.unit
+            ?.unit_number ?? null,
         patient: regData.resident
           ? {
               id: regData.resident.id,
@@ -1240,7 +1451,8 @@ export const getEventCapacity = async (req: AuthenticatedRequest, res: Response)
 
     const totalCapacity = event.maxCapacity ?? venue.occupancy ?? 0
     // Capacity uses seatCount (multi-seat reservations), not registration row count
-    const activeSeats = confirmedSeats + pendingSeats
+    // Attended reservations still hold their seats.
+    const activeSeats = confirmedSeats + pendingSeats + attendedSeats
     const activeRegistrations = activeSeats
     const availableSpots = totalCapacity > 0 ? Math.max(0, totalCapacity - activeSeats) : null
     const utilizationPercentage = totalCapacity > 0 ? (activeSeats / totalCapacity) * 100 : 0
@@ -1326,6 +1538,8 @@ export const updateRegistrationStatus = async (req: AuthenticatedRequest, res: R
     const previousStatus = registration.status
     const updateData: Record<string, unknown> = { status, updatedBy }
 
+    // Who marked the attendance (Attended / No-show); cleared when the registration is cancelled.
+    updateData.attendanceMarkedBy = status === RegistrationStatus.CANCELLED ? null : updatedBy
     if (status === RegistrationStatus.ATTENDED) {
       updateData.attendedAt = new Date()
       updateData.cancelledAt = null

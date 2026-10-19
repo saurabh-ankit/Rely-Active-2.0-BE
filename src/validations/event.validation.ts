@@ -48,7 +48,8 @@ const parseRecurrenceDaysOfWeek = (raw: unknown): number[] => {
 // ── Event Validation Schemas ──────────────────────────────────────────────────
 const baseEventSchema = z
   .object({
-    eventType: eventTypeSchema.optional().default('special'),
+    // Staff-created events are always regular; 'special' is set when a resident's request is confirmed.
+    eventType: eventTypeSchema.optional().default('regular'),
     title: z.string().trim().min(1, 'title is required'),
     description: z.string().trim().optional().nullable(),
     venueId: z.string().optional(),
@@ -70,26 +71,11 @@ const baseEventSchema = z
   .passthrough()
 
 const validateEventRules = (data: z.infer<typeof baseEventSchema>, ctx: z.RefinementCtx) => {
-  const eventType = data.eventType || 'special'
+  // The event type says who the event is for (regular = staff-created, special = resident request);
+  // how often it repeats is set only by frequencyType.
   const frequencyType = data.frequencyType || 'once'
   const allowReservation = data.allowReservation === true || data.allowReservation === 'true'
   const recurrenceDaysOfWeek = parseRecurrenceDaysOfWeek(data.recurrenceDaysOfWeek)
-
-  if (eventType === 'special' && frequencyType !== 'once') {
-    ctx.addIssue({
-      code: 'custom',
-      message: 'Special events must have frequency type "once"',
-      path: ['frequencyType'],
-    })
-  }
-
-  if (eventType === 'regular' && frequencyType === 'once') {
-    ctx.addIssue({
-      code: 'custom',
-      message: 'Regular events cannot have frequency type "once"',
-      path: ['frequencyType'],
-    })
-  }
 
   if (frequencyType === 'weekly' && recurrenceDaysOfWeek.length === 0) {
     ctx.addIssue({

@@ -1,13 +1,16 @@
 import type { Request, Response } from 'express'
 import bcrypt from 'bcryptjs'
+import { NotificationAppSurface, NotificationRecipientType } from '../../enums/notification.enum.js'
 import { User, UserDetail, UserLocation, Role, Department } from '../../models/index.js'
 import { generateToken } from '../../utils/jwt.js'
 import { AuthorizationService } from '../../services/authorization.service.js'
+import { registerDeviceTokenSafe } from '../../services/notifications/notificationDeviceToken.service.js'
 import type { AuthenticatedRequest } from '../../middlewares/authenticate.js'
+import type { LoginInput } from '../../validations/login.validation.js'
 
 export async function login(req: Request, res: Response): Promise<void> {
   try {
-    const { username, password } = req.body || {}
+    const { username, password, fcmToken, deviceId, platform, appVersion } = (req.body || {}) as LoginInput
 
     if (!username || !password) {
       res.status(400).json({
@@ -81,6 +84,17 @@ export async function login(req: Request, res: Response): Promise<void> {
       companyId: user.companyId,
       defaultLocationId: user.defaultLocationId,
       roles: authCtx.roles,
+    })
+
+    await registerDeviceTokenSafe({
+      recipientType: NotificationRecipientType.USER,
+      recipientUserId: user.id,
+      appSurface: NotificationAppSurface.WEB_APP,
+      platform,
+      fcmToken,
+      deviceId,
+      appVersion,
+      createdBy: user.id,
     })
 
     const userLocs =

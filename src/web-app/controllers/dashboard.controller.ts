@@ -1,734 +1,593 @@
 import type { Request, Response } from 'express'
-import { Op, type Includeable } from 'sequelize'
-import {
-  Resident,
-  PropertyUnit,
-  PropertyFloor,
-  PropertyBlock,
-  Invoice,
-  PackageSubscription,
-  FnbResidentPackage,
-  InventoryItemLocation,
-  InventoryVendorLocation,
-  InventoryStock,
-  InventoryCategoryLocation,
-  InventoryPurchaseOrder,
-  InventoryStockTransaction,
-  Ticket,
-  CareTaskAssignment,
-  ResidentCareTaskCompletion,
-  DoctorAppointment,
-  ResidentVital,
-  VitalSetting,
-} from '../../models/index.js'
+import { QueryTypes } from 'sequelize'
+import sequelize from '../../config/db/index.js'
+import { PropertyUnit, Resident } from '../../models/index.js'
 import { CareLevel, ResidentStatus } from '../../enums/resident.enum.js'
-import { OccupancyStatus, UnitStatus } from '../../enums/propertyUnit.enum.js'
-import { InvoiceStatus, OPEN_INVOICE_STATUSES, VOID_INVOICE_STATUSES } from '../../enums/billing.enum.js'
-import { TicketPriority, TicketStatus } from '../../enums/ticket.enum.js'
-import { AppointmentStatus } from '../../enums/appointment.enum.js'
 
-// ---------------------------------------------------------------------------
-// Static mock fallback — used when real DB values are zero / empty so the
-// dashboard always shows meaningful demo data. Real values always win.
-// ---------------------------------------------------------------------------
-const MOCK = {
-  occupancy: {
-    booked: 20,
-    totalRooms: 320,
-    occupiedRooms: 268,
-    ownerOccupied: 184,
-    tenantOccupied: 84,
-    availableVacancies: 52,
-    vacant: 32,
-    totalBlocks: 4,
-    totalFloors: 12,
-    residingResidents: 268,
-    occupancyRate: 83.8,
-    unitTypeBreakdown: {
-      '1BHK': 110,
-      '2BHK': 95,
-      '3BHK': 75,
-      '4BHK': 40,
-    },
-  },
-  billing: {
-    totalBilled: 485000,
-    totalCollected: 312500,
-    pendingInvoicesCount: 8,
-    pendingAmount: 172500,
-    overdueAmount: 42000,
-    collectionEfficiency: 64,
-    totalInvoices: 23,
-    statusCounts: { paid: 12, partiallyPaid: 3, overdue: 4, sent: 3, draft: 1 },
-    subscriptions: { activeCarePackages: 5, activeFnbPackages: 7, monthlyRecurring: 68500 },
-  },
-  tickets: { open: 7, criticalUrgent: 2, resolvedToday: 3 },
-  clinical: { todayTotal: 9, todayPending: 4 },
-  careTasks: { completedToday: 14 },
-  inventory: {
-    purchaseOrders: { total: 6, pending: 2 },
-    transactions: { totalIssues: 38, totalReceipts: 21 },
-    totalQuantityUnits: 1240,
-    inStockItemsCount: 9,
-    stockReorderAlerts: 2,
-  },
-  criticalResidents: [
-    {
-      id: 'mock-cr-1',
-      name: 'Ramesh Iyer',
-      room: 'Room 204',
-      status: 'Patient in critical condition',
-      condition: 'CRITICAL',
-      careLevel: 'CRITICAL',
-      photoUrl: null,
-      gender: 'MALE',
-    },
-    {
-      id: 'mock-cr-2',
-      name: 'Suhasini Patil',
-      room: 'Room 317',
-      status: 'Patient in critical condition',
-      condition: 'CRITICAL',
-      careLevel: 'CRITICAL',
-      photoUrl: null,
-      gender: 'FEMALE',
-    },
-  ],
-  vitalsRisk: {
-    totalRecorded: 48,
-    criticalBreaches: 11,
-    riskyBreaches: 17,
-    normalReadings: 20,
-    residentsWithCritical: 3,
-    residentsWithRisky: 6,
-    last24hRecordings: 38,
-    alerts: [
-      {
-        vitalName: 'Blood Pressure',
-        residentName: 'Ramesh Iyer',
-        room: 'Room 204',
-        value: '180/110 mmHg',
-        severity: 'CRITICAL',
-      },
-      { vitalName: 'SpO2', residentName: 'Suhasini Patil', room: 'Room 317', value: '88%', severity: 'CRITICAL' },
-      {
-        vitalName: 'Blood Sugar',
-        residentName: 'Mohan Das',
-        room: 'Room 108',
-        value: '310 mg/dL',
-        severity: 'CRITICAL',
-      },
-      { vitalName: 'Heart Rate', residentName: 'Kamala Bai', room: 'Room 215', value: '112 bpm', severity: 'RISKY' },
-      { vitalName: 'Temperature', residentName: 'Vijay Kumar', room: 'Room 301', value: '39.4 °C', severity: 'RISKY' },
-    ],
-  },
-  ticketsOverview: {
-    total: 12,
-    resolved: 7,
-    pending: 3,
-    inProgress: 2,
-    percentage: 58,
-  },
-  feedbackAnalysis: {
-    total: 15,
-    good: 11,
-    average: 3,
-    poor: 1,
-    rating: 4.7,
-  },
-  visitorTypes: {
-    total: 28,
-    delivery: 15,
-    cabs: 8,
-    visitors: 5,
-  },
-  employeeAttendance: {
-    total: 35,
-    present: 31,
-    absent: 4,
-    attendanceRate: 88.5,
-  },
-  performanceMetrics: {
-    ticketResolutionRate: 58,
-    employeeAttendanceRate: 88.5,
-    propertyOccupancyRate: 83.8,
-  },
-  recentActivities: [
-    {
-      id: '1',
-      action: 'New ticket created',
-      description: 'Plumbing issue reported in Block A',
-      time: '2 minutes ago',
-      priority: 'HIGH',
-    },
-    {
-      id: '2',
-      action: 'Employee check-in',
-      description: 'Rajesh Kumar checked in at Main Gate',
-      time: '5 minutes ago',
-    },
-    {
-      id: '3',
-      action: 'Visitor registered',
-      description: 'Delivery person registered (Amazon)',
-      time: '10 minutes ago',
-    },
-    {
-      id: '4',
-      action: 'New feedback received',
-      description: '5-star rating for maintenance service',
-      time: '15 minutes ago',
-    },
-    { id: '5', action: 'Property status updated', description: 'Unit 2B marked as occupied', time: '1 hour ago' },
-  ],
-  medicalOverview: {
-    doctors: 4,
-    nurses: 12,
-    appointments: { today: 9, completed: 5, upcoming: 4 },
-  },
-  eventsOverview: {
-    total: 8,
-    upcoming: 3,
-    completed: 5,
-    foodItems: 24,
-    foodOrdersToday: 12,
-    attendance: 45,
-  },
-}
+/**
+ * Dashboard statistics for one property (or every property when no location / 'ALL' is given).
+ * Every number comes from the database; nothing is filled in. Series are in local (IST) time.
+ */
 
-/** Return `real` if > 0, otherwise `fallback` */
-function orMock(real: number, fallback: number): number {
-  return real > 0 ? real : fallback
-}
+/** Local time offset: DATETIME columns are stored in UTC. */
+const OFFSET_MIN = Number(process.env.BILLING_TZ_OFFSET_MINUTES ?? 330)
+const TREND_DAYS = 14
+const TREND_MONTHS = 6
 
-/** Return `real` if >= threshold, otherwise `fallback` */
-function orMockThreshold(real: number, threshold: number, fallback: number): number {
-  return real >= threshold ? real : fallback
+type Row = Record<string, unknown>
+
+const num = (v: unknown) => {
+  const n = Number(v)
+  return Number.isFinite(n) ? n : 0
 }
+const round1 = (v: number) => Math.round(v * 10) / 10
+const pct = (part: number, whole: number) => (whole > 0 ? round1((part / whole) * 100) : 0)
+
+/** Local calendar day / month keys. */
+const localNow = () => new Date(Date.now() + OFFSET_MIN * 60_000)
+const dayKey = (d: Date) => d.toISOString().slice(0, 10)
+const lastDays = (n: number) => {
+  const today = localNow()
+  return Array.from({ length: n }, (_, i) => dayKey(new Date(today.getTime() - (n - 1 - i) * 86_400_000)))
+}
+const lastMonths = (n: number) => {
+  const now = localNow()
+  return Array.from({ length: n }, (_, i) => {
+    const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - (n - 1 - i), 1))
+    return d.toISOString().slice(0, 7)
+  })
+}
+/** SQL for a DATETIME column as a local day / month. */
+const localDaySql = (col: string) => `DATE(${col} + INTERVAL ${OFFSET_MIN} MINUTE)`
+const localMonthSql = (col: string) => `DATE_FORMAT(${col} + INTERVAL ${OFFSET_MIN} MINUTE, '%Y-%m')`
 
 export async function getDashboardStats(req: Request, res: Response): Promise<void> {
   try {
-    const locId = (req.params.locationId || req.query.locationId) as string | undefined
+    const rawLoc = (req.params.locationId || req.query.locationId) as string | undefined
+    const loc = rawLoc && rawLoc !== 'ALL' ? rawLoc : null
     const page = Math.max(1, parseInt(req.query.page as string, 10) || 1)
     const limit = Math.max(1, parseInt(req.query.limit as string, 10) || 6)
-    const offset = (page - 1) * limit
 
-    const residentWhere: Record<string, unknown> = { isDeleted: false }
-    if (locId && locId !== 'ALL') {
-      residentWhere.locId = locId
-    }
+    /** `col = :loc`, or no filter for all properties. */
+    const at = (col: string) => (loc ? `${col} = :loc` : '1=1')
+    const q = <T extends Row = Row>(sql: string, extra: Record<string, unknown> = {}) =>
+      sequelize.query<T>(sql, { replacements: { loc, ...extra }, type: QueryTypes.SELECT })
 
-    // Today's window in server time
-    const startOfToday = new Date()
-    startOfToday.setHours(0, 0, 0, 0)
-    const endOfToday = new Date()
-    endOfToday.setHours(23, 59, 59, 999)
-    const todayDateString = startOfToday.toISOString().slice(0, 10)
+    const days = lastDays(TREND_DAYS)
+    const months = lastMonths(TREND_MONTHS)
+    const today = days[days.length - 1]!
+    const thisMonth = months[months.length - 1]!
+    const fromDay = days[0]!
+    const fromMonth = `${months[0]!}-01`
 
-    // 1. Resident Status Overview Metrics
-    const [
-      activeResidents,
-      todayAdmissions,
-      todayDischarges,
-      totalResidents,
-      totalOutResidents,
-      registeredPreAssessed,
-      totalDischarged,
-      notAdmitted,
-      hospitalizationPending,
-      stableResidentsCount,
-      moderateResidentsCount,
-      criticalResidentsAcuityCount,
-    ] = await Promise.all([
-      Resident.count({ where: { ...residentWhere, status: ResidentStatus.ACTIVE, isResiding: true } }),
-      Resident.count({ where: { ...residentWhere, moveInDate: { [Op.gte]: startOfToday, [Op.lte]: endOfToday } } }),
-      Resident.count({ where: { ...residentWhere, moveOutDate: { [Op.gte]: startOfToday, [Op.lte]: endOfToday } } }),
-      Resident.count({ where: residentWhere }),
-      Resident.count({ where: { ...residentWhere, isResiding: false, status: ResidentStatus.ACTIVE } }),
-      Resident.count({ where: { ...residentWhere, status: ResidentStatus.PENDING } }),
-      Resident.count({ where: { ...residentWhere, status: ResidentStatus.MOVED_OUT } }),
-      Resident.count({ where: { ...residentWhere, status: ResidentStatus.PENDING, moveInDate: null } }),
-      Resident.count({ where: { ...residentWhere, isResiding: false, status: ResidentStatus.INACTIVE } }),
-      Resident.count({
-        where: {
-          ...residentWhere,
-          status: ResidentStatus.ACTIVE,
-          isResiding: true,
-          [Op.or]: [{ careLevel: CareLevel.STABLE }, { careLevel: null }],
-        },
-      }),
-      Resident.count({
-        where: { ...residentWhere, status: ResidentStatus.ACTIVE, isResiding: true, careLevel: CareLevel.MODERATE },
-      }),
-      Resident.count({
-        where: { ...residentWhere, status: ResidentStatus.ACTIVE, isResiding: true, careLevel: CareLevel.CRITICAL },
-      }),
-    ])
+    // ── Residents ──────────────────────────────────────────────────────────────
+    const [residentCounts] = await q(
+      `
+      SELECT
+        SUM(status = '${ResidentStatus.ACTIVE}' AND isResiding = 1) AS residing,
+        COUNT(*) AS total,
+        SUM(status = '${ResidentStatus.PENDING}') AS pending,
+        SUM(status = '${ResidentStatus.MOVED_OUT}') AS movedOut,
+        SUM(status = '${ResidentStatus.ACTIVE}' AND isResiding = 0) AS away,
+        SUM(status = '${ResidentStatus.ACTIVE}' AND isResiding = 1 AND (careLevel = '${CareLevel.STABLE}' OR careLevel IS NULL)) AS stable,
+        SUM(status = '${ResidentStatus.ACTIVE}' AND isResiding = 1 AND careLevel = '${CareLevel.MODERATE}') AS moderate,
+        SUM(status = '${ResidentStatus.ACTIVE}' AND isResiding = 1 AND careLevel = '${CareLevel.CRITICAL}') AS critical,
+        SUM(DATE(moveInDate) = :today) AS movedInToday,
+        SUM(DATE(moveOutDate) = :today) AS movedOutToday
+      FROM residents WHERE isDeleted = 0 AND ${at('locId')}`,
+      { today },
+    )
+    const [familyCounts] = await q(`
+      SELECT COUNT(*) AS residing FROM resident_family_members f
+      JOIN residents r ON r.id = f.residentId AND r.isDeleted = 0 AND r.isResiding = 1 AND ${at('r.locId')}
+      WHERE f.isDeleted = 0 AND f.isResiding = 1`)
 
-    // 2. Critical Residents List & Count
     const criticalWhere: Record<string, unknown> = {
-      ...residentWhere,
+      isDeleted: false,
       status: ResidentStatus.ACTIVE,
       careLevel: CareLevel.CRITICAL,
     }
-
+    if (loc) criticalWhere.locId = loc
     const { count: criticalCount, rows: criticalRows } = await Resident.findAndCountAll({
       where: criticalWhere,
-      include: [{ model: PropertyUnit, as: 'unit', required: false }],
+      include: [{ model: PropertyUnit, as: 'unit', required: false, attributes: ['unit_number'] }],
       order: [['updatedAt', 'DESC']],
       limit,
-      offset,
+      offset: (page - 1) * limit,
     })
 
-    const criticalResidentsFromDB = criticalRows.map((r) => ({
-      id: r.id,
-      name: `${r.firstName} ${r.lastName || ''}`.trim(),
-      room: r.unit?.unit_number ? `Room ${r.unit.unit_number}` : 'Room unassigned',
-      status: 'Patient in critical condition',
-      condition: 'CRITICAL',
-      careLevel: r.careLevel || 'CRITICAL',
-      photoUrl: r.photoUrl || null,
-      gender: r.gender || null,
-    }))
-
-    // Fall back to mock critical residents when DB has none
-    const finalCriticalItems = criticalResidentsFromDB.length > 0 ? criticalResidentsFromDB : MOCK.criticalResidents
-    const finalCriticalCount = criticalCount > 0 ? criticalCount : MOCK.criticalResidents.length
-
-    // 3. Facility Occupancy Details
-    let unitInclude: Includeable[] = []
-    const blockWhere: Record<string, unknown> = { isDeleted: false }
-    if (locId && locId !== 'ALL') {
-      blockWhere.propertyId = locId
-      unitInclude = [
-        {
-          model: PropertyFloor,
-          as: 'floor',
-          required: true,
-          include: [{ model: PropertyBlock, as: 'block', required: true, where: { propertyId: locId } }],
-        },
-      ]
+    // ── Tickets ────────────────────────────────────────────────────────────────
+    const ticketStatus = await q<{ status: string; n: number }>(
+      `SELECT status, COUNT(*) AS n FROM tickets WHERE ${at('locId')} GROUP BY status`,
+    )
+    const ticketPriority = await q<{ priority: string; n: number }>(`
+      SELECT priority, COUNT(*) AS n FROM tickets
+      WHERE ${at('locId')} AND status IN ('OPEN','IN_PROGRESS','ON_HOLD') GROUP BY priority`)
+    const ticketsCreated = await q<{ d: string; n: number }>(
+      `
+      SELECT ${localDaySql('createdAt')} AS d, COUNT(*) AS n FROM tickets
+      WHERE ${at('locId')} AND ${localDaySql('createdAt')} >= :fromDay GROUP BY d`,
+      { fromDay },
+    )
+    const ticketsResolved = await q<{ d: string; n: number }>(
+      `
+      SELECT ${localDaySql('COALESCE(resolvedAt, closedAt)')} AS d, COUNT(*) AS n FROM tickets
+      WHERE ${at('locId')} AND status IN ('RESOLVED','CLOSED') AND COALESCE(resolvedAt, closedAt) IS NOT NULL
+        AND ${localDaySql('COALESCE(resolvedAt, closedAt)')} >= :fromDay GROUP BY d`,
+      { fromDay },
+    )
+    const ticketByStatus = (s: string) => num(ticketStatus.find((r) => r.status === s)?.n)
+    const tickets = {
+      open: ticketByStatus('OPEN'),
+      inProgress: ticketByStatus('IN_PROGRESS'),
+      onHold: ticketByStatus('ON_HOLD'),
+      resolved: ticketByStatus('RESOLVED'),
+      closed: ticketByStatus('CLOSED'),
+      cancelled: ticketByStatus('CANCELLED'),
     }
+    const ticketTotal = Object.values(tickets).reduce((a, b) => a + b, 0)
+    const ticketDone = tickets.resolved + tickets.closed
+    const ticketCounted = ticketTotal - tickets.cancelled
+    const dayMap = (rows: { d: string; n: number }[]) => new Map(rows.map((r) => [String(r.d).slice(0, 10), num(r.n)]))
+    const createdByDay = dayMap(ticketsCreated)
+    const resolvedByDay = dayMap(ticketsResolved)
 
-    const [allUnits, totalBlocks, totalFloors] = await Promise.all([
-      PropertyUnit.findAll({
-        where: { isDeleted: false },
-        include: unitInclude,
-        attributes: ['id', 'occupancyStatus', 'status', 'unit_type'],
-      }),
-      PropertyBlock.count({ where: blockWhere }),
-      locId && locId !== 'ALL'
-        ? PropertyFloor.count({
-            where: { isDeleted: false },
-            include: [{ model: PropertyBlock, as: 'block', required: true, where: { propertyId: locId } }],
-          })
-        : PropertyFloor.count({ where: { isDeleted: false } }),
-    ])
+    const feedback = await q<{ rating: string; n: number }>(`
+      SELECT f.rating, COUNT(*) AS n FROM ticket_feedbacks f
+      JOIN tickets t ON t.id = f.ticketId AND ${at('t.locId')} GROUP BY f.rating`)
+    const fb = (r: string) => num(feedback.find((x) => x.rating === r)?.n)
+    const fbGood = fb('GOOD')
+    const fbAverage = fb('AVERAGE')
+    const fbPoor = fb('POOR')
+    const fbTotal = fbGood + fbAverage + fbPoor
 
-    const totalRoomsRaw = allUnits.length
-    let ownerOccupiedRaw = 0
-    let tenantOccupiedRaw = 0
-    let vacantRoomsRaw = 0
-    let bookedRoomsRaw = 0
-    const unitTypeBreakdownRaw: Record<string, number> = {}
+    // ── Visitors (gate) ───────────────────────────────────────────────────────
+    const visitorTypes = await q<{ t: string; n: number }>(
+      `
+      SELECT visitorType AS t, SUM(COALESCE(numberOfPeople, 1)) AS n FROM gate_entries
+      WHERE ${at('locId')} AND ${localDaySql('createdAt')} >= :from30 GROUP BY visitorType`,
+      { from30: dayKey(new Date(localNow().getTime() - 29 * 86_400_000)) },
+    )
+    const visitorDays = await q<{ d: string; n: number }>(
+      `
+      SELECT ${localDaySql('createdAt')} AS d, SUM(COALESCE(numberOfPeople, 1)) AS n FROM gate_entries
+      WHERE ${at('locId')} AND ${localDaySql('createdAt')} >= :fromDay GROUP BY d`,
+      { fromDay },
+    )
+    const [visitorNow] = await q(`
+      SELECT SUM(status = 'Inside') AS inside, SUM(status = 'PendingApproval') AS awaiting
+      FROM gate_entries WHERE ${at('locId')}`)
+    const visitorsByDay = dayMap(visitorDays)
 
-    for (const u of allUnits) {
-      if (u.occupancyStatus === OccupancyStatus.OWNER_OCCUPIED) ownerOccupiedRaw++
-      else if (u.occupancyStatus === OccupancyStatus.TENANT_OCCUPIED) tenantOccupiedRaw++
-      else vacantRoomsRaw++
-
-      if (u.status === UnitStatus.BOOKED || u.status === UnitStatus.ON_HOLD) bookedRoomsRaw++
-
-      const typeKey = (u.unit_type || 'Other').toUpperCase()
-      unitTypeBreakdownRaw[typeKey] = (unitTypeBreakdownRaw[typeKey] || 0) + 1
-    }
-
-    // When real DB property units count is less than 250, use high-capacity mock (>250)
-    const hasSufficientOccupancyData = totalRoomsRaw >= 250
-
-    const totalRooms = hasSufficientOccupancyData ? totalRoomsRaw : MOCK.occupancy.totalRooms
-    const ownerOccupied = hasSufficientOccupancyData ? ownerOccupiedRaw : MOCK.occupancy.ownerOccupied
-    const tenantOccupied = hasSufficientOccupancyData ? tenantOccupiedRaw : MOCK.occupancy.tenantOccupied
-    const occupiedRooms = hasSufficientOccupancyData
-      ? ownerOccupiedRaw + tenantOccupiedRaw
-      : MOCK.occupancy.occupiedRooms
-    const finalBooked = hasSufficientOccupancyData ? bookedRoomsRaw : MOCK.occupancy.booked
-    const finalVacant = hasSufficientOccupancyData
-      ? vacantRoomsRaw > finalBooked
-        ? vacantRoomsRaw - finalBooked
-        : vacantRoomsRaw
-      : MOCK.occupancy.vacant
-    const availableVacancies = hasSufficientOccupancyData ? vacantRoomsRaw : MOCK.occupancy.availableVacancies
-    const occupancyRate =
-      totalRooms > 0 ? Number(((occupiedRooms / totalRooms) * 100).toFixed(1)) : MOCK.occupancy.occupancyRate
-    const finalBlocks = hasSufficientOccupancyData ? totalBlocks : MOCK.occupancy.totalBlocks
-    const finalFloors = hasSufficientOccupancyData ? totalFloors : MOCK.occupancy.totalFloors
-    const unitTypeBreakdown =
-      hasSufficientOccupancyData && Object.keys(unitTypeBreakdownRaw).length > 0
-        ? unitTypeBreakdownRaw
-        : MOCK.occupancy.unitTypeBreakdown
-    const residingResidents = activeResidents >= 250 ? activeResidents : MOCK.occupancy.residingResidents
-
-    // 4. Monthly Revenue & Billing Summary
-    const invoiceWhere: Record<string, unknown> = { isDeleted: false }
-    if (locId && locId !== 'ALL') invoiceWhere.propertyId = locId
-
-    const packageSubWhere: Record<string, unknown> = { isDeleted: false, status: 'ACTIVE' }
-    if (locId && locId !== 'ALL') packageSubWhere.propertyId = locId
-
-    const [invoicesAgg, activeCareSubscriptions, activeFnbPackagesCount] = await Promise.all([
-      Invoice.findAll({
-        where: { ...invoiceWhere, status: { [Op.notIn]: [...VOID_INVOICE_STATUSES] } },
-        attributes: ['paidAmount', 'discountedAmount', 'status', 'isCarriedForward'],
-      }),
-      PackageSubscription.findAll({ where: packageSubWhere, attributes: ['id', 'totalCost'] }),
-      FnbResidentPackage.count({ where: { status: 'active' } }),
-    ])
-
-    let totalCollected = 0
-    let totalPendingAmount = 0
-    let grandTotalSum = 0
-    let overdueAmount = 0
-    let paidCount = 0
-    let partiallyPaidCount = 0
-    let overdueCount = 0
-    let sentCount = 0
-    let draftCount = 0
-
-    for (const inv of invoicesAgg) {
-      const paid = Number(inv.paidAmount || 0)
-      // A carried-forward balance is owed on the newer invoice, so only its payments count here.
-      const total = inv.isCarriedForward ? paid : Number(inv.discountedAmount || 0)
-      const due = Math.max(0, total - paid)
-      totalCollected += paid
-      totalPendingAmount += due
-      grandTotalSum += total
-
-      if (inv.status === InvoiceStatus.PAID) paidCount++
-      else if (inv.status === InvoiceStatus.PARTIALLY_PAID) partiallyPaidCount++
-      else if (inv.status === InvoiceStatus.OVERDUE) {
-        overdueCount++
-        overdueAmount += due
-      } else if (inv.status === InvoiceStatus.PENDING) sentCount++
-      else if (inv.status === InvoiceStatus.DRAFT) draftCount++
-    }
-
-    const pendingInvoicesCount = invoicesAgg.filter((inv) =>
-      (OPEN_INVOICE_STATUSES as readonly InvoiceStatus[]).includes(inv.status),
-    ).length
-
-    const collectionEfficiency =
-      grandTotalSum > 0 ? Math.min(100, Math.round((totalCollected / grandTotalSum) * 100)) : 0
-
-    let totalSubscriptionRecurring = 0
-    for (const sub of activeCareSubscriptions) totalSubscriptionRecurring += Number(sub.totalCost || 0)
-
-    // Billing — fall back to mock when no real invoice data exists
-    const hasBillingData = invoicesAgg.length > 0
-    const billingOut = hasBillingData
-      ? {
-          totalBilled: grandTotalSum,
-          totalCollected,
-          pendingInvoicesCount,
-          pendingAmount: totalPendingAmount,
-          overdueAmount,
-          collectionEfficiency,
-          totalInvoices: invoicesAgg.length,
-          statusCounts: {
-            paid: paidCount,
-            partiallyPaid: partiallyPaidCount,
-            overdue: overdueCount,
-            sent: sentCount,
-            draft: draftCount,
-          },
-          subscriptions: {
-            activeCarePackages: activeCareSubscriptions.length,
-            activeFnbPackages: activeFnbPackagesCount,
-            monthlyRecurring: totalSubscriptionRecurring,
-          },
-        }
-      : {
-          ...MOCK.billing,
-          subscriptions: {
-            activeCarePackages: orMock(activeCareSubscriptions.length, MOCK.billing.subscriptions.activeCarePackages),
-            activeFnbPackages: orMock(activeFnbPackagesCount, MOCK.billing.subscriptions.activeFnbPackages),
-            monthlyRecurring: orMock(totalSubscriptionRecurring, MOCK.billing.subscriptions.monthlyRecurring),
-          },
-        }
-
-    // 5. Inventory Stock Status
-    const inventoryWhere: Record<string, unknown> = {}
-    if (locId && locId !== 'ALL') inventoryWhere.locationId = locId
-
-    const [
-      totalStockedItems,
-      approvedSuppliers,
-      stockReorderAlerts,
-      allStocks,
-      totalCategories,
-      totalPurchaseOrders,
-      pendingPurchaseOrders,
-      totalIssues,
-      totalReceipts,
-    ] = await Promise.all([
-      InventoryItemLocation.count({ where: inventoryWhere }),
-      InventoryVendorLocation.count({ where: inventoryWhere }),
-      InventoryStock.count({ where: { ...inventoryWhere, quantity: { [Op.lte]: 0 } } }),
-      InventoryStock.findAll({ where: inventoryWhere, attributes: ['quantity'] }),
-      InventoryCategoryLocation.count({ where: inventoryWhere }),
-      InventoryPurchaseOrder.count({ where: inventoryWhere }),
-      InventoryPurchaseOrder.count({
-        where: { ...inventoryWhere, status: { [Op.in]: ['approval_pending', 'draft', 'pending'] } },
-      }),
-      InventoryStockTransaction.count({ where: { ...inventoryWhere, transactionType: 'issue' } }),
-      InventoryStockTransaction.count({ where: { ...inventoryWhere, transactionType: 'purchase' } }),
-    ])
-
-    let totalQuantityUnits = 0
-    let inStockItemsCount = 0
-    for (const s of allStocks) {
-      const q = Number(s.quantity || 0)
-      totalQuantityUnits += q
-      if (q > 0) inStockItemsCount++
-    }
-
-    // 6. Care Tasks Activity Overview
-    const careTaskWhere: Record<string, unknown> = { isDeleted: false }
-    if (locId && locId !== 'ALL') careTaskWhere.propertyId = locId
-
-    const [activeCareAssignments, completedCareTasksToday] = await Promise.all([
-      CareTaskAssignment.count({ where: { ...careTaskWhere, status: 'ACTIVE', isActive: true } }),
-      ResidentCareTaskCompletion.count({
-        where: { ...careTaskWhere, completedAt: { [Op.gte]: startOfToday, [Op.lte]: endOfToday } },
-      }),
-    ])
-
-    // 7. Maintenance & Service Tickets Overview
-    const ticketWhere: Record<string, unknown> = {}
-    if (locId && locId !== 'ALL') ticketWhere.locId = locId
-
-    const [openTicketsCount, criticalTicketsCount, resolvedTicketsToday] = await Promise.all([
-      Ticket.count({ where: { ...ticketWhere, status: { [Op.in]: [TicketStatus.OPEN, TicketStatus.IN_PROGRESS] } } }),
-      Ticket.count({
-        where: {
-          ...ticketWhere,
-          status: { [Op.in]: [TicketStatus.OPEN, TicketStatus.IN_PROGRESS] },
-          priority: { [Op.in]: [TicketPriority.CRITICAL, TicketPriority.URGENT] },
-        },
-      }),
-      Ticket.count({
-        where: {
-          ...ticketWhere,
-          status: TicketStatus.RESOLVED,
-          updatedAt: { [Op.gte]: startOfToday, [Op.lte]: endOfToday },
-        },
-      }),
-    ])
-
-    // 8. Clinical Doctor Appointments Overview
-    const appointmentWhere: Record<string, unknown> = { isDeleted: false }
-    if (locId && locId !== 'ALL') appointmentWhere.locationId = locId
-
-    const [todayAppointmentsCount, todayPendingAppointmentsCount] = await Promise.all([
-      DoctorAppointment.count({ where: { ...appointmentWhere, appointmentDate: todayDateString } }),
-      DoctorAppointment.count({
-        where: {
-          ...appointmentWhere,
-          appointmentDate: todayDateString,
-          status: { [Op.in]: [AppointmentStatus.PENDING, AppointmentStatus.CONFIRMED] },
-        },
-      }),
-    ])
-
-    // 9. Resident Vitals Risk
-    const vitalsWhere: Record<string, unknown> = { isDeleted: false }
-    if (locId && locId !== 'ALL') vitalsWhere.locationId = locId
-
-    const last24hStart = new Date(Date.now() - 24 * 60 * 60 * 1000)
-
-    const [totalVitalsRecorded, last24hVitals, vitalSettings] = await Promise.all([
-      ResidentVital.count({ where: vitalsWhere }),
-      ResidentVital.findAll({
-        where: { ...vitalsWhere, recordedAt: { [Op.gte]: last24hStart } },
-        include: [
-          {
-            model: VitalSetting,
-            as: 'vitalSetting',
-            required: false,
-            attributes: ['name', 'normalMin', 'normalMax', 'highAbove', 'highRiskyAbove', 'lowBelow', 'lowRiskyBelow'],
-          },
-          { model: Resident, as: 'resident', required: false, attributes: ['id', 'firstName', 'lastName'] },
-        ],
-        attributes: ['id', 'name', 'value', 'unit', 'residentId', 'vitalSettingId', 'recordedAt'],
-        order: [['recordedAt', 'DESC']],
-        limit: 200,
-      }),
-      VitalSetting.count({ where: { isActive: true, isDeleted: false } }),
-    ])
-
-    // Classify each vital reading
-    let criticalVitalBreaches = 0
-    let riskyVitalBreaches = 0
-    let normalVitalReadings = 0
-    const criticalResidentIds = new Set<string>()
-    const riskyResidentIds = new Set<string>()
-    const vitalAlerts: Array<{
-      vitalName: string
-      residentName: string
-      room: string
-      value: string
-      severity: string
-    }> = []
-
-    for (const v of last24hVitals) {
-      const numVal = parseFloat(String(v.value ?? ''))
-      const vs = v.vitalSetting as VitalSetting | null | undefined
-      if (!vs || !Number.isFinite(numVal)) {
-        normalVitalReadings++
-        continue
-      }
-
-      const isCritical =
-        (vs.highRiskyAbove != null && numVal > Number(vs.highRiskyAbove)) ||
-        (vs.lowRiskyBelow != null && numVal < Number(vs.lowRiskyBelow))
-      const isRisky =
-        !isCritical &&
-        ((vs.highAbove != null && numVal > Number(vs.highAbove)) ||
-          (vs.lowBelow != null && numVal < Number(vs.lowBelow)))
-
-      const res = v.resident as Resident | null | undefined
-      const resName = res ? `${res.firstName} ${res.lastName || ''}`.trim() : 'Unknown'
-
-      if (isCritical) {
-        criticalVitalBreaches++
-        if (v.residentId) criticalResidentIds.add(v.residentId)
-        if (vitalAlerts.length < 5) {
-          vitalAlerts.push({
-            vitalName: v.name,
-            residentName: resName,
-            room: '',
-            value: `${numVal} ${v.unit || ''}`.trim(),
-            severity: 'CRITICAL',
-          })
-        }
-      } else if (isRisky) {
-        riskyVitalBreaches++
-        if (v.residentId) riskyResidentIds.add(v.residentId)
-        if (vitalAlerts.length < 5) {
-          vitalAlerts.push({
-            vitalName: v.name,
-            residentName: resName,
-            room: '',
-            value: `${numVal} ${v.unit || ''}`.trim(),
-            severity: 'RISKY',
-          })
-        }
-      } else {
-        normalVitalReadings++
+    // ── Staff ─────────────────────────────────────────────────────────────────
+    const staffRows = await q<{ code: string; name: string; role: string | null; n: number }>(`
+      SELECT d.code, d.name, r.name AS role, COUNT(DISTINCT ul.userId) AS n
+      FROM user_locations ul
+      JOIN departments d ON d.id = ul.departmentId
+      LEFT JOIN roles r ON r.id = ul.roleId
+      WHERE ul.isDeleted = 0 AND ul.isActive = 1 AND ${at('ul.locId')}
+      GROUP BY d.code, d.name, r.name`)
+    const byDept = new Map<string, { code: string; name: string; count: number }>()
+    let doctors = 0
+    let medicalOthers = 0
+    for (const r of staffRows) {
+      const d = byDept.get(r.code) ?? { code: r.code, name: r.name, count: 0 }
+      d.count += num(r.n)
+      byDept.set(r.code, d)
+      if (r.code === 'MED') {
+        if (/doctor|physician/i.test(r.role ?? '')) doctors += num(r.n)
+        else medicalOthers += num(r.n)
       }
     }
+    const staffByDepartment = [...byDept.values()].sort((a, b) => b.count - a.count)
 
-    const hasVitalsData = totalVitalsRecorded > 0
-    const vitalsRiskOut = hasVitalsData
-      ? {
-          totalRecorded: totalVitalsRecorded,
-          criticalBreaches: criticalVitalBreaches,
-          riskyBreaches: riskyVitalBreaches,
-          normalReadings: normalVitalReadings,
-          residentsWithCritical: criticalResidentIds.size,
-          residentsWithRisky: riskyResidentIds.size,
-          last24hRecordings: last24hVitals.length,
-          activeVitalTypes: vitalSettings,
-          alerts: vitalAlerts,
-        }
-      : {
-          ...MOCK.vitalsRisk,
-          activeVitalTypes: orMock(vitalSettings, 7),
-        }
+    // ── Medical ───────────────────────────────────────────────────────────────
+    const [apptToday] = await q(
+      `
+      SELECT COUNT(*) AS total,
+        SUM(status = 'ATTENDED') AS completed,
+        SUM(status IN ('PENDING','CONFIRMED')) AS upcoming,
+        SUM(status IN ('CANCELLED','NO_SHOW')) AS missed
+      FROM doctor_appointments WHERE isDeleted = 0 AND ${at('locationId')} AND appointmentDate = :today`,
+      { today },
+    )
+    const apptDays = await q<{ d: string; n: number }>(
+      `
+      SELECT DATE(appointmentDate) AS d, COUNT(*) AS n FROM doctor_appointments
+      WHERE isDeleted = 0 AND ${at('locationId')} AND appointmentDate >= :fromDay AND appointmentDate <= :today
+        AND status <> 'CANCELLED' GROUP BY d`,
+      { fromDay, today },
+    )
+    const apptsByDay = dayMap(apptDays)
+    const [care] = await q(
+      `
+      SELECT
+        (SELECT COUNT(*) FROM care_task_assignments
+          WHERE isDeleted = 0 AND isActive = 1 AND status = 'ACTIVE' AND ${at('propertyId')}) AS active,
+        (SELECT COUNT(*) FROM resident_care_task_completions
+          WHERE isDeleted = 0 AND ${at('propertyId')} AND ${localDaySql('completedAt')} = :today) AS completedToday`,
+      { today },
+    )
+
+    // ── Events & dining ───────────────────────────────────────────────────────
+    const [events] = await q(
+      `
+      SELECT COUNT(*) AS total,
+        SUM(endDate >= UTC_TIMESTAMP()) AS upcoming,
+        SUM(${localDaySql('startDate')} <= :today AND ${localDaySql('endDate')} >= :today) AS today,
+        SUM(${localMonthSql('startDate')} = :thisMonth) AS thisMonth
+      FROM events WHERE isDeleted = 0 AND ${at('locationId')}`,
+      { today, thisMonth },
+    )
+    const [eventRegs] = await q(
+      `
+      SELECT SUM(COALESCE(seatCount, 1)) AS seats, SUM(status = 'ATTENDED') AS attended
+      FROM event_registrations
+      WHERE isDeleted = 0 AND status <> 'CANCELLED' AND ${at('locationId')}
+        AND ${localMonthSql('createdAt')} = :thisMonth`,
+      { thisMonth },
+    )
+    const [dining] = await q(
+      `
+      SELECT COUNT(*) AS orders,
+        SUM(serviceType = 'dine_in') AS dineIn,
+        SUM(serviceType <> 'dine_in') AS roomService,
+        SUM(orderStatus IN ('completed','delivered')) AS completed
+      FROM fnb_resident_orders WHERE ${at('locId')} AND DATE(date) = :today`,
+      { today },
+    )
+    const [dineInAttendance] = await q(
+      `SELECT SUM(CASE WHEN is_guest = 1 THEN COALESCE(guest_count, 1) ELSE 1 END) AS n FROM fnb_food_attendances
+      WHERE ${at('loc_id')} AND DATE(date) = :today AND status = 'attended'`,
+      { today },
+    )
+
+    // ── Occupancy ─────────────────────────────────────────────────────────────
+    const unitJoin = `
+      FROM property_units u
+      JOIN property_floors f ON f.id = u.floorId AND f.isDeleted = 0
+      JOIN property_blocks b ON b.id = f.blockId AND b.isDeleted = 0 AND ${at('b.propertyId')}
+      WHERE u.isDeleted = 0`
+    const [units] = await q(`
+      SELECT COUNT(*) AS total,
+        SUM(u.occupancyStatus = 'OWNER_OCCUPIED') AS owner,
+        SUM(u.occupancyStatus = 'TENANT_OCCUPIED') AS tenant,
+        SUM(COALESCE(u.occupancyStatus, 'VACANT') = 'VACANT') AS vacant,
+        SUM(COALESCE(u.occupancyStatus, 'VACANT') = 'VACANT' AND u.status IN ('booked','on_hold')) AS booked,
+        COUNT(DISTINCT b.id) AS blocks, COUNT(DISTINCT f.id) AS floors
+      ${unitJoin}`)
+    const unitTypes = await q<{ t: string | null; total: number; occupied: number }>(`
+      SELECT UPPER(COALESCE(NULLIF(u.unit_type, ''), 'Other')) AS t, COUNT(*) AS total,
+        SUM(u.occupancyStatus IN ('OWNER_OCCUPIED','TENANT_OCCUPIED')) AS occupied
+      ${unitJoin} GROUP BY t ORDER BY total DESC`)
+    const blocks = await q<{ name: string; total: number; occupied: number }>(`
+      SELECT b.block_name AS name, COUNT(*) AS total,
+        SUM(u.occupancyStatus IN ('OWNER_OCCUPIED','TENANT_OCCUPIED')) AS occupied
+      ${unitJoin} GROUP BY b.id, b.block_name, b.sort_order ORDER BY b.sort_order, b.block_name`)
+    const moveIns = await q<{ m: string; n: number }>(
+      `
+      SELECT DATE_FORMAT(moveInDate, '%Y-%m') AS m, COUNT(*) AS n FROM residents
+      WHERE isDeleted = 0 AND ${at('locId')} AND moveInDate >= :fromMonth GROUP BY m`,
+      { fromMonth },
+    )
+    const moveOuts = await q<{ m: string; n: number }>(
+      `
+      SELECT DATE_FORMAT(moveOutDate, '%Y-%m') AS m, COUNT(*) AS n FROM residents
+      WHERE isDeleted = 0 AND ${at('locId')} AND moveOutDate >= :fromMonth GROUP BY m`,
+      { fromMonth },
+    )
+    const monthMap = (rows: { m: string; n: number }[]) => new Map(rows.map((r) => [String(r.m), num(r.n)]))
+    const moveInByMonth = monthMap(moveIns)
+    const moveOutByMonth = monthMap(moveOuts)
+    const totalUnits = num(units?.total)
+    const occupiedUnits = num(units?.owner) + num(units?.tenant)
+
+    // ── Billing ───────────────────────────────────────────────────────────────
+    const [inv] = await q(`
+      SELECT COUNT(*) AS n,
+        SUM(discountedAmount - COALESCE(carriedForwardAmount, 0)) AS billed,
+        SUM(CASE WHEN status IN ('PENDING','PARTIALLY_PAID','OVERDUE') THEN remainingBalance ELSE 0 END) AS outstanding,
+        SUM(CASE WHEN status = 'OVERDUE' THEN remainingBalance ELSE 0 END) AS overdue,
+        SUM(status = 'DRAFT') AS draft, SUM(status = 'PENDING') AS pending,
+        SUM(status = 'PARTIALLY_PAID') AS partiallyPaid, SUM(status = 'PAID') AS paid,
+        SUM(status = 'OVERDUE') AS overdueCount, SUM(status IN ('OBSOLETE','CARRY_FORWARDED')) AS carried
+      FROM invoices WHERE isDeleted = 0 AND status <> 'CANCELLED' AND ${at('propertyId')}`)
+    const receiptJoin = `FROM receipts rc JOIN invoices i ON i.id = rc.invoiceId AND ${at('i.propertyId')}
+      WHERE rc.isDeleted = 0`
+    const [collectedRow] = await q(`SELECT SUM(rc.paidAmount) AS amount, COUNT(*) AS n ${receiptJoin}`)
+    const billedMonthly = await q<{ m: string; n: number }>(
+      `
+      SELECT DATE_FORMAT(startDate, '%Y-%m') AS m, SUM(discountedAmount - COALESCE(carriedForwardAmount, 0)) AS n
+      FROM invoices WHERE isDeleted = 0 AND status <> 'CANCELLED' AND ${at('propertyId')} AND startDate >= :fromMonth
+      GROUP BY m`,
+      { fromMonth },
+    )
+    const collectedMonthly = await q<{ m: string; n: number }>(
+      `
+      SELECT ${localMonthSql('rc.createdAt')} AS m, SUM(rc.paidAmount) AS n ${receiptJoin}
+        AND rc.createdAt >= :fromMonth GROUP BY m`,
+      { fromMonth },
+    )
+    const paymentMethods = await q<{ method: string; amount: number; n: number }>(`
+      SELECT COALESCE(rc.paymentMethod, 'OTHER') AS method, SUM(rc.paidAmount) AS amount, COUNT(*) AS n
+      ${receiptJoin} GROUP BY method ORDER BY amount DESC`)
+    const topOutstanding = await q<{ unit: string | null; name: string | null; due: number; invoices: number }>(`
+      SELECT COALESCE(pu.unit_number, i.billToUnitNumber) AS unit, MAX(i.billToName) AS name,
+        SUM(i.remainingBalance) AS due, COUNT(*) AS invoices
+      FROM invoices i LEFT JOIN property_units pu ON pu.id = i.unitId
+      WHERE i.isDeleted = 0 AND i.status IN ('PENDING','PARTIALLY_PAID','OVERDUE') AND ${at('i.propertyId')}
+      GROUP BY i.unitId, unit HAVING due > 0 ORDER BY due DESC LIMIT 5`)
+    const [subs] = await q(`
+      SELECT
+        (SELECT COUNT(*) FROM package_subscriptions
+          WHERE isDeleted = 0 AND status = 'ACTIVE' AND ${at('propertyId')}) AS care,
+        (SELECT COALESCE(SUM(totalCost), 0) FROM package_subscriptions
+          WHERE isDeleted = 0 AND status = 'ACTIVE' AND ${at('propertyId')}) AS careValue,
+        (SELECT COUNT(*) FROM fnb_resident_packages p JOIN residents r ON r.id = p.residentId AND ${at('r.locId')}
+          WHERE p.status = 'active') AS food,
+        (SELECT COALESCE(SUM(p.totalPrice), 0) FROM fnb_resident_packages p
+          JOIN residents r ON r.id = p.residentId AND ${at('r.locId')} WHERE p.status = 'active') AS foodValue`)
+    const billed = num(inv?.billed)
+    const collected = num(collectedRow?.amount)
+    const billedByMonth = monthMap(billedMonthly)
+    const collectedByMonth = monthMap(collectedMonthly)
+
+    // ── Inventory ─────────────────────────────────────────────────────────────
+    const [invTotals] = await q(`
+      SELECT
+        (SELECT COUNT(*) FROM inventory_item_locations WHERE ${at('locationId')}) AS items,
+        (SELECT COUNT(*) FROM inventory_category_locations WHERE ${at('locationId')}) AS categories,
+        (SELECT COUNT(*) FROM inventory_vendor_locations WHERE ${at('locationId')}) AS suppliers,
+        (SELECT COALESCE(SUM(quantity), 0) FROM inventory_stock WHERE ${at('locationId')}) AS units,
+        (SELECT COUNT(*) FROM inventory_purchase_orders WHERE ${at('locationId')}) AS poTotal`)
+    // Stock per tracked item, against its reorder threshold (property threshold, else the item's).
+    const stock = await q<{ name: string; category: string | null; quantity: number; threshold: number }>(`
+      SELECT it.name, c.name AS category, COALESCE(SUM(s.quantity), 0) AS quantity,
+        COALESCE(MAX(il.threshold), MAX(it.threshold), 0) AS threshold
+      FROM inventory_item_locations il
+      JOIN inventory_items it ON it.id = il.itemId
+      LEFT JOIN inventory_categories c ON c.id = it.categoryId
+      LEFT JOIN inventory_stock s ON s.itemId = il.itemId AND s.locationId = il.locationId
+      WHERE ${at('il.locationId')}
+      GROUP BY il.itemId, it.name, c.name`)
+    const poStatus = await q<{ status: string; n: number }>(
+      `SELECT status, COUNT(*) AS n FROM inventory_purchase_orders WHERE ${at('locationId')} GROUP BY status`,
+    )
+    const invMonthly = await q<{ m: string; t: string; n: number }>(
+      `
+      SELECT DATE_FORMAT(t.date, '%Y-%m') AS m, t.transactionType AS t, SUM(l.quantity) AS n
+      FROM inventory_stock_transactions t
+      JOIN inventory_stock_transaction_lines l ON l.transactionId = t.id
+      WHERE ${at('t.locationId')} AND t.date >= :fromMonth GROUP BY m, t.transactionType`,
+      { fromMonth },
+    )
+    const inStock = stock.filter((s) => num(s.quantity) > 0)
+    const outOfStock = stock.filter((s) => num(s.quantity) <= 0)
+    const lowStock = stock
+      .filter((s) => num(s.threshold) > 0 && num(s.quantity) <= num(s.threshold))
+      .sort((a, b) => num(a.quantity) - num(b.quantity))
+    const categoryStock = new Map<string, { category: string; items: number; quantity: number }>()
+    for (const s of stock) {
+      const key = s.category || 'Uncategorised'
+      const c = categoryStock.get(key) ?? { category: key, items: 0, quantity: 0 }
+      c.items++
+      c.quantity += num(s.quantity)
+      categoryStock.set(key, c)
+    }
+    const invByMonth = (type: string[]) =>
+      months.map((m) =>
+        invMonthly.filter((r) => String(r.m) === m && type.includes(String(r.t))).reduce((a, r) => a + num(r.n), 0),
+      )
+    const issued = invByMonth(['issue'])
+    const received = invByMonth(['purchase', 'receipt', 'grn'])
+
+    // ── Recent activity ───────────────────────────────────────────────────────
+    const activity = await q<{ type: string; title: string; detail: string | null; at: string }>(`
+      (SELECT 'ticket' AS type, CONCAT('Ticket ', ticketNumber, ' raised') AS title, title AS detail, createdAt AS at
+        FROM tickets WHERE ${at('locId')} ORDER BY createdAt DESC LIMIT 5)
+      UNION ALL
+      (SELECT 'ticket_resolved', CONCAT('Ticket ', ticketNumber, ' resolved'), title, COALESCE(resolvedAt, closedAt)
+        FROM tickets WHERE ${at('locId')} AND COALESCE(resolvedAt, closedAt) IS NOT NULL
+        ORDER BY COALESCE(resolvedAt, closedAt) DESC LIMIT 5)
+      UNION ALL
+      (SELECT 'visitor', CONCAT(visitorType, ' at the gate'), visitorName, createdAt
+        FROM gate_entries WHERE ${at('locId')} ORDER BY createdAt DESC LIMIT 5)
+      UNION ALL
+      (SELECT 'payment', CONCAT('Payment ', rc.receiptNumber, ' received'),
+        CONCAT('₹', FORMAT(rc.paidAmount, 0), ' · Flat ', COALESCE(i.billToUnitNumber, '-')), rc.createdAt
+        FROM receipts rc JOIN invoices i ON i.id = rc.invoiceId AND ${at('i.propertyId')}
+        WHERE rc.isDeleted = 0 ORDER BY rc.createdAt DESC LIMIT 5)
+      UNION ALL
+      (SELECT 'invoice', CONCAT('Invoice ', invoiceNumber, ' generated'),
+        CONCAT('₹', FORMAT(discountedAmount, 0), ' · Flat ', COALESCE(billToUnitNumber, '-')), createdAt
+        FROM invoices WHERE isDeleted = 0 AND ${at('propertyId')} ORDER BY createdAt DESC LIMIT 5)
+      UNION ALL
+      (SELECT 'resident', 'Resident onboarded', CONCAT(firstName, ' ', COALESCE(lastName, '')), createdAt
+        FROM residents WHERE isDeleted = 0 AND ${at('locId')} ORDER BY createdAt DESC LIMIT 5)
+      ORDER BY at DESC LIMIT 8`)
 
     res.status(200).json({
       success: true,
       data: {
-        residentStatus: {
-          activeResidents: residingResidents,
-          todayAdmissions: orMock(todayAdmissions, 4),
-          todayDischarges: orMock(todayDischarges, 2),
-          totalResidents: orMockThreshold(totalResidents, 250, 312),
-          totalOutResidents: orMock(totalOutResidents, 12),
-          registeredPreAssessed: orMock(registeredPreAssessed, 18),
-          totalDischarged: orMock(totalDischarged, 24),
-          notAdmitted: orMock(notAdmitted, 6),
-          hospitalizationPending: orMock(hospitalizationPending, 8),
-          careLevelBreakdown: {
-            stable: orMockThreshold(stableResidentsCount, 150, 210),
-            moderate: orMock(moderateResidentsCount, 45),
-            critical: orMock(criticalResidentsAcuityCount, 13),
+        generatedAt: new Date().toISOString(),
+        overview: {
+          residents: {
+            residing: num(residentCounts?.residing),
+            total: num(residentCounts?.total),
+            residingFamilyMembers: num(familyCounts?.residing),
+            pending: num(residentCounts?.pending),
+            movedOut: num(residentCounts?.movedOut),
+            away: num(residentCounts?.away),
+            movedInToday: num(residentCounts?.movedInToday),
+            movedOutToday: num(residentCounts?.movedOutToday),
+            acuity: {
+              stable: num(residentCounts?.stable),
+              moderate: num(residentCounts?.moderate),
+              critical: num(residentCounts?.critical),
+            },
           },
-        },
-        criticalResidents: {
-          total: finalCriticalCount,
-          page,
-          limit,
-          totalPages: Math.ceil(finalCriticalCount / limit) || 1,
-          items: finalCriticalItems,
+          criticalResidents: {
+            total: criticalCount,
+            page,
+            limit,
+            totalPages: Math.max(1, Math.ceil(criticalCount / limit)),
+            items: criticalRows.map((r) => ({
+              id: r.id,
+              name: `${r.firstName} ${r.lastName || ''}`.trim(),
+              unit: r.unit?.unit_number ?? null,
+              photoUrl: r.photoUrl || null,
+              gender: r.gender || null,
+            })),
+          },
+          tickets: {
+            total: ticketTotal,
+            byStatus: tickets,
+            openNow: tickets.open + tickets.inProgress + tickets.onHold,
+            urgentOpen:
+              num(ticketPriority.find((r) => r.priority === 'URGENT')?.n) +
+              num(ticketPriority.find((r) => r.priority === 'CRITICAL')?.n),
+            byPriority: ['CRITICAL', 'URGENT', 'HIGH', 'MEDIUM', 'LOW'].map((p) => ({
+              priority: p,
+              count: num(ticketPriority.find((r) => r.priority === p)?.n),
+            })),
+            resolutionRate: pct(ticketDone, ticketCounted),
+            trend: days.map((d) => ({
+              day: d,
+              created: createdByDay.get(d) ?? 0,
+              resolved: resolvedByDay.get(d) ?? 0,
+            })),
+          },
+          feedback: {
+            total: fbTotal,
+            good: fbGood,
+            average: fbAverage,
+            poor: fbPoor,
+            /** Out of 5: good = 5, average = 3, poor = 1. */
+            score: fbTotal ? round1((fbGood * 5 + fbAverage * 3 + fbPoor) / fbTotal) : 0,
+          },
+          visitors: {
+            last30Days: ['Guest', 'Delivery', 'Cab', 'Office', 'Other'].map((t) => ({
+              type: t,
+              count: num(visitorTypes.find((r) => r.t === t)?.n),
+            })),
+            today: visitorsByDay.get(today) ?? 0,
+            insideNow: num(visitorNow?.inside),
+            awaitingApproval: num(visitorNow?.awaiting),
+            trend: days.map((d) => ({ day: d, count: visitorsByDay.get(d) ?? 0 })),
+          },
+          staff: {
+            total: staffByDepartment.reduce((a, d) => a + d.count, 0),
+            byDepartment: staffByDepartment,
+          },
+          medical: {
+            doctors,
+            nurses: medicalOthers,
+            appointmentsToday: {
+              total: num(apptToday?.total),
+              completed: num(apptToday?.completed),
+              upcoming: num(apptToday?.upcoming),
+              missed: num(apptToday?.missed),
+            },
+            trend: days.map((d) => ({ day: d, count: apptsByDay.get(d) ?? 0 })),
+            careTasks: { active: num(care?.active), completedToday: num(care?.completedToday) },
+          },
+          events: {
+            total: num(events?.total),
+            upcoming: num(events?.upcoming),
+            today: num(events?.today),
+            thisMonth: num(events?.thisMonth),
+            seatsBookedThisMonth: num(eventRegs?.seats),
+            attendedThisMonth: num(eventRegs?.attended),
+          },
+          dining: {
+            ordersToday: num(dining?.orders),
+            dineIn: num(dining?.dineIn),
+            roomService: num(dining?.roomService),
+            completed: num(dining?.completed),
+            dineInAttendanceToday: num(dineInAttendance?.n),
+          },
+          recentActivity: activity.map((a) => ({ type: a.type, title: a.title, detail: a.detail, at: a.at })),
         },
         occupancy: {
-          totalRooms,
-          occupiedRooms,
-          availableVacancies,
-          occupancyRate,
-          totalBlocks: finalBlocks,
-          totalFloors: finalFloors,
-          residingResidents,
-          statusBreakdown: { ownerOccupied, tenantOccupied, vacant: finalVacant, booked: finalBooked },
-          unitTypeBreakdown,
+          totalUnits,
+          occupied: occupiedUnits,
+          ownerOccupied: num(units?.owner),
+          tenantOccupied: num(units?.tenant),
+          vacant: num(units?.vacant),
+          booked: num(units?.booked),
+          occupancyRate: pct(occupiedUnits, totalUnits),
+          blocks: num(units?.blocks),
+          floors: num(units?.floors),
+          residingResidents: num(residentCounts?.residing),
+          residingFamilyMembers: num(familyCounts?.residing),
+          unitTypes: unitTypes.map((u) => ({ type: String(u.t), total: num(u.total), occupied: num(u.occupied) })),
+          byBlock: blocks.map((b) => ({ name: b.name, total: num(b.total), occupied: num(b.occupied) })),
+          movement: months.map((m) => ({
+            month: m,
+            moveIns: moveInByMonth.get(m) ?? 0,
+            moveOuts: moveOutByMonth.get(m) ?? 0,
+          })),
         },
-        billing: billingOut,
+        billing: {
+          invoiceCount: num(inv?.n),
+          totalBilled: billed,
+          totalCollected: collected,
+          outstanding: num(inv?.outstanding),
+          overdue: num(inv?.overdue),
+          collectionRate: Math.min(100, pct(collected, billed)),
+          receipts: num(collectedRow?.n),
+          statusCounts: {
+            draft: num(inv?.draft),
+            pending: num(inv?.pending),
+            partiallyPaid: num(inv?.partiallyPaid),
+            paid: num(inv?.paid),
+            overdue: num(inv?.overdueCount),
+            carriedForward: num(inv?.carried),
+          },
+          monthly: months.map((m) => ({
+            month: m,
+            billed: billedByMonth.get(m) ?? 0,
+            collected: collectedByMonth.get(m) ?? 0,
+          })),
+          paymentMethods: paymentMethods.map((p) => ({ method: p.method, amount: num(p.amount), count: num(p.n) })),
+          topOutstanding: topOutstanding.map((t) => ({
+            unit: t.unit,
+            name: t.name,
+            due: num(t.due),
+            invoices: num(t.invoices),
+          })),
+          subscriptions: {
+            carePackages: num(subs?.care),
+            carePackagesValue: num(subs?.careValue),
+            foodPackages: num(subs?.food),
+            foodPackagesValue: num(subs?.foodValue),
+          },
+        },
         inventory: {
-          totalStockedItems: orMock(totalStockedItems, 24),
-          stockReorderAlerts: orMock(stockReorderAlerts, MOCK.inventory.stockReorderAlerts),
-          approvedSuppliers: orMock(approvedSuppliers, 8),
-          totalCategories: orMock(totalCategories, 5),
-          totalQuantityUnits: orMock(totalQuantityUnits, MOCK.inventory.totalQuantityUnits),
-          inStockItemsCount: orMock(inStockItemsCount, MOCK.inventory.inStockItemsCount),
+          itemsTracked: num(invTotals?.items),
+          categories: num(invTotals?.categories),
+          suppliers: num(invTotals?.suppliers),
+          totalUnits: num(invTotals?.units),
+          inStock: inStock.length,
+          outOfStock: outOfStock.length,
+          lowStock: lowStock.length,
           purchaseOrders: {
-            total: orMock(totalPurchaseOrders, MOCK.inventory.purchaseOrders.total),
-            pending: orMock(pendingPurchaseOrders, MOCK.inventory.purchaseOrders.pending),
+            total: num(invTotals?.poTotal),
+            byStatus: poStatus.map((p) => ({ status: p.status, count: num(p.n) })),
           },
-          transactions: {
-            totalIssues: orMock(totalIssues, MOCK.inventory.transactions.totalIssues),
-            totalReceipts: orMock(totalReceipts, MOCK.inventory.transactions.totalReceipts),
-          },
+          byCategory: [...categoryStock.values()].sort((a, b) => b.quantity - a.quantity),
+          lowStockItems: lowStock.slice(0, 8).map((s) => ({
+            name: s.name,
+            category: s.category,
+            quantity: num(s.quantity),
+            threshold: num(s.threshold),
+          })),
+          monthly: months.map((m, i) => ({ month: m, issued: issued[i] ?? 0, received: received[i] ?? 0 })),
         },
-        careTasks: {
-          activeAssignments: orMock(activeCareAssignments, 6),
-          completedToday: orMock(completedCareTasksToday, MOCK.careTasks.completedToday),
-        },
-        tickets: {
-          open: orMock(openTicketsCount, MOCK.tickets.open),
-          criticalUrgent: orMock(criticalTicketsCount, MOCK.tickets.criticalUrgent),
-          resolvedToday: orMock(resolvedTicketsToday, MOCK.tickets.resolvedToday),
-        },
-        clinical: {
-          todayTotal: orMock(todayAppointmentsCount, MOCK.clinical.todayTotal),
-          todayPending: orMock(todayPendingAppointmentsCount, MOCK.clinical.todayPending),
-        },
-        vitalsRisk: vitalsRiskOut,
-        ticketsOverview: MOCK.ticketsOverview,
-        feedbackAnalysis: MOCK.feedbackAnalysis,
-        visitorTypes: MOCK.visitorTypes,
-        employeeAttendance: MOCK.employeeAttendance,
-        performanceMetrics: {
-          ticketResolutionRate: MOCK.ticketsOverview.percentage,
-          employeeAttendanceRate: MOCK.employeeAttendance.attendanceRate,
-          propertyOccupancyRate: occupancyRate,
-        },
-        recentActivities: MOCK.recentActivities,
-        medicalOverview: MOCK.medicalOverview,
-        eventsOverview: MOCK.eventsOverview,
       },
     })
   } catch (err: unknown) {
+    console.error('Dashboard stats error:', err)
     const message = err instanceof Error ? err.message : 'Failed to fetch dashboard stats'
     res.status(500).json({ success: false, message })
   }

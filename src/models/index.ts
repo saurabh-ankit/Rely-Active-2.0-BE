@@ -12,6 +12,11 @@ import { BaseModel, baseModelColumns, type BaseAttributes, type BaseCreationAttr
 import { Company } from './company.model.js'
 import { CompanyCustomField } from './companyCustomField.model.js'
 import { Property } from './property.model.js'
+import { Amenity } from './amenity.model.js'
+import { PropertyAmenity } from './propertyAmenity.model.js'
+import { AmenitySlotConfig } from './amenitySlotConfig.model.js'
+import { AmenitySlotBooking } from './amenitySlotBooking.model.js'
+import { AmenitySlotBlock } from './amenitySlotBlock.model.js'
 import { PropertyBlock } from './propertyBlock.model.js'
 import { PropertyEntity } from './propertyEntity.model.js'
 import { PropertyFloor } from './propertyFloor.model.js'
@@ -61,6 +66,9 @@ import { FeedbackQuestion } from './feedbackQuestion.model.js'
 import { FeedbackFormRecipient } from './feedbackFormRecipient.model.js'
 import { FeedbackAnswer } from './feedbackAnswer.model.js'
 import { TicketTatHistory } from './ticketTatHistory.model.js'
+import { NotificationEvent } from './notificationEvent.model.js'
+import { NotificationInbox } from './notificationInbox.model.js'
+import { NotificationDeviceToken } from './notificationDeviceToken.model.js'
 import { Specialization } from './specialization.model.js'
 import { DoctorSpecialization } from './doctorSpecialization.model.js'
 import { GatePreapproved } from './gatePreapproved.model.js'
@@ -75,6 +83,7 @@ import { FnbFoodDelivery } from './fnbFoodDelivery.model.js'
 import { EventVenue } from './eventVenue.model.js'
 import { Event } from './event.model.js'
 import { EventRegistration } from './eventRegistration.model.js'
+import { EventAttendee } from './eventAttendee.model.js'
 import { EventRequest } from './eventRequest.model.js'
 import { EventGlobalService } from './eventGlobalService.model.js'
 import { EventGlobalServiceProperty } from './eventGlobalServiceProperty.model.js'
@@ -266,6 +275,25 @@ CompanyCustomField.belongsTo(Company, { foreignKey: 'companyId', as: 'company' }
 
 Company.hasMany(Property, { foreignKey: 'companyId', as: 'properties' })
 Property.belongsTo(Company, { foreignKey: 'companyId', as: 'company' })
+
+// ── Property amenities ───────────────────────────────────────────────────────
+Property.hasMany(PropertyAmenity, { foreignKey: 'propertyId', as: 'propertyAmenities' })
+PropertyAmenity.belongsTo(Property, { foreignKey: 'propertyId', as: 'property' })
+
+Amenity.hasMany(PropertyAmenity, { foreignKey: 'amenityId', as: 'propertyAmenities' })
+PropertyAmenity.belongsTo(Amenity, { foreignKey: 'amenityId', as: 'amenity' })
+
+PropertyAmenity.hasOne(AmenitySlotConfig, { foreignKey: 'propertyAmenityId', as: 'slotConfig' })
+AmenitySlotConfig.belongsTo(PropertyAmenity, { foreignKey: 'propertyAmenityId', as: 'propertyAmenity' })
+
+AmenitySlotConfig.hasMany(AmenitySlotBooking, { foreignKey: 'slotConfigId', as: 'bookings' })
+AmenitySlotBooking.belongsTo(AmenitySlotConfig, { foreignKey: 'slotConfigId', as: 'slotConfig' })
+
+AmenitySlotConfig.hasMany(AmenitySlotBlock, { foreignKey: 'slotConfigId', as: 'blocks' })
+AmenitySlotBlock.belongsTo(AmenitySlotConfig, { foreignKey: 'slotConfigId', as: 'slotConfig' })
+
+Resident.hasMany(AmenitySlotBooking, { foreignKey: 'residentId', as: 'amenitySlotBookings' })
+AmenitySlotBooking.belongsTo(Resident, { foreignKey: 'residentId', as: 'resident' })
 
 // ── Property → Entity → Block → Floor → Unit ────────────────────────────────
 Property.hasMany(PropertyEntity, { foreignKey: 'propertyId', as: 'entities' })
@@ -674,6 +702,36 @@ Ticket.belongsTo(User, { foreignKey: 'workStartedByUserId', as: 'workStartedByUs
 Ticket.belongsTo(User, { foreignKey: 'completedByUserId', as: 'completedByUser' })
 Ticket.belongsTo(User, { foreignKey: 'verifiedByUserId', as: 'verifiedByUser' })
 
+// ── Notifications (module-agnostic, in-app inbox) ──────────────────────────
+NotificationEvent.hasMany(NotificationInbox, { foreignKey: 'eventId', as: 'recipients' })
+NotificationInbox.belongsTo(NotificationEvent, { foreignKey: 'eventId', as: 'event' })
+
+NotificationEvent.belongsTo(User, { foreignKey: 'actorUserId', as: 'actorUser' })
+NotificationEvent.belongsTo(Resident, { foreignKey: 'actorResidentId', as: 'actorResident' })
+NotificationEvent.belongsTo(ResidentFamilyMember, { foreignKey: 'actorFamilyMemberId', as: 'actorFamilyMember' })
+NotificationEvent.belongsTo(Property, { foreignKey: 'locationId', as: 'location' })
+
+NotificationInbox.belongsTo(User, { foreignKey: 'recipientUserId', as: 'recipientUser' })
+NotificationInbox.belongsTo(Resident, { foreignKey: 'recipientResidentId', as: 'recipientResident' })
+NotificationInbox.belongsTo(ResidentFamilyMember, {
+  foreignKey: 'recipientFamilyMemberId',
+  as: 'recipientFamilyMember',
+})
+
+User.hasMany(NotificationDeviceToken, { foreignKey: 'recipientUserId', as: 'notificationDeviceTokens' })
+Resident.hasMany(NotificationDeviceToken, { foreignKey: 'recipientResidentId', as: 'notificationDeviceTokens' })
+ResidentFamilyMember.hasMany(NotificationDeviceToken, {
+  foreignKey: 'recipientFamilyMemberId',
+  as: 'notificationDeviceTokens',
+})
+
+NotificationDeviceToken.belongsTo(User, { foreignKey: 'recipientUserId', as: 'recipientUser' })
+NotificationDeviceToken.belongsTo(Resident, { foreignKey: 'recipientResidentId', as: 'recipientResident' })
+NotificationDeviceToken.belongsTo(ResidentFamilyMember, {
+  foreignKey: 'recipientFamilyMemberId',
+  as: 'recipientFamilyMember',
+})
+
 // ── Doctor specializations ─────────────────────────────────────────────────
 User.belongsToMany(Specialization, {
   through: DoctorSpecialization,
@@ -739,9 +797,15 @@ Event.belongsTo(Property, { foreignKey: 'locationId', as: 'location' })
 
 Event.hasMany(EventRegistration, { foreignKey: 'eventId', as: 'registrations' })
 EventRegistration.belongsTo(Event, { foreignKey: 'eventId', as: 'event' })
+EventRegistration.belongsTo(User, { foreignKey: 'attendanceMarkedBy', as: 'attendanceMarker' })
 
 Resident.hasMany(EventRegistration, { foreignKey: 'residentId', as: 'eventRegistrations' })
 EventRegistration.belongsTo(Resident, { foreignKey: 'residentId', as: 'resident' })
+EventRegistration.belongsTo(ResidentFamilyMember, { foreignKey: 'familyMemberId', as: 'familyMember' })
+EventRegistration.hasMany(EventAttendee, { foreignKey: 'registrationId', as: 'attendees' })
+EventAttendee.belongsTo(EventRegistration, { foreignKey: 'registrationId', as: 'registration' })
+EventAttendee.belongsTo(ResidentFamilyMember, { foreignKey: 'familyMemberId', as: 'familyMember' })
+EventAttendee.belongsTo(User, { foreignKey: 'markedBy', as: 'marker' })
 
 // ── F&B Food Attendance Associations ───────────────────────────────────────
 FnbFoodAttendance.belongsTo(Property, { foreignKey: 'locId', as: 'property' })
@@ -1031,6 +1095,11 @@ export {
   Company,
   CompanyCustomField,
   Property,
+  Amenity,
+  PropertyAmenity,
+  AmenitySlotConfig,
+  AmenitySlotBooking,
+  AmenitySlotBlock,
   PropertyBlock,
   PropertyEntity,
   PropertyFloor,
@@ -1075,6 +1144,9 @@ export {
   TicketActivityLog,
   TicketFeedback,
   TicketTatHistory,
+  NotificationEvent,
+  NotificationInbox,
+  NotificationDeviceToken,
   AiInteractionLog,
   type AiInteractionLogAttributes,
   type AiInteractionLogCreationAttributes,
@@ -1092,6 +1164,7 @@ export {
   EventVenue,
   Event,
   EventRegistration,
+  EventAttendee,
   EventRequest,
   EventGlobalService,
   EventGlobalServiceProperty,

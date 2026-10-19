@@ -33,11 +33,11 @@ export const baseModelColumns = {
     primaryKey: true,
   },
   createdBy: {
-    type: DataTypes.CHAR(36),
+    type: DataTypes.UUID,
     allowNull: true,
   },
   updatedBy: {
-    type: DataTypes.CHAR(36),
+    type: DataTypes.UUID,
     allowNull: true,
   },
 }

@@ -10,9 +10,11 @@ import {
   getUnitPicker,
   updateProperty,
 } from '../controllers/property.controller.js'
-import { validateBody } from '../../middlewares/validate/index.js'
+import { getPropertyAmenitiesForProperty, setPropertyAmenitiesForProperty } from '../controllers/amenity.controller.js'
+import { validateBody, validateParams } from '../../middlewares/validate/index.js'
 import { addBlockSchema, createPropertySchema, updatePropertySchema } from '../../validations/property.validation.js'
 import { authenticate } from '../../middlewares/authenticate.js'
+import { propertyIdByIdParamSchema, setPropertyAmenitiesSchema } from '../../validations/amenity.validation.js'
 
 const router = express.Router()
 
@@ -23,6 +25,13 @@ router.use(authenticate)
 router.post('/', validateBody(createPropertySchema), createProperty)
 router.get('/', getAllProperties)
 router.get('/:id/unit-picker', getUnitPicker)
+router.get('/:id/amenities', validateParams(propertyIdByIdParamSchema), getPropertyAmenitiesForProperty)
+router.put(
+  '/:id/amenities',
+  validateParams(propertyIdByIdParamSchema),
+  validateBody(setPropertyAmenitiesSchema),
+  setPropertyAmenitiesForProperty,
+)
 router.get('/:id', getPropertyById)
 router.put('/:id', validateBody(updatePropertySchema), updateProperty)
 router.delete('/:id', deleteProperty)

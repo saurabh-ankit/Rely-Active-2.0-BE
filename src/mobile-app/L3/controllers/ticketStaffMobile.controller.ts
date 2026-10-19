@@ -19,6 +19,9 @@ import type { AuthenticatedRequest } from '../../../middlewares/authenticate.js'
 import { HttpError } from '../../../middlewares/error/http-error.js'
 import { uploadFileToS3 } from '../../../middlewares/s3/index.js'
 import { AuthorizationService } from '../../../services/authorization.service.js'
+import { resolveNotificationActor } from '../../../services/notifications/notificationAudience.service.js'
+import { buildTatUpdatedNotificationContent } from '../../../services/notifications/ticketNotificationContent.service.js'
+import { publishTicketNotificationSafe } from '../../../services/notifications/ticketNotification.service.js'
 import {
   isCustomTatOption,
   staffTicketListQuerySchema,
@@ -564,6 +567,19 @@ export async function startWork(req: AuthenticatedRequest, res: Response): Promi
       return t
     })
 
+    await publishTicketNotificationSafe({
+      ticket,
+      eventCode: 'TICKET_WORK_STARTED',
+      title: 'Ticket work started',
+      message: `${ticket.title || 'Ticket'} (${ticket.ticketNumber}) work has started.`,
+      actor: resolveNotificationActor(req, ctx.staffName),
+      payload: {
+        status: ticket.status,
+        workStartedAt: ticket.workStartedAt,
+        workStartedByUserId: ctx.userId,
+      },
+    })
+
     res.status(200).json({
       success: true,
       message: 'Work started successfully',
@@ -652,6 +668,37 @@ export async function updateTicketTat(req: AuthenticatedRequest, res: Response):
       )
 
       return { ticket: t, history: h }
+    })
+
+    const tatNotification = buildTatUpdatedNotificationContent({
+      ticketTitle: ticket.title,
+      ticketNumber: ticket.ticketNumber,
+      updatedByName: ctx.staffName,
+      previousTat: {
+        option: history.previousTatOption,
+        deadline: history.previousTatDeadline,
+      },
+      updatedTat: {
+        option: history.updatedTatOption,
+        deadline: history.updatedTatDeadline,
+      },
+      note: history.note,
+    })
+
+    await publishTicketNotificationSafe({
+      ticket,
+      eventCode: 'TICKET_TAT_UPDATED',
+      title: tatNotification.title,
+      message: tatNotification.message,
+      actor: resolveNotificationActor(req, ctx.staffName),
+      payload: {
+        ...tatNotification.payload,
+        previousTatOption: history.previousTatOption,
+        previousTatDeadline: history.previousTatDeadline,
+        updatedTatOption: history.updatedTatOption,
+        updatedTatDeadline: history.updatedTatDeadline,
+        note: history.note,
+      },
     })
 
     res.status(200).json({
@@ -831,6 +878,19 @@ export async function addTicketWorkDetails(req: AuthenticatedRequest, res: Respo
       return t
     })
 
+    await publishTicketNotificationSafe({
+      ticket,
+      eventCode: 'TICKET_WORK_DETAILS_ADDED',
+      title: 'Ticket work details updated',
+      message: `${ctx.staffName} added work details on ${ticket.title || 'ticket'} (${ticket.ticketNumber}).`,
+      actor: resolveNotificationActor(req, ctx.staffName),
+      payload: {
+        invoiceAmount: toAmount(ticket.invoiceAmount),
+        photosAdded: uploaded.photos.length,
+        voiceNotesAdded: uploaded.voiceNotes.length,
+      },
+    })
+
     res.status(200).json({
       success: true,
       message: 'Work details added successfully',
@@ -898,6 +958,20 @@ export async function completeTicket(req: AuthenticatedRequest, res: Response): 
         { transaction },
       )
       return t
+    })
+
+    await publishTicketNotificationSafe({
+      ticket,
+      eventCode: 'TICKET_RESOLVED',
+      title: 'Ticket resolved',
+      message: `${ticket.title || 'Ticket'} (${ticket.ticketNumber}) was marked completed by ${ctx.staffName}.`,
+      actor: resolveNotificationActor(req, ctx.staffName),
+      payload: {
+        status: ticket.status,
+        completedAt: ticket.completedAt,
+        completedByUserId: ctx.userId,
+        notes: notes || null,
+      },
     })
 
     res.status(200).json({

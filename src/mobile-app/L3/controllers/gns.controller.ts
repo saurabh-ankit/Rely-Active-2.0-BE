@@ -3,6 +3,7 @@ import { GateEntry, GatePreapproved, PropertyUnit, PropertyFloor, PropertyBlock 
 import { Op } from 'sequelize'
 import { uploadBase64ToS3 } from '../../../middlewares/s3/index.js'
 import { approverFromRequest, residentApprover } from '../../../services/gateApproval.service.js'
+import { publishGateApprovalRequestSafe } from '../../../services/notifications/gateNotification.service.js'
 
 export const createWalkin = async (req: Request, res: Response) => {
   try {
@@ -83,6 +84,9 @@ export const createWalkin = async (req: Request, res: Response) => {
         })
       }),
     )
+
+    // Ask the flat's household to approve (popup when the app is open, notification when closed)
+    void publishGateApprovalRequestSafe(entries, (req as Request & { user?: { id: string } }).user?.id || null)
 
     return res.status(201).json({ success: true, data: entries })
   } catch (error) {

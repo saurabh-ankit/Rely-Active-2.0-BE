@@ -31,6 +31,9 @@ import medicalRouter from './medical.routes.js'
 import dashboardRouter from './dashboard.routes.js'
 import advertisementRouter from './advertisement.routes.js'
 import feedbackFormRouter from './feedback.routes.js'
+import notificationRouter from './notification.routes.js'
+import amenityRouter from './amenity.routes.js'
+import amenitySlotRouter from './amenitySlot.routes.js'
 
 export const apiRouter = Router()
 
@@ -47,6 +50,8 @@ apiRouter.use('/departments', departmentRouter)
 apiRouter.use('/specializations', specializationRouter)
 apiRouter.use('/vital-settings', vitalSettingRouter)
 apiRouter.use('/lab-test-settings', labTestSettingRouter)
+apiRouter.use('/amenities', amenityRouter)
+apiRouter.use('/location/:locationId/amenities', amenitySlotRouter)
 apiRouter.use('/company', companyRouter)
 apiRouter.use('/property', propertyRouter)
 apiRouter.use('/properties', propertyRouter)
@@ -91,5 +96,8 @@ apiRouter.use('/location/:locationId/dashboard', dashboardRouter)
 // Feedback & Advertisements
 apiRouter.use('/location/:locationId/advertisements', advertisementRouter)
 apiRouter.use('/location/:locationId/feedback-forms', feedbackFormRouter)
+
+// In-app notifications (tickets first, module-agnostic design)
+apiRouter.use('/notifications', notificationRouter)
 
 export default apiRouter

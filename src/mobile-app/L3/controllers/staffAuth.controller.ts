@@ -1,12 +1,14 @@
 import type { Request, Response } from 'express'
 import bcrypt from 'bcryptjs'
 import { Op } from 'sequelize'
+import { NotificationAppSurface, NotificationRecipientType } from '../../../enums/notification.enum.js'
 import { Department, JobCategory, Property, Role, User, UserDetail, UserLocation } from '../../../models/index.js'
 import { generateToken, verifyToken } from '../../../utils/jwt.js'
 import { AuthorizationService } from '../../../services/authorization.service.js'
+import { registerDeviceTokenSafe } from '../../../services/notifications/notificationDeviceToken.service.js'
 import type { AuthenticatedRequest } from '../../../middlewares/authenticate.js'
 
-const ALLOWED_L3_DEPT_CODES = ['FNB', 'SEC', 'CON', 'RNM', 'HK', 'HOUSEKEEPING', 'EVT', 'EVENTS', 'MED']
+const ALLOWED_L3_DEPT_CODES = ['FNB', 'SEC', 'CON', 'RNM', 'HK', 'HOUSEKEEPING', 'EVT', 'EVENTS', 'MED', 'ATT']
 
 export function isAllowedL3Department(deptName?: string | null, deptCode?: string | null): boolean {
   if (deptCode && ALLOWED_L3_DEPT_CODES.includes(deptCode.toUpperCase())) {
@@ -39,7 +41,7 @@ export function isAllowedL3Department(deptName?: string | null, deptCode?: strin
  */
 export async function staffLogin(req: Request, res: Response): Promise<void> {
   try {
-    const { username, email, phone, password } = req.body || {}
+    const { username, email, phone, password, fcmToken, deviceId, platform, appVersion } = req.body || {}
     const identifier = (username || email || phone || '').toString().trim()
     const strPassword = password !== undefined && password !== null ? String(password) : ''
 
@@ -130,7 +132,7 @@ export async function staffLogin(req: Request, res: Response): Promise<void> {
       res.status(403).json({
         success: false,
         message:
-          'Access restricted: Only staff members assigned to Food & Beverage, Gate & Security, Concierge, Repair & Maintenance, Housekeeping, Event, or Medical/Nursing departments can log in to the L3 Mobile App.',
+          'Access restricted: Only staff members assigned to Food & Beverage, Gate & Security, Concierge, Repair & Maintenance, Housekeeping, Event, Attendance, or Medical/Nursing departments can log in to the L3 Mobile App.',
       })
       return
     }
@@ -144,6 +146,17 @@ export async function staffLogin(req: Request, res: Response): Promise<void> {
       companyId: user.companyId,
       defaultLocationId: primaryUserLoc?.locId || user.defaultLocationId,
       roles: authCtx.roles,
+    })
+
+    await registerDeviceTokenSafe({
+      recipientType: NotificationRecipientType.USER,
+      recipientUserId: user.id,
+      appSurface: NotificationAppSurface.MOBILE_L3,
+      platform,
+      fcmToken,
+      deviceId,
+      appVersion,
+      createdBy: user.id,
     })
 
     const userLocList = userLocs

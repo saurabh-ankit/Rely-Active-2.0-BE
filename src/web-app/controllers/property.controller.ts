@@ -23,6 +23,12 @@ import {
   saveStructure,
 } from '../../services/propertyStructure.service.js'
 import type { EntityInput } from '../../validations/property.validation.js'
+import {
+  getPropertyAmenities,
+  syncPropertyAmenities,
+  toLegacyAmenityNames,
+  type PropertyAmenitySelectionInput,
+} from '../../services/amenity.service.js'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -64,9 +70,21 @@ const propertyFullInclude = [
 
 /** Property JSON plus the nested `entities` view of its structure. */
 async function withStructure(property: Property) {
+  const propertyAmenities = await getPropertyAmenities(property.id)
   const entities = await PropertyEntity.findAll({ where: { propertyId: property.id, isDeleted: false } })
   const json = property.toJSON() as unknown as Record<string, unknown>
-  return { ...json, entities: buildEntitiesView(entities, (json.blocks as unknown[]) ?? []) }
+  const legacyAmenities =
+    propertyAmenities.length > 0
+      ? toLegacyAmenityNames(propertyAmenities)
+      : Array.isArray(json.amenities)
+        ? (json.amenities as string[])
+        : null
+  return {
+    ...json,
+    amenities: legacyAmenities,
+    propertyAmenities,
+    entities: buildEntitiesView(entities, (json.blocks as unknown[]) ?? []),
+  }
 }
 
 /**
@@ -90,6 +108,18 @@ function resolveTypes(body: {
 const structureError = (res: Response, error: unknown) =>
   error instanceof HttpError ? res.status(error.status).json({ success: false, message: error.message }) : null
 
+const normalizeLegacyAmenities = (input: unknown): string[] => {
+  if (!Array.isArray(input)) return []
+  return Array.from(
+    new Set(
+      input
+        .filter((item): item is string => typeof item === 'string')
+        .map((item) => item.trim())
+        .filter(Boolean),
+    ),
+  )
+}
+
 // ─── Create Property ─────────────────────────────────────────────────────────
 
 export const createProperty = async (req: AuthenticatedRequest, res: Response, _next: NextFunction) => {
@@ -107,6 +137,7 @@ export const createProperty = async (req: AuthenticatedRequest, res: Response, _
       total_area,
       area_unit,
       amenities,
+      propertyAmenities,
       launch_date,
       blocks,
       entities,
@@ -155,7 +186,10 @@ export const createProperty = async (req: AuthenticatedRequest, res: Response, _
       country: country || 'India',
       total_area: total_area ? Number(total_area) : null,
       area_unit: area_unit || null,
-      amenities: amenities || null,
+      amenities: (() => {
+        const normalized = normalizeLegacyAmenities(amenities)
+        return normalized.length ? normalized : null
+      })(),
       launch_date: launch_date || null,
       isActive: true,
       isDeleted: false,
@@ -213,6 +247,22 @@ export const createProperty = async (req: AuthenticatedRequest, res: Response, _
     // ── Structure: nested entities (or legacy towers-only blocks) ──────────
     try {
       await saveStructure(property.id, { entities, blocks }, operatingUserId)
+
+      if (propertyAmenities !== undefined) {
+        const requestedLegacyAmenities = normalizeLegacyAmenities(amenities)
+        const savedAmenities = await syncPropertyAmenities(
+          property.id,
+          (propertyAmenities ?? []) as PropertyAmenitySelectionInput[],
+          operatingUserId,
+        )
+        const mergedAmenities = Array.from(
+          new Set([...toLegacyAmenityNames(savedAmenities), ...requestedLegacyAmenities]),
+        )
+        await property.update({
+          amenities: mergedAmenities.length ? mergedAmenities : null,
+          updatedBy: operatingUserId,
+        })
+      }
     } catch (structureErr) {
       // Don't leave a half-created property behind.
       await property.update({ isDeleted: true, isActive: false })
@@ -327,7 +377,13 @@ export const updateProperty = async (req: Request, res: Response, next: NextFunc
     }
 
     const operatingUserId = (req as AuthenticatedRequest).user?.id || null
-    const { blocks: blocksInput, entities: entitiesInput, property_type: legacyType, ...propertyFields } = req.body
+    const {
+      blocks: blocksInput,
+      entities: entitiesInput,
+      property_type: legacyType,
+      propertyAmenities: propertyAmenitiesInput,
+      ...propertyFields
+    } = req.body
 
     if (entitiesInput || legacyType || propertyFields.property_types) {
       Object.assign(
@@ -342,6 +398,23 @@ export const updateProperty = async (req: Request, res: Response, next: NextFunc
 
     // Structure first: if it's refused (e.g. removing an occupied flat) nothing else changes either.
     await saveStructure(id, { entities: entitiesInput, blocks: blocksInput }, operatingUserId)
+
+    if (propertyAmenitiesInput !== undefined) {
+      const requestedLegacyAmenities = normalizeLegacyAmenities(propertyFields.amenities)
+      const savedAmenities = await syncPropertyAmenities(
+        id,
+        (propertyAmenitiesInput ?? []) as PropertyAmenitySelectionInput[],
+        operatingUserId,
+      )
+      const mergedAmenities = Array.from(
+        new Set([...toLegacyAmenityNames(savedAmenities), ...requestedLegacyAmenities]),
+      )
+      propertyFields.amenities = mergedAmenities.length ? mergedAmenities : null
+    } else if (propertyFields.amenities !== undefined) {
+      const normalized = normalizeLegacyAmenities(propertyFields.amenities)
+      propertyFields.amenities = normalized.length ? normalized : null
+    }
+
     await existing.update({ ...propertyFields, updatedBy: operatingUserId })
 
     const updated = await Property.findByPk(id, { include: propertyFullInclude })
