@@ -616,7 +616,13 @@ export const listEmployeeShifts = async (req: AuthenticatedRequest, res: Respons
         {
           association: 'employee',
           attributes: ['id', 'email', 'username'],
-          include: [{ model: UserDetail, as: 'profile', attributes: ['firstName', 'lastName'] }],
+          include: [
+            {
+              model: UserDetail,
+              as: 'profile',
+              attributes: ['firstName', 'lastName', 'weekOffDays'],
+            },
+          ],
         },
         {
           association: 'shift',
