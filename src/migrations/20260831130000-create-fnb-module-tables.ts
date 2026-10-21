@@ -239,7 +239,22 @@ export async function up({ context: queryInterface }: { context: QueryInterface 
         allowNull: false,
         defaultValue: true,
       },
+      isDeleted: {
+        type: DataTypes.BOOLEAN,
+        allowNull: false,
+        defaultValue: false,
+      },
     })
+  } else {
+    // Table already present from an earlier revision of this migration — add soft-delete if missing.
+    const dishColumns = await queryInterface.describeTable('fnb_dishes')
+    if (!dishColumns.isDeleted) {
+      await queryInterface.addColumn('fnb_dishes', 'isDeleted', {
+        type: DataTypes.BOOLEAN,
+        allowNull: false,
+        defaultValue: false,
+      })
+    }
   }
 
   // 5. Property Dish Pricing & Availability Overrides

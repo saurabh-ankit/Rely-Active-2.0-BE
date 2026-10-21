@@ -8,6 +8,8 @@ import {
   ResidentAllergy,
   ResidentCareTaskCompletion,
   ResidentConditionLog,
+  ResidentFluidBalance,
+  ResidentIncident,
   ResidentInsulin,
   ResidentLabReport,
   ResidentMedication,
@@ -18,6 +20,7 @@ import {
 } from '../models/index.js'
 import { AppointmentStatus } from '../enums/appointment.enum.js'
 import { DiagnosisStatus } from '../enums/diagnosis.enum.js'
+import { FluidBalanceCategory } from '../enums/fluidBalance.enum.js'
 import {
   MedicationAdministrationStatus,
   MedicationKind,
@@ -200,6 +203,97 @@ async function loadConditionChanges(residentId: string, range: DateRange): Promi
     userId: row.createdBy || null,
     meta: { sourceId: row.id, condition: row.condition },
   }))
+}
+
+async function loadIncidents(residentId: string, range: DateRange): Promise<PendingEvent[]> {
+  const rows = await ResidentIncident.findAll({
+    where: { residentId, isDeleted: false, ...anyColumnInRange(['incidentAt'], range) },
+    order: [['incidentAt', 'DESC']],
+    limit: SOURCE_ROW_LIMIT,
+  })
+  return rows.map((row) => ({
+    id: `incident:${row.id}:reported`,
+    type: 'incident',
+    title: 'Incident Reported',
+    description: joinParts(`Type: ${humanize(row.incidentType)}`, `Severity: ${humanize(row.severity)}`, row.notes),
+    at: toIso(row.incidentAt),
+    createdAt: toIso(row.createdAt),
+    userId: row.createdBy || null,
+    meta: { sourceId: row.id, incidentType: row.incidentType, severity: row.severity },
+  }))
+}
+
+async function loadFluidBalances(residentId: string, range: DateRange): Promise<PendingEvent[]> {
+  const rows = await ResidentFluidBalance.findAll({
+    where: { residentId, isDeleted: false, ...anyColumnInRange(['recordedAt'], range) },
+    order: [['recordedAt', 'DESC']],
+    limit: SOURCE_ROW_LIMIT,
+  })
+
+  const batches = new Map<
+    string,
+    {
+      recordedAt: Date | string
+      createdAt: Date | string
+      userId: string | null
+      intakeMl: number
+      outputMl: number
+      bowelCount: number
+      entryCount: number
+      categories: Set<string>
+      notes: string[]
+    }
+  >()
+
+  for (const row of rows) {
+    const batch = batches.get(row.batchId) ?? {
+      recordedAt: row.recordedAt,
+      createdAt: row.createdAt,
+      userId: row.createdBy || null,
+      intakeMl: 0,
+      outputMl: 0,
+      bowelCount: 0,
+      entryCount: 0,
+      categories: new Set<string>(),
+      notes: [],
+    }
+    batch.entryCount += 1
+    batch.categories.add(row.category)
+    const ml = row.quantityMl != null ? Number(row.quantityMl) : 0
+    if (row.category === FluidBalanceCategory.INTAKE) batch.intakeMl += Number.isFinite(ml) ? ml : 0
+    else if (row.category === FluidBalanceCategory.OUTPUT) batch.outputMl += Number.isFinite(ml) ? ml : 0
+    else if (row.category === FluidBalanceCategory.BOWEL) {
+      batch.bowelCount += 1
+      if (row.note) batch.notes.push(row.note)
+    }
+    batches.set(row.batchId, batch)
+  }
+
+  const round = (n: number) => Math.round(n * 100) / 100
+  return Array.from(batches.entries()).map(([batchId, batch]) => {
+    const parts: string[] = []
+    if (batch.intakeMl > 0) parts.push(`Intake: ${round(batch.intakeMl)} ml`)
+    if (batch.outputMl > 0) parts.push(`Output: ${round(batch.outputMl)} ml`)
+    if (batch.bowelCount > 0) parts.push(`Bowel: ${batch.bowelCount}`)
+    if (batch.notes.length) parts.push(batch.notes[0])
+    return {
+      id: `fluid_balance:${batchId}:recorded`,
+      type: 'fluid_balance' as const,
+      title: 'Fluid Balance Recorded',
+      description: joinParts(...parts),
+      at: toIso(batch.recordedAt),
+      createdAt: toIso(batch.createdAt),
+      userId: batch.userId,
+      meta: {
+        batchId,
+        entryCount: batch.entryCount,
+        categories: Array.from(batch.categories),
+        intakeMl: round(batch.intakeMl),
+        outputMl: round(batch.outputMl),
+        bowelCount: batch.bowelCount,
+      },
+    }
+  })
 }
 
 async function loadVitals(residentId: string, range: DateRange): Promise<PendingEvent[]> {
@@ -610,6 +704,8 @@ export async function getResidentTimeline(
     appointments,
     careTasks,
     conditions,
+    incidents,
+    fluidBalances,
   ] = await Promise.all([
     wants('allergy') ? loadAllergies(residentId, range) : [],
     wants('vital') ? loadVitals(residentId, range) : [],
@@ -621,6 +717,8 @@ export async function getResidentTimeline(
     wants('appointment') ? loadAppointments(residentId, range) : [],
     wants('care_task') ? loadCareTasks(residentId, range) : [],
     wants('condition') ? loadConditionChanges(residentId, range) : [],
+    wants('incident') ? loadIncidents(residentId, range) : [],
+    wants('fluid_balance') ? loadFluidBalances(residentId, range) : [],
   ])
 
   const pending = [
@@ -634,6 +732,8 @@ export async function getResidentTimeline(
     ...appointments,
     ...careTasks,
     ...conditions,
+    ...incidents,
+    ...fluidBalances,
   ].filter((e) => e.at && isInRange(e.at, range))
 
   pending.sort((a, b) => {

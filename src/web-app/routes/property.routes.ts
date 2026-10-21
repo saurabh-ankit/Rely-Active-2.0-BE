@@ -3,6 +3,7 @@ import {
   addBlock,
   addFloor,
   addUnit,
+  checkPropertyNameAvailability,
   createProperty,
   deleteProperty,
   getAllProperties,
@@ -11,8 +12,13 @@ import {
   updateProperty,
 } from '../controllers/property.controller.js'
 import { getPropertyAmenitiesForProperty, setPropertyAmenitiesForProperty } from '../controllers/amenity.controller.js'
-import { validateBody, validateParams } from '../../middlewares/validate/index.js'
-import { addBlockSchema, createPropertySchema, updatePropertySchema } from '../../validations/property.validation.js'
+import { validateBody, validateParams, validateQuery } from '../../middlewares/validate/index.js'
+import {
+  addBlockSchema,
+  createPropertySchema,
+  propertyNameQuerySchema,
+  updatePropertySchema,
+} from '../../validations/property.validation.js'
 import { authenticate } from '../../middlewares/authenticate.js'
 import { propertyIdByIdParamSchema, setPropertyAmenitiesSchema } from '../../validations/amenity.validation.js'
 
@@ -24,6 +30,8 @@ router.use(authenticate)
 // ── Property CRUD ─────────────────────────────────────────────────────────────
 router.post('/', validateBody(createPropertySchema), createProperty)
 router.get('/', getAllProperties)
+// Must be registered before /:id so "name-availability" is not treated as an id.
+router.get('/name-availability', validateQuery(propertyNameQuerySchema), checkPropertyNameAvailability)
 router.get('/:id/unit-picker', getUnitPicker)
 router.get('/:id/amenities', validateParams(propertyIdByIdParamSchema), getPropertyAmenitiesForProperty)
 router.put(

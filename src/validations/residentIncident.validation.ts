@@ -32,6 +32,35 @@ export const createResidentIncidentSchema = z.object({
 
 export type CreateResidentIncidentInput = z.infer<typeof createResidentIncidentSchema>
 
+export const updateResidentIncidentSchema = z
+  .object({
+    incidentType: z
+      .enum(IncidentType, {
+        message: `Incident type must be one of ${Object.values(IncidentType).join(', ')}`,
+      })
+      .optional(),
+    severity: z
+      .enum(IncidentSeverity, {
+        message: `Severity must be one of ${Object.values(IncidentSeverity).join(', ')}`,
+      })
+      .optional(),
+    incidentAt: z
+      .string()
+      .trim()
+      .refine((value) => !Number.isNaN(new Date(value).getTime()), 'Incident date and time must be a valid date')
+      .refine(
+        (value) => new Date(value).getTime() <= Date.now() + FUTURE_TOLERANCE_MS,
+        'Incident time cannot be in the future',
+      )
+      .optional(),
+    notes: notesSchema,
+  })
+  .refine((data) => Object.values(data).some((value) => value !== undefined), {
+    message: 'Provide at least one field to update',
+  })
+
+export type UpdateResidentIncidentInput = z.infer<typeof updateResidentIncidentSchema>
+
 export const incidentSopParamsSchema = z.object({
   residentId: z.string().uuid('Valid resident is required'),
   incidentId: z.string().uuid('Valid incident is required'),

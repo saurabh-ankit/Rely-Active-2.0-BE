@@ -18,6 +18,7 @@ import {
   createGlobalPackage,
   createGlobalSpecialSlot,
   createMenuSchedule,
+  deleteDish,
   deleteGlobalMealSlot,
   deleteGlobalPackage,
   deleteGlobalSpecialSlot,
@@ -152,6 +153,7 @@ router.get('/dishes/master', getAllDishes)
 router.get('/dishes', getPropertyDishes)
 router.post('/dishes', upload.single('image'), createDish)
 router.put('/dishes/:id', upload.single('image'), updateDish)
+router.delete('/dishes/:id', deleteDish)
 router.get('/properties/:locId/dishes', getPropertyDishes)
 router.post('/property-dishes', setPropertyDishOverride)
 

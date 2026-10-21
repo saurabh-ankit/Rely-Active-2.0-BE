@@ -9,6 +9,8 @@ export const RESIDENT_TIMELINE_EVENT_TYPES = [
   'appointment',
   'care_task',
   'condition',
+  'incident',
+  'fluid_balance',
 ] as const
 
 const optionalDate = z

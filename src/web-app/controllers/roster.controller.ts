@@ -840,6 +840,22 @@ export const updateEmployeeShift = async (req: AuthenticatedRequest, res: Respon
     const nextEnd = payload.endDate || assignmentData.endDate
     const nextShift = payload.shiftId || assignmentData.shiftId
     const nextEmp = payload.employeeId || assignmentData.employeeId
+    const nextWorkingDays = payload.workingDays !== undefined ? payload.workingDays : assignment.workingDays
+
+    const employeeProfile = await UserDetail.findOne({
+      where: { userId: nextEmp },
+      attributes: ['firstName', 'lastName', 'employeeCode', 'weekOffDays'],
+    })
+    const weekOffConflicts = getWeekOffConflicts(nextWorkingDays, employeeProfile?.weekOffDays)
+    if (weekOffConflicts.length > 0) {
+      const empLabel =
+        `${employeeProfile?.firstName || ''} ${employeeProfile?.lastName || ''}`.trim() ||
+        employeeProfile?.employeeCode ||
+        'Employee'
+      return res
+        .status(400)
+        .json(errorResponse(`Cannot update roster on weekoff day(s) for ${empLabel}: ${weekOffConflicts.join(', ')}`))
+    }
 
     const newShift = await Shift.findOne({
       where: { id: nextShift, isDeleted: false },
@@ -849,15 +865,109 @@ export const updateEmployeeShift = async (req: AuthenticatedRequest, res: Respon
       return res.status(400).json(errorResponse('Invalid shift ID'))
     }
 
-    const nextWorkingDays = payload.workingDays !== undefined ? payload.workingDays : assignment.workingDays
-    const nextAreaId = payload.areaId !== undefined ? normalizeAreaId(payload.areaId) : assignmentData.areaId
     const nextSlot =
       payload.slotTimeRange !== undefined
         ? typeof payload.slotTimeRange === 'string' && payload.slotTimeRange.trim()
           ? payload.slotTimeRange.trim()
           : null
         : assignmentData.slotTimeRange || null
+
+    if (nextSlot) {
+      if (!parseSlotTimeRange(nextSlot)) {
+        return res.status(400).json(errorResponse("Invalid slot format. Use 'HH:mm - HH:mm'"))
+      }
+      if (!isSlotWithinShift(nextSlot, newShift.startTime, newShift.endTime)) {
+        return res.status(400).json(errorResponse('Selected slot must fall within the shift time window'))
+      }
+    }
+
     const nextWindow = resolveEffectiveShiftWindow(newShift.startTime, newShift.endTime, nextSlot)
+    if (nextWindow.start && hasWindowStartPassedOnDate(nextStart, nextWindow.start)) {
+      return res
+        .status(400)
+        .json(
+          errorResponse(
+            nextSlot
+              ? 'Selected slot start time has already passed for the start date'
+              : 'Selected shift start time has already passed for the start date',
+          ),
+        )
+    }
+
+    const locationTouched =
+      payload.areaId !== undefined ||
+      payload.unitId !== undefined ||
+      payload.blockId !== undefined ||
+      payload.floorId !== undefined
+
+    let nextAreaId = assignmentData.areaId as string | null
+    let nextBlockId = assignmentData.blockId as string | null
+    let nextFloorId = assignmentData.floorId as string | null
+    let nextUnitId = assignmentData.unitId as string | null
+
+    if (locationTouched) {
+      const resolvedAreaId =
+        payload.areaId !== undefined ? normalizeAreaId(payload.areaId) : (assignmentData.areaId as string | null)
+      const resolvedBlockId =
+        payload.blockId !== undefined ? normalizeOptionalId(payload.blockId) : (assignmentData.blockId as string | null)
+      const resolvedFloorId =
+        payload.floorId !== undefined ? normalizeOptionalId(payload.floorId) : (assignmentData.floorId as string | null)
+      const resolvedUnitId =
+        payload.unitId !== undefined ? normalizeUnitId(payload.unitId) : (assignmentData.unitId as string | null)
+
+      const hasArea = !!resolvedAreaId
+      const hasUnitHierarchy = !!(resolvedBlockId || resolvedFloorId || resolvedUnitId)
+
+      if (hasArea && hasUnitHierarchy) {
+        // Prefer the side explicitly sent in this request; clear the opposite.
+        if (payload.areaId !== undefined && normalizeAreaId(payload.areaId)) {
+          nextAreaId = resolvedAreaId
+          nextBlockId = null
+          nextFloorId = null
+          nextUnitId = null
+        } else {
+          nextAreaId = null
+          nextBlockId = resolvedBlockId
+          nextFloorId = resolvedFloorId
+          nextUnitId = resolvedUnitId
+        }
+      } else if (hasArea) {
+        nextAreaId = resolvedAreaId
+        nextBlockId = null
+        nextFloorId = null
+        nextUnitId = null
+      } else if (hasUnitHierarchy) {
+        nextAreaId = null
+        nextBlockId = resolvedBlockId
+        nextFloorId = resolvedFloorId
+        nextUnitId = resolvedUnitId
+      } else {
+        nextAreaId = null
+        nextBlockId = null
+        nextFloorId = null
+        nextUnitId = null
+      }
+
+      if (nextAreaId && (nextBlockId || nextFloorId || nextUnitId)) {
+        return res.status(400).json(errorResponse('Cannot provide both area and block/floor/unit'))
+      }
+      if (nextUnitId && !nextFloorId) {
+        return res.status(400).json(errorResponse('floorId is required when unitId is provided'))
+      }
+      if ((nextFloorId || nextUnitId) && !nextBlockId) {
+        return res.status(400).json(errorResponse('blockId is required when floorId or unitId is provided'))
+      }
+
+      const medicalModes = await getMedicalRosterLocationModesForEmployees([nextEmp], locationId)
+      const medicalLocationError = validateMedicalRosterLocationTargets({
+        modes: medicalModes,
+        hasArea: !!nextAreaId,
+        hasUnitHierarchy: !!(nextBlockId || nextFloorId || nextUnitId),
+      })
+      if (medicalLocationError) {
+        return res.status(400).json(errorResponse(medicalLocationError))
+      }
+    }
 
     const conflict = await checkShiftAssignmentOverlap(
       nextEmp,
@@ -884,9 +994,17 @@ export const updateEmployeeShift = async (req: AuthenticatedRequest, res: Respon
     const updatedBy = req.user?.id ?? null
     const oldAreaId = assignmentData.areaId
 
-    const updatePayload = { ...payload }
-    if (payload.areaId !== undefined) {
+    const updatePayload: Record<string, unknown> = { ...payload }
+    if (locationTouched) {
       updatePayload.areaId = nextAreaId
+      updatePayload.blockId = nextBlockId
+      updatePayload.floorId = nextFloorId
+      updatePayload.unitId = nextUnitId
+    } else if (payload.areaId !== undefined) {
+      updatePayload.areaId = nextAreaId
+    }
+    if (payload.slotTimeRange !== undefined) {
+      updatePayload.slotTimeRange = nextSlot
     }
 
     await assignment.update({ ...updatePayload, locationId, updatedBy })
@@ -935,7 +1053,7 @@ export const updateEmployeeShift = async (req: AuthenticatedRequest, res: Respon
         const isWorking = assignment.isWorkingOn(activeDate.date)
         const targetStatus = isWorking ? ShiftEmployeeDateStatus.UPCOMING : ShiftEmployeeDateStatus.DAY_OFF
         const targetLeave = isWorking ? null : 'week_off'
-        const areaVal = payload.areaId !== undefined ? nextAreaId : activeDate.areaId
+        const areaVal = locationTouched || payload.areaId !== undefined ? nextAreaId : activeDate.areaId
 
         if (activeDate.status !== targetStatus || activeDate.areaId !== areaVal) {
           await activeDate.update({
@@ -957,7 +1075,7 @@ export const updateEmployeeShift = async (req: AuthenticatedRequest, res: Respon
       logger.error({ err: syncErr }, 'Failed to synchronize active shift dates on update')
     }
 
-    const areaChanged = payload.areaId !== undefined && nextAreaId !== oldAreaId
+    const areaChanged = (locationTouched || payload.areaId !== undefined) && nextAreaId !== oldAreaId
     if (areaChanged) {
       syncShiftDatesOnAreaChange(employeeShiftId, nextAreaId ?? null, locationId, updatedBy).catch((err) =>
         logger.error({ err }, 'syncShiftDatesOnAreaChange failed'),

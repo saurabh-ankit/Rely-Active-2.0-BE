@@ -166,48 +166,52 @@ export const labReportInclude: Includeable[] = [
  * completed doctor notes (text, attachments, voice notes) from consultants, and the current condition.
  */
 export async function getResidentClinicalChart(residentId: string) {
-  const [allergyRows, medicationRows, insulinRows, vitalRows, consultants, currentCondition] = await Promise.all([
-    ResidentAllergy.findAll({
-      where: { residentId, isDeleted: false },
-      include: [userInclude('creator')],
-      order: [['recordedAt', 'DESC']],
-    }),
-    ResidentMedication.findAll({
-      where: { residentId, isDeleted: false },
-      include: [userInclude('creator'), medicationInventoryInclude],
-      order: [['createdAt', 'DESC']],
-    }),
-    ResidentInsulin.findAll({
-      where: { residentId, isDeleted: false },
-      include: [userInclude('creator'), medicationInventoryInclude],
-      order: [['createdAt', 'DESC']],
-    }),
-    ResidentVital.findAll({
-      where: { residentId, isDeleted: false },
-      include: [userInclude('creator')],
-      order: [['recordedAt', 'DESC']],
-    }),
-    Consultant.findAll({
-      where: { residentId, isDeleted: false, status: DiagnosisStatus.COMPLETED },
-      include: [
-        {
-          model: User,
-          as: 'doctor',
-          attributes: ['id', 'username'],
-          required: false,
-          include: [{ model: UserDetail, as: 'profile', attributes: ['firstName', 'lastName'], required: false }],
-        },
-        {
-          model: DoctorAppointment,
-          as: 'appointment',
-          attributes: ['id', 'appointmentDate'],
-          required: false,
-        },
-      ],
-      order: [['updatedAt', 'DESC']],
-    }),
-    getResidentCurrentCondition(residentId),
-  ])
+  // Dynamic imports avoid a static cycle with fluid/incident services (they use getClinicalResident).
+  const [allergyRows, medicationRows, insulinRows, vitalRows, fluidBalances, incidents, consultants, currentCondition] =
+    await Promise.all([
+      ResidentAllergy.findAll({
+        where: { residentId, isDeleted: false },
+        include: [userInclude('creator')],
+        order: [['recordedAt', 'DESC']],
+      }),
+      ResidentMedication.findAll({
+        where: { residentId, isDeleted: false },
+        include: [userInclude('creator'), medicationInventoryInclude],
+        order: [['createdAt', 'DESC']],
+      }),
+      ResidentInsulin.findAll({
+        where: { residentId, isDeleted: false },
+        include: [userInclude('creator'), medicationInventoryInclude],
+        order: [['createdAt', 'DESC']],
+      }),
+      ResidentVital.findAll({
+        where: { residentId, isDeleted: false },
+        include: [userInclude('creator')],
+        order: [['recordedAt', 'DESC']],
+      }),
+      import('./residentFluidBalance.service.js').then((m) => m.listResidentFluidBalances(residentId)),
+      import('./residentIncident.service.js').then((m) => m.listResidentIncidents(residentId)),
+      Consultant.findAll({
+        where: { residentId, isDeleted: false, status: DiagnosisStatus.COMPLETED },
+        include: [
+          {
+            model: User,
+            as: 'doctor',
+            attributes: ['id', 'username'],
+            required: false,
+            include: [{ model: UserDetail, as: 'profile', attributes: ['firstName', 'lastName'], required: false }],
+          },
+          {
+            model: DoctorAppointment,
+            as: 'appointment',
+            attributes: ['id', 'appointmentDate'],
+            required: false,
+          },
+        ],
+        order: [['updatedAt', 'DESC']],
+      }),
+      getResidentCurrentCondition(residentId),
+    ])
 
   const allergies = allergyRows.map(formatAllergyRow)
   const vitals = vitalRows.map(formatVitalRow)
@@ -241,7 +245,7 @@ export async function getResidentClinicalChart(residentId: string) {
     })
   }
 
-  return { allergies, vitals, medications, insulin, doctorNotes, currentCondition }
+  return { allergies, vitals, medications, insulin, fluidBalances, incidents, doctorNotes, currentCondition }
 }
 
 /**

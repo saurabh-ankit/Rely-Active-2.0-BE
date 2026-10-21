@@ -101,3 +101,40 @@ export const listResidentFluidBalanceQuerySchema = z.object({
 })
 
 export type ListResidentFluidBalanceQuery = z.infer<typeof listResidentFluidBalanceQuerySchema>
+
+/** Partial update of a single fluid-balance entry (category-appropriate fields applied in the service). */
+export const updateResidentFluidBalanceSchema = z
+  .object({
+    recordedAt: recordedAtSchema,
+    type: z
+      .string()
+      .trim()
+      .min(1)
+      .optional()
+      .nullable()
+      .or(z.literal('').transform(() => null)),
+    ivFluidType: z
+      .enum(IvFluidType, { message: `IV fluid type must be one of ${Object.values(IvFluidType).join(', ')}` })
+      .optional()
+      .nullable(),
+    description: shortTextSchema('Intake description'),
+    quantity: quantitySchema.optional(),
+    unit: unitSchema.optional(),
+    collectedBy: shortTextSchema('Collected by'),
+    stoolType: z
+      .enum(StoolType, { message: `Stool type must be one of ${Object.values(StoolType).join(', ')}` })
+      .optional()
+      .nullable(),
+    comfortLevel: z
+      .enum(BowelComfortLevel, {
+        message: `Comfort level must be one of ${Object.values(BowelComfortLevel).join(', ')}`,
+      })
+      .optional()
+      .nullable(),
+    note: noteSchema,
+  })
+  .refine((data) => Object.values(data).some((value) => value !== undefined), {
+    message: 'Provide at least one field to update',
+  })
+
+export type UpdateResidentFluidBalanceInput = z.infer<typeof updateResidentFluidBalanceSchema>

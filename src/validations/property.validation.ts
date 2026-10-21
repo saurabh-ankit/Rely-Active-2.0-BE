@@ -39,6 +39,13 @@ export const createPropertySchema = z
 
 export const updatePropertySchema = createPropertySchema.partial().passthrough()
 
+export const propertyNameQuerySchema = z
+  .object({
+    name: z.string().trim().min(2, 'Property name must be at least 2 characters').max(255),
+    excludePropertyId: z.uuid().optional(),
+  })
+  .strict()
+
 export const addBlockSchema = z.object({
   block_name: z.string().trim().min(1, 'Block name is required'),
   total_floors: z

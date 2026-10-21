@@ -1,8 +1,12 @@
 import { randomUUID } from 'node:crypto'
+import { HttpError } from '../middlewares/error/http-error.js'
 import { uploadFileToS3 } from '../middlewares/s3/index.js'
 import { ResidentIncident } from '../models/index.js'
 import type { ConsultantFileEntry, ConsultantFileType } from '../models/consultant.model.js'
-import type { CreateResidentIncidentInput } from '../validations/residentIncident.validation.js'
+import type {
+  CreateResidentIncidentInput,
+  UpdateResidentIncidentInput,
+} from '../validations/residentIncident.validation.js'
 import { getSopSummaries, type IncidentSopSummary } from './incidentSop.service.js'
 import { getClinicalResident } from './residentClinical.service.js'
 import { userInclude, userName } from './residentCondition.service.js'
@@ -110,4 +114,55 @@ export async function listResidentIncidents(residentId: string) {
     ],
   })
   return formatWithSop(rows)
+}
+
+async function findResidentIncident(residentId: string, id: string) {
+  const row = await ResidentIncident.findOne({
+    where: { id, residentId, isDeleted: false },
+    include: [userInclude('creator')],
+  })
+  if (!row) {
+    throw new HttpError(404, 'Incident not found')
+  }
+  return row
+}
+
+export async function updateResidentIncident(params: {
+  residentId: string
+  id: string
+  input: UpdateResidentIncidentInput
+  userId: string | null
+  files?: { photos: Express.Multer.File[]; voiceNotes: Express.Multer.File[] }
+}) {
+  const { residentId, id, input, userId, files } = params
+  const row = await findResidentIncident(residentId, id)
+  const folder = `resident-incidents/${residentId}`
+
+  const [newPhotos, newVoiceNotes] = await Promise.all([
+    uploadIncidentFiles(files?.photos ?? [], folder, userId, 'IMAGE'),
+    uploadIncidentFiles(files?.voiceNotes ?? [], folder, userId, 'AUDIO'),
+  ])
+
+  const photos = [...fileList(row.photos), ...newPhotos]
+  const voiceNotes = [...fileList(row.voiceNotes), ...newVoiceNotes]
+
+  await row.update({
+    incidentType: input.incidentType !== undefined ? input.incidentType : row.incidentType,
+    severity: input.severity !== undefined ? input.severity : row.severity,
+    incidentAt: input.incidentAt !== undefined ? new Date(input.incidentAt) : row.incidentAt,
+    notes: input.notes !== undefined ? input.notes : row.notes,
+    photos,
+    voiceNotes,
+    updatedBy: userId,
+  })
+
+  const refreshed = await findResidentIncident(residentId, id)
+  const [formatted] = await formatWithSop([refreshed])
+  return formatted
+}
+
+export async function deleteResidentIncident(params: { residentId: string; id: string; userId: string | null }) {
+  const { residentId, id, userId } = params
+  const row = await findResidentIncident(residentId, id)
+  await row.update({ isDeleted: true, updatedBy: userId })
 }

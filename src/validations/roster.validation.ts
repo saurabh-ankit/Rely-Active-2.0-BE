@@ -182,12 +182,35 @@ export const updateEmployeeShiftSchema = z
   })
   .superRefine((data, ctx) => {
     const hasArea = data.areaId && data.areaId !== 'none'
+    const hasBlock = data.blockId && data.blockId !== 'none'
+    const hasFloor = data.floorId && data.floorId !== 'none'
     const hasUnit = data.unitId && data.unitId !== 'none'
-    if (hasArea && hasUnit) {
+    if (hasArea && (hasBlock || hasFloor || hasUnit)) {
       ctx.addIssue({
         code: 'custom',
-        message: 'Cannot provide both areaId and unitId',
-        path: ['unitId'],
+        message: 'Cannot provide both area and block/floor/unit',
+        path: ['areaId'],
+      })
+    }
+    if (hasUnit && !hasFloor) {
+      ctx.addIssue({
+        code: 'custom',
+        message: 'floorId is required when unitId is provided',
+        path: ['floorId'],
+      })
+    }
+    if ((hasFloor || hasUnit) && !hasBlock) {
+      ctx.addIssue({
+        code: 'custom',
+        message: 'blockId is required when floorId or unitId is provided',
+        path: ['blockId'],
+      })
+    }
+    if (data.startDate && data.endDate && data.startDate > data.endDate) {
+      ctx.addIssue({
+        code: 'custom',
+        message: 'End date must be on or after start date',
+        path: ['endDate'],
       })
     }
   })

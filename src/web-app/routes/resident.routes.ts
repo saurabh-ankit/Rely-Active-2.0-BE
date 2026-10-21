@@ -35,6 +35,14 @@ import {
   createResidentLabReport,
   updateResidentLabReport,
   deleteResidentLabReport,
+  createResidentFluidBalance,
+  updateResidentFluidBalance,
+  deleteResidentFluidBalance,
+  createResidentIncident,
+  updateResidentIncident,
+  deleteResidentIncident,
+  MAX_INCIDENT_PHOTOS,
+  MAX_INCIDENT_VOICE_NOTES,
 } from '../controllers/residentClinical.controller.js'
 import {
   getResidentNokContacts,
@@ -61,6 +69,14 @@ import {
   createResidentAllergySchema,
   updateResidentAllergySchema,
 } from '../../validations/residentAllergy.validation.js'
+import {
+  createResidentFluidBalanceSchema,
+  updateResidentFluidBalanceSchema,
+} from '../../validations/residentFluidBalance.validation.js'
+import {
+  createResidentIncidentSchema,
+  updateResidentIncidentSchema,
+} from '../../validations/residentIncident.validation.js'
 import { residentTimelineQuerySchema } from '../../validations/residentTimeline.validation.js'
 import { createResidentDocumentSchema } from '../../validations/residentDocument.validation.js'
 import { updateResidentConditionSchema } from '../../validations/residentCondition.validation.js'
@@ -85,6 +101,11 @@ const uploadResidentDocument = upload.fields([{ name: 'file', maxCount: 1 }])
 const uploadLabReportFiles = upload.fields([
   { name: 'report', maxCount: 1 },
   { name: 'receipt', maxCount: 1 },
+])
+
+const uploadIncidentFiles = upload.fields([
+  { name: 'photos', maxCount: MAX_INCIDENT_PHOTOS },
+  { name: 'voiceNote', maxCount: MAX_INCIDENT_VOICE_NOTES },
 ])
 
 const uploadNokPhoto = upload.fields([{ name: 'photo', maxCount: 1 }])
@@ -223,6 +244,50 @@ router.delete(
   authenticate,
   validateParams(residentClinicalItemParamSchema),
   deleteResidentAllergy,
+)
+
+router.post(
+  '/:residentId/fluid-balance',
+  authenticate,
+  validateParams(residentIdParamSchema),
+  validateBody(createResidentFluidBalanceSchema),
+  createResidentFluidBalance,
+)
+router.put(
+  '/:residentId/fluid-balance/:id',
+  authenticate,
+  validateParams(residentClinicalItemParamSchema),
+  validateBody(updateResidentFluidBalanceSchema),
+  updateResidentFluidBalance,
+)
+router.delete(
+  '/:residentId/fluid-balance/:id',
+  authenticate,
+  validateParams(residentClinicalItemParamSchema),
+  deleteResidentFluidBalance,
+)
+
+router.post(
+  '/:residentId/incidents',
+  authenticate,
+  validateParams(residentIdParamSchema),
+  uploadIncidentFiles,
+  validateBody(createResidentIncidentSchema),
+  createResidentIncident,
+)
+router.put(
+  '/:residentId/incidents/:id',
+  authenticate,
+  validateParams(residentClinicalItemParamSchema),
+  uploadIncidentFiles,
+  validateBody(updateResidentIncidentSchema),
+  updateResidentIncident,
+)
+router.delete(
+  '/:residentId/incidents/:id',
+  authenticate,
+  validateParams(residentClinicalItemParamSchema),
+  deleteResidentIncident,
 )
 
 router.get(

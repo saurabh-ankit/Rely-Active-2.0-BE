@@ -12,6 +12,7 @@ export interface FnbDishAttributes extends BaseAttributes {
   nutritionalInfo?: Record<string, unknown> | null
   imageUrl?: string | null
   isActive: boolean
+  isDeleted: boolean
 }
 
 export type FnbDishCreationAttributes = Optional<
@@ -23,6 +24,7 @@ export type FnbDishCreationAttributes = Optional<
   | 'nutritionalInfo'
   | 'imageUrl'
   | 'isActive'
+  | 'isDeleted'
   | 'createdBy'
   | 'updatedBy'
   | 'createdAt'
@@ -38,6 +40,7 @@ export class FnbDish extends BaseModel<FnbDishAttributes, FnbDishCreationAttribu
   declare nutritionalInfo: Record<string, unknown> | null
   declare imageUrl: string | null
   declare isActive: boolean
+  declare isDeleted: boolean
 }
 
 FnbDish.init(
@@ -91,6 +94,11 @@ FnbDish.init(
       type: DataTypes.BOOLEAN,
       allowNull: false,
       defaultValue: true,
+    },
+    isDeleted: {
+      type: DataTypes.BOOLEAN,
+      allowNull: false,
+      defaultValue: false,
     },
   },
   {

@@ -1,4 +1,5 @@
 import type { NextFunction, Request, Response } from 'express'
+import { Op, fn, col, where as sqlWhere } from 'sequelize'
 import type { AuthenticatedRequest } from '../../middlewares/authenticate.js'
 import {
   Company,
@@ -29,6 +30,22 @@ import {
   toLegacyAmenityNames,
   type PropertyAmenitySelectionInput,
 } from '../../services/amenity.service.js'
+
+const PROPERTY_NAME_EXISTS_MESSAGE = 'This property name already exists'
+
+/** Case-insensitive name check among non-deleted properties. */
+export async function propertyNameAvailable(name: string, excludePropertyId?: string) {
+  const existing = await Property.findOne({
+    where: {
+      [Op.and]: [
+        sqlWhere(fn('LOWER', fn('TRIM', col('property_name'))), name.trim().toLowerCase()),
+        { isDeleted: false },
+        ...(excludePropertyId ? [{ id: { [Op.ne]: excludePropertyId } }] : []),
+      ],
+    },
+  })
+  return { available: !existing }
+}
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -120,6 +137,22 @@ const normalizeLegacyAmenities = (input: unknown): string[] => {
   )
 }
 
+// ─── Name availability ───────────────────────────────────────────────────────
+
+export const checkPropertyNameAvailability = async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const name = String(req.query.name ?? '')
+    const excludePropertyId = typeof req.query.excludePropertyId === 'string' ? req.query.excludePropertyId : undefined
+    const result = await propertyNameAvailable(name, excludePropertyId)
+    return res.status(200).json({
+      success: true,
+      data: result,
+    })
+  } catch (error) {
+    next(error)
+  }
+}
+
 // ─── Create Property ─────────────────────────────────────────────────────────
 
 export const createProperty = async (req: AuthenticatedRequest, res: Response, _next: NextFunction) => {
@@ -169,6 +202,14 @@ export const createProperty = async (req: AuthenticatedRequest, res: Response, _
           message: 'No active company found in the system. Please create a company first.',
         })
       }
+    }
+
+    const { available } = await propertyNameAvailable(String(property_name))
+    if (!available) {
+      return res.status(409).json({
+        success: false,
+        message: PROPERTY_NAME_EXISTS_MESSAGE,
+      })
     }
 
     const operatingUserId = (req as AuthenticatedRequest).user?.id || null
@@ -384,6 +425,16 @@ export const updateProperty = async (req: Request, res: Response, next: NextFunc
       propertyAmenities: propertyAmenitiesInput,
       ...propertyFields
     } = req.body
+
+    if (propertyFields.property_name !== undefined && propertyFields.property_name !== null) {
+      const { available } = await propertyNameAvailable(String(propertyFields.property_name), id)
+      if (!available) {
+        return res.status(409).json({
+          success: false,
+          message: PROPERTY_NAME_EXISTS_MESSAGE,
+        })
+      }
+    }
 
     if (entitiesInput || legacyType || propertyFields.property_types) {
       Object.assign(

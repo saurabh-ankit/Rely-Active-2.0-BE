@@ -37,6 +37,7 @@ import { Op } from 'sequelize'
 export async function getAllDishes(req: Request, res: Response): Promise<void> {
   try {
     const dishes = await FnbDish.findAll({
+      where: { isDeleted: false },
       include: [
         {
           model: FnbPropertyDish,
@@ -49,9 +50,29 @@ export async function getAllDishes(req: Request, res: Response): Promise<void> {
         ['name', 'ASC'],
       ],
     })
+
+    const dishIds = dishes.map((d) => d.id)
+    const usedDishRows =
+      dishIds.length > 0
+        ? await FnbResidentOrderDetail.findAll({
+            where: { dishId: { [Op.in]: dishIds } },
+            attributes: ['dishId'],
+            raw: true,
+          })
+        : []
+    const usedDishSet = new Set((usedDishRows as Array<{ dishId: string }>).map((row) => row.dishId).filter(Boolean))
+
+    const enrichedDishes = dishes.map((dish) => {
+      const json = typeof dish.toJSON === 'function' ? dish.toJSON() : dish
+      return {
+        ...json,
+        isUsedInResidentMeal: usedDishSet.has(dish.id),
+      }
+    })
+
     res.status(200).json({
       success: true,
-      data: dishes,
+      data: enrichedDishes,
     })
   } catch (error) {
     console.error('Error fetching dishes:', error)
@@ -132,7 +153,7 @@ export async function updateDish(req: AuthenticatedRequest, res: Response): Prom
     const { name, category, dietaryType, description, basePrice, nutritionalInfo, imageUrl, isActive, propertyIds } =
       req.body
 
-    const dish = await FnbDish.findByPk(id)
+    const dish = await FnbDish.findOne({ where: { id, isDeleted: false } })
     if (!dish) {
       res.status(404).json({ success: false, message: 'Dish not found' })
       return
@@ -212,6 +233,41 @@ export async function updateDish(req: AuthenticatedRequest, res: Response): Prom
   }
 }
 
+export async function deleteDish(req: AuthenticatedRequest, res: Response): Promise<void> {
+  try {
+    const id = req.params.id as string
+
+    const dish = await FnbDish.findOne({ where: { id, isDeleted: false } })
+    if (!dish) {
+      res.status(404).json({ success: false, message: 'Dish not found' })
+      return
+    }
+
+    const residentMealCount = await FnbResidentOrderDetail.count({ where: { dishId: id } })
+    if (residentMealCount > 0) {
+      res.status(400).json({
+        success: false,
+        message: 'Cannot delete this dish because it is currently added to a resident meal.',
+      })
+      return
+    }
+
+    await dish.update({
+      isDeleted: true,
+      isActive: false,
+      updatedBy: req.user?.id || null,
+    })
+
+    res.status(200).json({
+      success: true,
+      message: 'Dish deleted successfully',
+    })
+  } catch (error) {
+    console.error('Error deleting dish:', error)
+    res.status(500).json({ success: false, message: 'Failed to delete dish' })
+  }
+}
+
 export async function getPropertyDishes(req: Request, res: Response): Promise<void> {
   try {
     const locId =
@@ -222,7 +278,14 @@ export async function getPropertyDishes(req: Request, res: Response): Promise<vo
       (req.headers['x-property-id'] as string)
     const propertyDishes = await FnbPropertyDish.findAll({
       where: { locId, isAvailable: true },
-      include: [{ model: FnbDish, as: 'dish' }],
+      include: [
+        {
+          model: FnbDish,
+          as: 'dish',
+          where: { isDeleted: false },
+          required: true,
+        },
+      ],
     })
     res.status(200).json({
       success: true,

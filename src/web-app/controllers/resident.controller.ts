@@ -1739,7 +1739,7 @@ export async function createResidentDocument(req: AuthenticatedRequest, res: Res
 
 /**
  * GET /residents/:residentId/timeline?startDate&endDate&page&limit&type&types
- * Allergies, vitals, medications, insulin, lab reports, doctor visits, care tasks and condition changes merged newest first.
+ * Allergies, vitals, medications, insulin, lab reports, doctor visits, care tasks, condition changes, incidents and fluid balance merged newest first.
  */
 export async function getResidentTimelineData(req: AuthenticatedRequest, res: Response): Promise<void> {
   try {

@@ -9,6 +9,9 @@ const phoneSchema = (label: string) =>
     .transform((value) => value.replace(/[\s-]/g, ''))
     .refine((value) => PHONE_REGEX.test(value), `${label} must be a 10-digit number starting with 6, 7, 8, or 9`)
 
+const LETTERS_ONLY_REGEX = /^[A-Za-z\s]*$/
+const LETTERS_ONLY_MESSAGE = 'Only alphabets are allowed'
+
 const optionalText = (label: string, max: number) =>
   z
     .union([
@@ -18,11 +21,25 @@ const optionalText = (label: string, max: number) =>
     ])
     .optional()
 
+const optionalLettersOnlyText = (label: string, max: number) =>
+  z
+    .union([
+      z.literal('').transform(() => null),
+      z
+        .string()
+        .trim()
+        .max(max, `${label} must be ${max} characters or fewer`)
+        .regex(LETTERS_ONLY_REGEX, LETTERS_ONLY_MESSAGE),
+      z.null(),
+    ])
+    .optional()
+
 const fullNameSchema = z
   .string({ message: 'Full name is required' })
   .trim()
   .min(1, 'Full name is required')
   .max(150, 'Full name must be 150 characters or fewer')
+  .regex(LETTERS_ONLY_REGEX, LETTERS_ONLY_MESSAGE)
 
 const alternatePhoneSchema = z
   .union([z.literal('').transform(() => null), phoneSchema('Alternate phone'), z.null()])
@@ -45,7 +62,7 @@ const emailSchema = z
 
 export const createResidentNokContactSchema = z.object({
   fullName: fullNameSchema,
-  relationship: optionalText('Relationship', 50),
+  relationship: optionalLettersOnlyText('Relationship', 50),
   phone: phoneSchema('Phone'),
   alternatePhone: alternatePhoneSchema,
   email: emailSchema,

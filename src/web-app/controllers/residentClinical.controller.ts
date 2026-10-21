@@ -29,6 +29,16 @@ import {
   type LabReportFiles,
   updateResidentLabReport as updateLabReport,
 } from '../../services/residentLabReport.service.js'
+import {
+  createResidentFluidBalance as createFluidBalance,
+  deleteResidentFluidBalanceEntry as deleteFluidBalance,
+  updateResidentFluidBalanceEntry as updateFluidBalance,
+} from '../../services/residentFluidBalance.service.js'
+import {
+  createResidentIncident as createIncident,
+  deleteResidentIncident as deleteIncident,
+  updateResidentIncident as updateIncident,
+} from '../../services/residentIncident.service.js'
 import { listMedicationAdministrations } from '../../services/medicationTask.service.js'
 import type {
   CreateResidentMedicationInput,
@@ -44,6 +54,17 @@ import type {
   CreateResidentLabReportInput,
   UpdateResidentLabReportInput,
 } from '../../validations/residentLabReport.validation.js'
+import type {
+  CreateResidentFluidBalanceInput,
+  UpdateResidentFluidBalanceInput,
+} from '../../validations/residentFluidBalance.validation.js'
+import type {
+  CreateResidentIncidentInput,
+  UpdateResidentIncidentInput,
+} from '../../validations/residentIncident.validation.js'
+
+export const MAX_INCIDENT_PHOTOS = 5
+export const MAX_INCIDENT_VOICE_NOTES = 1
 
 function sendError(res: Response, err: unknown, logLabel: string): void {
   if (err instanceof HttpError) {
@@ -327,5 +348,115 @@ export async function deleteResidentLabReport(req: AuthenticatedRequest, res: Re
     res.status(200).json({ success: true, message: 'Lab report deleted successfully' })
   } catch (err) {
     sendError(res, err, 'deleteResidentLabReport')
+  }
+}
+
+// ── Fluid balance ────────────────────────────────────────────────────────────
+
+/**
+ * POST /residents/:residentId/fluid-balance
+ */
+export async function createResidentFluidBalance(req: AuthenticatedRequest, res: Response): Promise<void> {
+  try {
+    const data = await createFluidBalance({
+      residentId: String(req.params.residentId),
+      input: req.body as CreateResidentFluidBalanceInput,
+      userId: req.user?.id ?? null,
+    })
+    res.status(201).json({ success: true, message: 'Fluid balance saved successfully', data })
+  } catch (err) {
+    sendError(res, err, 'createResidentFluidBalance')
+  }
+}
+
+/**
+ * PUT /residents/:residentId/fluid-balance/:id
+ */
+export async function updateResidentFluidBalance(req: AuthenticatedRequest, res: Response): Promise<void> {
+  try {
+    const data = await updateFluidBalance({
+      ...itemParams(req),
+      input: req.body as UpdateResidentFluidBalanceInput,
+    })
+    res.status(200).json({ success: true, message: 'Fluid balance updated successfully', data })
+  } catch (err) {
+    sendError(res, err, 'updateResidentFluidBalance')
+  }
+}
+
+/**
+ * DELETE /residents/:residentId/fluid-balance/:id (soft)
+ */
+export async function deleteResidentFluidBalance(req: AuthenticatedRequest, res: Response): Promise<void> {
+  try {
+    await deleteFluidBalance(itemParams(req))
+    res.status(200).json({ success: true, message: 'Fluid balance deleted successfully' })
+  } catch (err) {
+    sendError(res, err, 'deleteResidentFluidBalance')
+  }
+}
+
+// ── Incidents ────────────────────────────────────────────────────────────────
+
+function incidentFiles(req: AuthenticatedRequest): {
+  photos: Express.Multer.File[]
+  voiceNotes: Express.Multer.File[]
+} {
+  const files = req.files as { [fieldname: string]: Express.Multer.File[] } | undefined
+  const photos = files?.photos ?? []
+  const voiceNotes = files?.voiceNote ?? []
+  if (photos.some((file) => !file.mimetype.startsWith('image/'))) {
+    throw new HttpError(400, 'Photos must be image files')
+  }
+  if (voiceNotes.some((file) => !file.mimetype.startsWith('audio/') && file.mimetype !== 'video/webm')) {
+    throw new HttpError(400, 'Voice note must be an audio file')
+  }
+  return { photos, voiceNotes }
+}
+
+/**
+ * POST /residents/:residentId/incidents (multipart)
+ * Fields: incidentType, severity, incidentAt, notes. Files: photos (max 5), voiceNote (max 1).
+ */
+export async function createResidentIncident(req: AuthenticatedRequest, res: Response): Promise<void> {
+  try {
+    const data = await createIncident({
+      residentId: String(req.params.residentId),
+      input: req.body as CreateResidentIncidentInput,
+      userId: req.user?.id ?? null,
+      files: incidentFiles(req),
+    })
+    res.status(201).json({ success: true, message: 'Incident added successfully', data })
+  } catch (err) {
+    sendError(res, err, 'createResidentIncident')
+  }
+}
+
+/**
+ * PUT /residents/:residentId/incidents/:id (multipart)
+ * Fields: incidentType?, severity?, incidentAt?, notes?. Files: photos, voiceNote (appended).
+ */
+export async function updateResidentIncident(req: AuthenticatedRequest, res: Response): Promise<void> {
+  try {
+    const data = await updateIncident({
+      ...itemParams(req),
+      input: req.body as UpdateResidentIncidentInput,
+      files: incidentFiles(req),
+    })
+    res.status(200).json({ success: true, message: 'Incident updated successfully', data })
+  } catch (err) {
+    sendError(res, err, 'updateResidentIncident')
+  }
+}
+
+/**
+ * DELETE /residents/:residentId/incidents/:id (soft)
+ */
+export async function deleteResidentIncident(req: AuthenticatedRequest, res: Response): Promise<void> {
+  try {
+    await deleteIncident(itemParams(req))
+    res.status(200).json({ success: true, message: 'Incident deleted successfully' })
+  } catch (err) {
+    sendError(res, err, 'deleteResidentIncident')
   }
 }

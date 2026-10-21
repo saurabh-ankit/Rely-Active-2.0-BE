@@ -1,9 +1,13 @@
 import { randomUUID } from 'node:crypto'
 import { Op } from 'sequelize'
 import sequelize from '../config/db/index.js'
-import { FluidBalanceCategory, FluidIntakeType, FluidUnit } from '../enums/fluidBalance.enum.js'
+import { FluidBalanceCategory, FluidIntakeType, FluidOutputType, FluidUnit } from '../enums/fluidBalance.enum.js'
+import { HttpError } from '../middlewares/error/http-error.js'
 import { ResidentFluidBalance, type ResidentFluidBalanceCreationAttributes } from '../models/index.js'
-import type { CreateResidentFluidBalanceInput } from '../validations/residentFluidBalance.validation.js'
+import type {
+  CreateResidentFluidBalanceInput,
+  UpdateResidentFluidBalanceInput,
+} from '../validations/residentFluidBalance.validation.js'
 import { getClinicalResident } from './residentClinical.service.js'
 import { userInclude, userName } from './residentCondition.service.js'
 
@@ -37,7 +41,21 @@ export function formatFluidBalanceRow(row: ResidentFluidBalance) {
     note: data.note ?? null,
     recordedAt: new Date(data.recordedAt).toISOString(),
     createdBy: data.createdBy ?? null,
+    createdByName: userName(row.creator),
+    createdAt: data.createdAt ? new Date(data.createdAt).toISOString() : null,
+    updatedAt: data.updatedAt ? new Date(data.updatedAt).toISOString() : null,
   }
+}
+
+async function findResidentFluidBalanceEntry(residentId: string, id: string) {
+  const row = await ResidentFluidBalance.findOne({
+    where: { id, residentId, isDeleted: false },
+    include: [userInclude('creator')],
+  })
+  if (!row) {
+    throw new HttpError(404, 'Fluid balance entry not found')
+  }
+  return row
 }
 
 export async function createResidentFluidBalance(params: {
@@ -117,6 +135,106 @@ export async function listResidentFluidBalanceByDate(residentId: string, date: s
     date,
     entries: rows.map((row) => ({ ...formatFluidBalanceRow(row), recordedByName: userName(row.creator) })),
   }
+}
+
+/** All non-deleted fluid-balance entries for a resident, newest first. */
+export async function listResidentFluidBalances(residentId: string) {
+  await getClinicalResident(residentId)
+  const rows = await ResidentFluidBalance.findAll({
+    where: { residentId, isDeleted: false },
+    include: [userInclude('creator')],
+    order: [
+      ['recordedAt', 'DESC'],
+      ['createdAt', 'DESC'],
+    ],
+  })
+  return rows.map(formatFluidBalanceRow)
+}
+
+export async function updateResidentFluidBalanceEntry(params: {
+  residentId: string
+  id: string
+  input: UpdateResidentFluidBalanceInput
+  userId: string | null
+}) {
+  const { residentId, id, input, userId } = params
+  const row = await findResidentFluidBalanceEntry(residentId, id)
+
+  if (row.category === FluidBalanceCategory.INTAKE) {
+    const nextType = (input.type !== undefined ? input.type : row.fluidType) as FluidIntakeType | null
+    if (input.type !== undefined) {
+      if (!nextType || !Object.values(FluidIntakeType).includes(nextType)) {
+        throw new HttpError(400, `Intake type must be one of ${Object.values(FluidIntakeType).join(', ')}`)
+      }
+    }
+    const quantity = input.quantity !== undefined ? input.quantity : numOrNull(row.quantity)
+    const unit = (input.unit !== undefined ? input.unit : row.unit) as FluidUnit | null
+    if (quantity == null || !unit) {
+      throw new HttpError(400, 'Quantity and unit are required for intake entries')
+    }
+    await row.update({
+      fluidType: nextType,
+      ivFluidType:
+        nextType === FluidIntakeType.IV_FLUIDS
+          ? input.ivFluidType !== undefined
+            ? input.ivFluidType
+            : row.ivFluidType
+          : null,
+      description:
+        nextType === FluidIntakeType.ORAL_NG
+          ? input.description !== undefined
+            ? input.description
+            : row.description
+          : null,
+      quantity,
+      unit,
+      quantityMl: toMl(quantity, unit),
+      recordedAt: input.recordedAt ? new Date(input.recordedAt) : row.recordedAt,
+      updatedBy: userId,
+    })
+  } else if (row.category === FluidBalanceCategory.OUTPUT) {
+    const nextType = (input.type !== undefined ? input.type : row.fluidType) as FluidOutputType | null
+    if (input.type !== undefined) {
+      if (!nextType || !Object.values(FluidOutputType).includes(nextType)) {
+        throw new HttpError(400, `Output type must be one of ${Object.values(FluidOutputType).join(', ')}`)
+      }
+    }
+    const quantity = input.quantity !== undefined ? input.quantity : numOrNull(row.quantity)
+    const unit = (input.unit !== undefined ? input.unit : row.unit) as FluidUnit | null
+    if (quantity == null || !unit) {
+      throw new HttpError(400, 'Quantity and unit are required for output entries')
+    }
+    await row.update({
+      fluidType: nextType,
+      collectedBy: input.collectedBy !== undefined ? input.collectedBy : row.collectedBy,
+      quantity,
+      unit,
+      quantityMl: toMl(quantity, unit),
+      recordedAt: input.recordedAt ? new Date(input.recordedAt) : row.recordedAt,
+      updatedBy: userId,
+    })
+  } else {
+    await row.update({
+      stoolType: input.stoolType !== undefined ? input.stoolType : row.stoolType,
+      comfortLevel: input.comfortLevel !== undefined ? input.comfortLevel : row.comfortLevel,
+      note: input.note !== undefined ? input.note : row.note,
+      recordedAt: input.recordedAt ? new Date(input.recordedAt) : row.recordedAt,
+      updatedBy: userId,
+    })
+  }
+
+  const refreshed = await findResidentFluidBalanceEntry(residentId, id)
+  return formatFluidBalanceRow(refreshed)
+}
+
+export async function deleteResidentFluidBalanceEntry(params: {
+  residentId: string
+  id: string
+  userId: string | null
+}) {
+  const { residentId, id, userId } = params
+  const row = await findResidentFluidBalanceEntry(residentId, id)
+  await row.update({ isDeleted: true, updatedBy: userId })
 }
 
 /** Intake, output and net totals (ml) over the last 24 hours. */
