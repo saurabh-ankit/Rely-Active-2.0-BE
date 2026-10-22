@@ -13,6 +13,7 @@ import feedbackMobileRouter, { advertisementMobileRouter } from './feedbackMobil
 import billingMobileRouter from './billingMobile.routes.js'
 import notificationRouter from '../../../web-app/routes/notification.routes.js'
 import amenityMobileRouter from './amenityMobile.routes.js'
+import guardianMobileRouter from './guardianMobile.routes.js'
 
 export const l1MobileRouter = Router()
 
@@ -77,6 +78,9 @@ l1MobileRouter.use('/billing', billingMobileRouter)
 // ── Feedback & Advertisements (/api/v1/mobile/l1/feedback-forms, /advertisements) ──
 l1MobileRouter.use('/feedback-forms', feedbackMobileRouter)
 l1MobileRouter.use('/advertisements', advertisementMobileRouter)
+
+// ── Guardians: profile & residents, contact admin, attendance, documents (/api/v1/mobile/l1/guardian) ──
+l1MobileRouter.use('/guardian', guardianMobileRouter)
 
 // ── In-app notifications & push devices (/api/v1/mobile/l1/notifications), same API as the web ──
 l1MobileRouter.use('/notifications', notificationRouter)

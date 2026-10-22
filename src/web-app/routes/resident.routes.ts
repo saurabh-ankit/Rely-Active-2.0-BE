@@ -37,11 +37,15 @@ import {
   deleteResidentLabReport,
 } from '../controllers/residentClinical.controller.js'
 import {
-  getResidentNokContacts,
-  createResidentNokContact,
-  updateResidentNokContact,
-  deleteResidentNokContact,
-} from '../controllers/residentNok.controller.js'
+  createResidentGuardian,
+  deleteResidentGuardian,
+  getResidentGuardians,
+  updateResidentGuardian,
+} from '../controllers/residentGuardian.controller.js'
+import {
+  createResidentGuardianSchema,
+  updateResidentGuardianSchema,
+} from '../../validations/residentGuardian.validation.js'
 import { upload } from '../../middlewares/upload.js'
 import { authenticate } from '../../middlewares/authenticate.js'
 import { validateBody, validateParams, validateQuery } from '../../middlewares/validate/index.js'
@@ -64,10 +68,6 @@ import {
 import { residentTimelineQuerySchema } from '../../validations/residentTimeline.validation.js'
 import { createResidentDocumentSchema } from '../../validations/residentDocument.validation.js'
 import { updateResidentConditionSchema } from '../../validations/residentCondition.validation.js'
-import {
-  createResidentNokContactSchema,
-  updateResidentNokContactSchema,
-} from '../../validations/residentNokContact.validation.js'
 
 const router = Router()
 
@@ -87,7 +87,7 @@ const uploadLabReportFiles = upload.fields([
   { name: 'receipt', maxCount: 1 },
 ])
 
-const uploadNokPhoto = upload.fields([{ name: 'photo', maxCount: 1 }])
+const uploadGuardianPhoto = upload.fields([{ name: 'photo', maxCount: 1 }])
 
 // Resident Billing
 router.get('/billing', getResidentBillingData)
@@ -244,27 +244,23 @@ router.post(
   createResidentDocument,
 )
 
-// ── Resident NOK contacts ──────────────────────────────────────────────────
-router.get('/:residentId/nok-contacts', validateParams(residentIdParamSchema), getResidentNokContacts)
+// ── Resident guardians (non-residing family who look after the flat's residents) ──
+router.get('/:residentId/guardians', validateParams(residentIdParamSchema), getResidentGuardians)
 router.post(
-  '/:residentId/nok-contacts',
+  '/:residentId/guardians',
   validateParams(residentIdParamSchema),
-  uploadNokPhoto,
-  validateBody(createResidentNokContactSchema),
-  createResidentNokContact,
+  uploadGuardianPhoto,
+  validateBody(createResidentGuardianSchema),
+  createResidentGuardian,
 )
 router.put(
-  '/:residentId/nok-contacts/:id',
+  '/:residentId/guardians/:id',
   validateParams(residentClinicalItemParamSchema),
-  uploadNokPhoto,
-  validateBody(updateResidentNokContactSchema),
-  updateResidentNokContact,
+  uploadGuardianPhoto,
+  validateBody(updateResidentGuardianSchema),
+  updateResidentGuardian,
 )
-router.delete(
-  '/:residentId/nok-contacts/:id',
-  validateParams(residentClinicalItemParamSchema),
-  deleteResidentNokContact,
-)
+router.delete('/:residentId/guardians/:id', validateParams(residentClinicalItemParamSchema), deleteResidentGuardian)
 
 // Resident Onboarding & Operations
 router.post('/', uploadResidentPhoto, createResident)

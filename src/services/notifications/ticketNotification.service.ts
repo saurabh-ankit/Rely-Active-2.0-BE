@@ -1,5 +1,5 @@
 import { NotificationActionType, NotificationModule, NotificationRecipientType } from '../../enums/notification.enum.js'
-import type { Ticket } from '../../models/index.js'
+import { UserLocation, type Ticket } from '../../models/index.js'
 import type { NotificationActorInput } from './notificationAudience.service.js'
 import { createNotificationEvent, type NotificationRecipientInput } from './notification.service.js'
 
@@ -13,6 +13,26 @@ export interface PublishTicketNotificationInput {
   dedupeKey?: string | null
   actionValue?: string | null
   extraRecipients?: NotificationRecipientInput[]
+}
+
+/** Staff mapped to the ticket's property (web app admins and L3), e.g. for a new or escalated ticket. */
+export async function listLocationStaffRecipients(
+  locId: string | null | undefined,
+): Promise<NotificationRecipientInput[]> {
+  if (!locId) return []
+  const locationStaff = await UserLocation.findAll({
+    where: { locId, isDeleted: false },
+    attributes: ['userId'],
+  })
+  const userIds = new Set(
+    locationStaff
+      .map((entry) => entry.userId)
+      .filter((value): value is string => typeof value === 'string' && value.length > 0),
+  )
+  return Array.from(userIds).map((userId) => ({
+    recipientType: NotificationRecipientType.USER,
+    recipientUserId: userId,
+  }))
 }
 
 function collectTicketRecipients(ticket: Ticket): NotificationRecipientInput[] {

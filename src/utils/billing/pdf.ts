@@ -1,7 +1,41 @@
+import { existsSync } from 'node:fs'
 import puppeteer from 'puppeteer-core'
 
-/** Uses the system Chromium (as Rely Assist does); set PUPPETEER_EXECUTABLE_PATH on servers. */
-const executablePath = () => process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/chromium-browser'
+// Chromium-based browsers puppeteer can drive, by platform (servers, then developer machines)
+const BROWSER_CANDIDATES: Record<string, string[]> = {
+  linux: ['/usr/bin/chromium-browser', '/usr/bin/chromium', '/usr/bin/google-chrome', '/usr/bin/google-chrome-stable'],
+  darwin: [
+    '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+    '/Applications/Chromium.app/Contents/MacOS/Chromium',
+    '/Applications/Brave Browser.app/Contents/MacOS/Brave Browser',
+    '/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge',
+  ],
+  win32: [
+    'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
+    'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',
+  ],
+}
+
+/**
+ * Uses the system Chromium (as Rely Assist does). PUPPETEER_EXECUTABLE_PATH wins when it exists;
+ * otherwise the first installed browser for this platform, so local machines work without setup.
+ */
+let resolvedExecutablePath: string | undefined
+const executablePath = (): string => {
+  if (resolvedExecutablePath) return resolvedExecutablePath
+  const configured = process.env.PUPPETEER_EXECUTABLE_PATH
+  const candidates = [configured, ...(BROWSER_CANDIDATES[process.platform] ?? [])].filter((path): path is string =>
+    Boolean(path),
+  )
+  const found = candidates.find((path) => existsSync(path))
+  if (!found) {
+    throw new Error(
+      `No Chrome/Chromium found for PDF generation (tried ${candidates.join(', ')}). Install one or set PUPPETEER_EXECUTABLE_PATH.`,
+    )
+  }
+  resolvedExecutablePath = found
+  return found
+}
 
 export const escapeHtml = (value: unknown): string =>
   String(value ?? '')
