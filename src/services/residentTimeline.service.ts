@@ -275,7 +275,8 @@ async function loadFluidBalances(residentId: string, range: DateRange): Promise<
     if (batch.intakeMl > 0) parts.push(`Intake: ${round(batch.intakeMl)} ml`)
     if (batch.outputMl > 0) parts.push(`Output: ${round(batch.outputMl)} ml`)
     if (batch.bowelCount > 0) parts.push(`Bowel: ${batch.bowelCount}`)
-    if (batch.notes.length) parts.push(batch.notes[0])
+    const firstNote = batch.notes[0]
+    if (firstNote) parts.push(firstNote)
     return {
       id: `fluid_balance:${batchId}:recorded`,
       type: 'fluid_balance' as const,
