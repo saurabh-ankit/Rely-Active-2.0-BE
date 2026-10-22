@@ -45,21 +45,11 @@ import {
   MAX_INCIDENT_VOICE_NOTES,
 } from '../controllers/residentClinical.controller.js'
 import {
-  getResidentNokContacts,
-  createResidentNokContact,
-  updateResidentNokContact,
-  deleteResidentNokContact,
-} from '../controllers/residentNok.controller.js'
-import {
   createResidentGuardian,
   deleteResidentGuardian,
   getResidentGuardians,
   updateResidentGuardian,
 } from '../controllers/residentGuardian.controller.js'
-import {
-  createResidentNokContactSchema,
-  updateResidentNokContactSchema,
-} from '../../validations/residentNokContact.validation.js'
 import {
   createResidentGuardianSchema,
   updateResidentGuardianSchema,
@@ -118,7 +108,6 @@ const uploadIncidentFiles = upload.fields([
   { name: 'voiceNote', maxCount: MAX_INCIDENT_VOICE_NOTES },
 ])
 
-const uploadNokPhoto = upload.fields([{ name: 'photo', maxCount: 1 }])
 const uploadGuardianPhoto = upload.fields([{ name: 'photo', maxCount: 1 }])
 
 // Resident Billing
@@ -318,28 +307,6 @@ router.post(
   uploadResidentDocument,
   validateBody(createResidentDocumentSchema),
   createResidentDocument,
-)
-
-// ── Resident NOK contacts ──────────────────────────────────────────────────
-router.get('/:residentId/nok-contacts', validateParams(residentIdParamSchema), getResidentNokContacts)
-router.post(
-  '/:residentId/nok-contacts',
-  validateParams(residentIdParamSchema),
-  uploadNokPhoto,
-  validateBody(createResidentNokContactSchema),
-  createResidentNokContact,
-)
-router.put(
-  '/:residentId/nok-contacts/:id',
-  validateParams(residentClinicalItemParamSchema),
-  uploadNokPhoto,
-  validateBody(updateResidentNokContactSchema),
-  updateResidentNokContact,
-)
-router.delete(
-  '/:residentId/nok-contacts/:id',
-  validateParams(residentClinicalItemParamSchema),
-  deleteResidentNokContact,
 )
 
 // ── Resident guardians (non-residing family who look after the flat's residents) ──

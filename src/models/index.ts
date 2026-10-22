@@ -205,11 +205,6 @@ import {
   type ResidentDocumentCreationAttributes,
 } from './residentDocument.model.js'
 import {
-  ResidentNokContact,
-  type ResidentNokContactAttributes,
-  type ResidentNokContactCreationAttributes,
-} from './residentNokContact.model.js'
-import {
   ResidentGuardian,
   type ResidentGuardianAttributes,
   type ResidentGuardianCreationAttributes,
@@ -375,12 +370,6 @@ Resident.hasMany(ResidentDocument, { foreignKey: 'residentId', as: 'documents' }
 ResidentDocument.belongsTo(Resident, { foreignKey: 'residentId', as: 'resident' })
 Property.hasMany(ResidentDocument, { foreignKey: 'locationId', as: 'residentDocuments' })
 ResidentDocument.belongsTo(Property, { foreignKey: 'locationId', as: 'location' })
-
-// ── Resident NOK Contact associations ───────────────────────────────────────
-Resident.hasMany(ResidentNokContact, { foreignKey: 'residentId', as: 'nokContacts' })
-ResidentNokContact.belongsTo(Resident, { foreignKey: 'residentId', as: 'resident' })
-Property.hasMany(ResidentNokContact, { foreignKey: 'locationId', as: 'residentNokContacts' })
-ResidentNokContact.belongsTo(Property, { foreignKey: 'locationId', as: 'location' })
 
 // ── Resident Guardian associations ──────────────────────────────────────────
 Resident.hasMany(ResidentGuardian, { foreignKey: 'residentId', as: 'guardians' })
@@ -1275,9 +1264,6 @@ export {
   ResidentDocument,
   type ResidentDocumentAttributes,
   type ResidentDocumentCreationAttributes,
-  ResidentNokContact,
-  type ResidentNokContactAttributes,
-  type ResidentNokContactCreationAttributes,
   ResidentGuardian,
   type ResidentGuardianAttributes,
   type ResidentGuardianCreationAttributes,
