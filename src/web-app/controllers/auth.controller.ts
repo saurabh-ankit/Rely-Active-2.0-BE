@@ -76,6 +76,9 @@ export async function login(req: Request, res: Response): Promise<void> {
       return
     }
 
+    const lastLogin = new Date()
+    await user.update({ lastLogin })
+
     const authCtx = await AuthorizationService.getUserAuthorizationContext(user.id)
 
     const token = generateToken({

@@ -623,6 +623,11 @@ export async function up({ context: queryInterface }: { context: QueryInterface 
       allowNull: false,
       defaultValue: 'ACTIVE',
     },
+    lastLogin: {
+      type: DataTypes.DATE,
+      allowNull: true,
+      comment: 'Timestamp of the most recent successful login',
+    },
     isActive: {
       type: DataTypes.BOOLEAN,
       defaultValue: true,

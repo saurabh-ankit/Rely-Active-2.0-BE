@@ -12,6 +12,7 @@ export interface UserAttributes extends BaseAttributes {
   phone?: string | null
   passwordHash?: string | null
   status: UserStatus
+  lastLogin?: Date | null
   isActive?: boolean
   isDeleted?: boolean
 }
@@ -26,6 +27,7 @@ export type UserCreationAttributes = Optional<
   | 'phone'
   | 'passwordHash'
   | 'status'
+  | 'lastLogin'
   | 'isActive'
   | 'isDeleted'
   | 'createdBy'
@@ -45,6 +47,7 @@ export class User extends BaseModel<UserAttributes, UserCreationAttributes> impl
   declare phone: string | null
   declare passwordHash: string | null
   declare status: UserStatus
+  declare lastLogin: Date | null
   declare isActive: boolean
   declare isDeleted: boolean
   declare profile?: UserDetail | null
@@ -83,6 +86,11 @@ User.init(
       type: DataTypes.ENUM('PENDING', 'ACTIVE', 'INACTIVE', 'BLOCKED'),
       allowNull: false,
       defaultValue: 'ACTIVE',
+    },
+    lastLogin: {
+      type: DataTypes.DATE,
+      allowNull: true,
+      comment: 'Timestamp of the most recent successful login',
     },
     isActive: {
       type: DataTypes.BOOLEAN,

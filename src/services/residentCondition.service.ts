@@ -1,5 +1,7 @@
-import { Op } from 'sequelize'
+import { Op, QueryTypes } from 'sequelize'
+import sequelize from '../config/db/index.js'
 import { Consultant, ResidentConditionLog, User, UserDetail } from '../models/index.js'
+import { CareLevel, ResidentStatus } from '../enums/resident.enum.js'
 import { DiagnosisCondition, DiagnosisStatus } from '../enums/diagnosis.enum.js'
 
 export type ResidentConditionSource = 'MANUAL' | 'DOCTOR'
@@ -84,4 +86,88 @@ export async function getResidentCurrentCondition(residentId: string): Promise<R
   if (!manual) return doctor
   if (!doctor) return manual
   return new Date(manual.updatedAt).getTime() >= new Date(doctor.updatedAt).getTime() ? manual : doctor
+}
+
+/**
+ * Active residents who need close attention on the dashboard.
+ * Uses the same "current condition" as the resident detail screen
+ * (newer of latest manual log vs latest completed doctor note).
+ * Falls back to careLevel = CRITICAL when no condition has been recorded yet.
+ */
+export async function listCriticalResidentIds(options: {
+  locationId?: string | null
+  page: number
+  limit: number
+}): Promise<{ ids: string[]; total: number }> {
+  const { locationId = null, page, limit } = options
+  const locFilter = locationId ? 'r.locId = :locationId' : '1=1'
+  const replacements: Record<string, unknown> = {
+    locationId,
+    careCritical: CareLevel.CRITICAL,
+    conditionCritical: DiagnosisCondition.CRITICAL,
+    activeStatus: ResidentStatus.ACTIVE,
+    completed: DiagnosisStatus.COMPLETED,
+    limit,
+    offset: (page - 1) * limit,
+  }
+
+  const criticalFrom = `
+    FROM residents r
+    LEFT JOIN (
+      SELECT residentId, \`condition\`, createdAt AS updatedAt
+      FROM (
+        SELECT residentId, \`condition\`, createdAt,
+          ROW_NUMBER() OVER (PARTITION BY residentId ORDER BY createdAt DESC) AS rn
+        FROM resident_condition_logs
+        WHERE isDeleted = 0
+      ) m
+      WHERE m.rn = 1
+    ) manual ON manual.residentId = r.id
+    LEFT JOIN (
+      SELECT residentId, \`condition\`, updatedAt
+      FROM (
+        SELECT residentId, \`condition\`,
+          COALESCE(completedAt, updatedAt) AS updatedAt,
+          ROW_NUMBER() OVER (
+            PARTITION BY residentId
+            ORDER BY COALESCE(completedAt, updatedAt) DESC, updatedAt DESC
+          ) AS rn
+        FROM consultants
+        WHERE isDeleted = 0 AND status = :completed AND \`condition\` IS NOT NULL
+      ) d
+      WHERE d.rn = 1
+    ) doctor ON doctor.residentId = r.id
+    WHERE r.isDeleted = 0
+      AND r.status = :activeStatus
+      AND ${locFilter}
+      AND (
+        CASE
+          WHEN manual.residentId IS NULL AND doctor.residentId IS NULL THEN r.careLevel = :careCritical
+          WHEN manual.residentId IS NULL THEN doctor.\`condition\` = :conditionCritical
+          WHEN doctor.residentId IS NULL THEN manual.\`condition\` = :conditionCritical
+          WHEN manual.updatedAt >= doctor.updatedAt THEN manual.\`condition\` = :conditionCritical
+          ELSE doctor.\`condition\` = :conditionCritical
+        END
+      )
+  `
+
+  const [countRow] = await sequelize.query<{ total: number }>(`SELECT COUNT(*) AS total ${criticalFrom}`, {
+    replacements,
+    type: QueryTypes.SELECT,
+  })
+
+  const rows = await sequelize.query<{ id: string }>(
+    `
+    SELECT r.id
+    ${criticalFrom}
+    ORDER BY r.updatedAt DESC
+    LIMIT :limit OFFSET :offset
+    `,
+    { replacements, type: QueryTypes.SELECT },
+  )
+
+  return {
+    ids: rows.map((row) => row.id),
+    total: Number(countRow?.total ?? 0),
+  }
 }

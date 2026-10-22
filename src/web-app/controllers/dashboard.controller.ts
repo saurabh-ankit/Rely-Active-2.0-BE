@@ -1,8 +1,9 @@
 import type { Request, Response } from 'express'
-import { QueryTypes } from 'sequelize'
+import { Op, QueryTypes } from 'sequelize'
 import sequelize from '../../config/db/index.js'
 import { PropertyUnit, Resident } from '../../models/index.js'
 import { CareLevel, ResidentStatus } from '../../enums/resident.enum.js'
+import { listCriticalResidentIds } from '../../services/residentCondition.service.js'
 
 /**
  * Dashboard statistics for one property (or every property when no location / 'ALL' is given).
@@ -82,19 +83,24 @@ export async function getDashboardStats(req: Request, res: Response): Promise<vo
       JOIN residents r ON r.id = f.residentId AND r.isDeleted = 0 AND r.isResiding = 1 AND ${at('r.locId')}
       WHERE f.isDeleted = 0 AND f.isResiding = 1`)
 
-    const criticalWhere: Record<string, unknown> = {
-      isDeleted: false,
-      status: ResidentStatus.ACTIVE,
-      careLevel: CareLevel.CRITICAL,
-    }
-    if (loc) criticalWhere.locId = loc
-    const { count: criticalCount, rows: criticalRows } = await Resident.findAndCountAll({
-      where: criticalWhere,
-      include: [{ model: PropertyUnit, as: 'unit', required: false, attributes: ['unit_number'] }],
-      order: [['updatedAt', 'DESC']],
+    // Same "Condition" as resident detail (manual log / doctor note), with careLevel fallback.
+    const { ids: criticalIds, total: criticalCount } = await listCriticalResidentIds({
+      locationId: loc,
+      page,
       limit,
-      offset: (page - 1) * limit,
     })
+    const criticalRows =
+      criticalIds.length === 0
+        ? []
+        : await Resident.findAll({
+            where: { id: { [Op.in]: criticalIds } },
+            include: [{ model: PropertyUnit, as: 'unit', required: false, attributes: ['unit_number'] }],
+          })
+    // Preserve the SQL ordering from listCriticalResidentIds (updatedAt DESC).
+    const criticalById = new Map(criticalRows.map((r) => [r.id, r]))
+    const orderedCriticalRows = criticalIds
+      .map((id) => criticalById.get(id))
+      .filter((r): r is (typeof criticalRows)[number] => Boolean(r))
 
     // ── Tickets ────────────────────────────────────────────────────────────────
     const ticketStatus = await q<{ status: string; n: number }>(
@@ -431,7 +437,7 @@ export async function getDashboardStats(req: Request, res: Response): Promise<vo
             page,
             limit,
             totalPages: Math.max(1, Math.ceil(criticalCount / limit)),
-            items: criticalRows.map((r) => ({
+            items: orderedCriticalRows.map((r) => ({
               id: r.id,
               name: `${r.firstName} ${r.lastName || ''}`.trim(),
               unit: r.unit?.unit_number ?? null,

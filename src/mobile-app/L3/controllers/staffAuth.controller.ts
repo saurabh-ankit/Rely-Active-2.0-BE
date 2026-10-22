@@ -105,6 +105,8 @@ export async function staffLogin(req: Request, res: Response): Promise<void> {
       return
     }
 
+    await user.update({ lastLogin: new Date() })
+
     const userWithAssoc = user as User & { profile?: unknown; userLocations?: unknown[] }
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
