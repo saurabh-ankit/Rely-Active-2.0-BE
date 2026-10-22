@@ -205,10 +205,10 @@ import {
   type ResidentDocumentCreationAttributes,
 } from './residentDocument.model.js'
 import {
-  ResidentNokContact,
-  type ResidentNokContactAttributes,
-  type ResidentNokContactCreationAttributes,
-} from './residentNokContact.model.js'
+  ResidentGuardian,
+  type ResidentGuardianAttributes,
+  type ResidentGuardianCreationAttributes,
+} from './residentGuardian.model.js'
 import {
   ResidentConditionLog,
   type ResidentConditionLogAttributes,
@@ -371,11 +371,10 @@ ResidentDocument.belongsTo(Resident, { foreignKey: 'residentId', as: 'resident' 
 Property.hasMany(ResidentDocument, { foreignKey: 'locationId', as: 'residentDocuments' })
 ResidentDocument.belongsTo(Property, { foreignKey: 'locationId', as: 'location' })
 
-// ── Resident NOK Contact associations ───────────────────────────────────────
-Resident.hasMany(ResidentNokContact, { foreignKey: 'residentId', as: 'nokContacts' })
-ResidentNokContact.belongsTo(Resident, { foreignKey: 'residentId', as: 'resident' })
-Property.hasMany(ResidentNokContact, { foreignKey: 'locationId', as: 'residentNokContacts' })
-ResidentNokContact.belongsTo(Property, { foreignKey: 'locationId', as: 'location' })
+// ── Resident Guardian associations ──────────────────────────────────────────
+Resident.hasMany(ResidentGuardian, { foreignKey: 'residentId', as: 'guardians' })
+ResidentGuardian.belongsTo(Resident, { foreignKey: 'residentId', as: 'resident' })
+ResidentGuardian.belongsTo(Property, { foreignKey: 'locationId', as: 'location' })
 
 // ── Resident Condition Log associations ─────────────────────────────────────
 Resident.hasMany(ResidentConditionLog, { foreignKey: 'residentId', as: 'conditionLogs' })
@@ -1265,9 +1264,9 @@ export {
   ResidentDocument,
   type ResidentDocumentAttributes,
   type ResidentDocumentCreationAttributes,
-  ResidentNokContact,
-  type ResidentNokContactAttributes,
-  type ResidentNokContactCreationAttributes,
+  ResidentGuardian,
+  type ResidentGuardianAttributes,
+  type ResidentGuardianCreationAttributes,
   ResidentConditionLog,
   type ResidentConditionLogAttributes,
   type ResidentConditionLogCreationAttributes,

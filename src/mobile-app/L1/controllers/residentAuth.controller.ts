@@ -13,7 +13,13 @@ import {
   PropertyUnit,
   Resident,
   ResidentFamilyMember,
+  ResidentGuardian,
 } from '../../../models/index.js'
+import {
+  formatGuardian,
+  listCareRecipients,
+  resolveActingRecipient,
+} from '../../../services/residentGuardian.service.js'
 import { registerDeviceTokenSafe } from '../../../services/notifications/notificationDeviceToken.service.js'
 import { generateToken, verifyToken } from '../../../utils/jwt.js'
 import { uploadFileToS3, uploadBase64ToS3 } from '../../../middlewares/s3/index.js'
@@ -34,6 +40,71 @@ interface PkgType {
       includedMealSlots?: string[]
     }
   }
+}
+
+/**
+ * Signs in a guardian (by username, phone or email). Returns false when no guardian matches, so
+ * the caller can answer with the usual invalid-credentials error. Guardians don't get push
+ * notifications, so no device token is registered.
+ */
+async function guardianLogin(res: Response, identifier: string, password: string): Promise<boolean> {
+  const guardian = await ResidentGuardian.findOne({
+    where: {
+      [Op.or]: [{ username: identifier }, { phone: identifier }, { email: identifier.toLowerCase() }],
+      isDeleted: false,
+    },
+    include: [{ model: Resident, as: 'resident' }],
+  })
+  if (!guardian || !(await bcrypt.compare(password, guardian.passwordHash))) return false
+
+  const household = guardian.resident
+  if (!guardian.isActive || !household || household.isDeleted || household.status !== 'ACTIVE') {
+    res
+      .status(403)
+      .json({ success: false, message: 'Guardian account is inactive. Please contact the property admin.' })
+    return true
+  }
+
+  const careRecipients = await listCareRecipients(household.id)
+  if (!careRecipients.length) {
+    res.status(403).json({ success: false, message: 'No one is currently residing in this flat.' })
+    return true
+  }
+
+  await guardian.update({ lastLoginAt: new Date() })
+  const token = generateToken({
+    userId: guardian.id,
+    email: guardian.email,
+    companyId: household.companyId,
+    defaultLocationId: household.locId,
+    roles: ['RESIDENT_GUARDIAN'],
+  })
+
+  res.status(200).json({
+    success: true,
+    message: 'Guardian login successful',
+    data: {
+      token,
+      role: 'GUARDIAN',
+      guardian: formatGuardian(guardian),
+      // The residents this guardian can act for; the app asks which one when there are several
+      careRecipients,
+      resident: {
+        id: guardian.id,
+        residentId: household.id,
+        unitId: household.unitId,
+        locId: household.locId,
+        residentType: 'GUARDIAN',
+        isResiding: false,
+        firstName: guardian.firstName,
+        lastName: guardian.lastName,
+        username: guardian.username,
+        email: guardian.email,
+        phone: guardian.phone,
+      },
+    },
+  })
+  return true
 }
 
 export async function residentLogin(req: Request, res: Response): Promise<void> {
@@ -102,6 +173,8 @@ export async function residentLogin(req: Request, res: Response): Promise<void> 
       })
 
       if (!familyMember || !familyMember.passwordHash || !familyMember.resident) {
+        // 3. A guardian: family who don't live in the flat but look after its residents
+        if (await guardianLogin(res, trimmedUsername, strPassword)) return
         res.status(401).json({
           success: false,
           message: 'Invalid resident credentials.',
@@ -282,7 +355,28 @@ export async function getResidentProfile(req: Request, res: Response): Promise<v
       return
     }
     const token = authHeader.substring(7)
-    const decoded = verifyToken(token)
+    let decoded = verifyToken(token)
+
+    // A guardian sees the profile of the person they act for (X-Acting-For), as `authenticate` does
+    if (decoded.roles?.includes('RESIDENT_GUARDIAN')) {
+      const guardian = await ResidentGuardian.findByPk(decoded.userId, {
+        include: [{ model: Resident, as: 'resident' }],
+      })
+      const household = guardian?.resident
+      if (!guardian || guardian.isDeleted || !guardian.isActive || !household || household.isDeleted) {
+        res.status(401).json({ success: false, message: 'Invalid token or guardian account deactivated.' })
+        return
+      }
+      const acting = resolveActingRecipient(await listCareRecipients(household.id), req.headers['x-acting-for'])
+      if (!acting) {
+        res.status(403).json({ success: false, message: 'Select one of your family members residing in the flat.' })
+        return
+      }
+      decoded = {
+        userId: acting.familyMemberId || household.id,
+        roles: [acting.familyMemberId ? 'RESIDENT_FAMILY_MEMBER' : 'RESIDENT'],
+      }
+    }
 
     const fullUnitInclude = {
       model: PropertyUnit,

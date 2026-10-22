@@ -11,16 +11,17 @@ import {
   TicketFeedback,
   User,
   UserDetail,
-  UserLocation,
 } from '../../../models/index.js'
-import { NotificationRecipientType } from '../../../enums/notification.enum.js'
 import { TicketActivityType, TicketFeedbackRating } from '../../../enums/ticket.enum.js'
 import { TicketPriority, TicketStatus } from '../../../enums/ticket.enum.js'
 import type { AuthenticatedRequest } from '../../../middlewares/authenticate.js'
 import { uploadFileToS3, uploadBase64ToS3 } from '../../../middlewares/s3/index.js'
 import { resolveNotificationActor } from '../../../services/notifications/notificationAudience.service.js'
 import { buildTatUpdatedNotificationContent } from '../../../services/notifications/ticketNotificationContent.service.js'
-import { publishTicketNotificationSafe } from '../../../services/notifications/ticketNotification.service.js'
+import {
+  listLocationStaffRecipients,
+  publishTicketNotificationSafe,
+} from '../../../services/notifications/ticketNotification.service.js'
 import { resolveHousehold } from '../../../utils/household.util.js'
 
 /**
@@ -629,24 +630,7 @@ export async function createResidentTicket(req: AuthenticatedRequest, res: Respo
       attachments: ticketAttachments,
     })
 
-    const locationStaff = await UserLocation.findAll({
-      where: {
-        locId: resident.locId,
-        isDeleted: false,
-      },
-      attributes: ['userId'],
-    })
-
-    const locationUserRecipients = Array.from(
-      new Set(
-        locationStaff
-          .map((entry) => entry.userId)
-          .filter((value): value is string => typeof value === 'string' && value.length > 0),
-      ),
-    ).map((userId) => ({
-      recipientType: NotificationRecipientType.USER,
-      recipientUserId: userId,
-    }))
+    const locationUserRecipients = await listLocationStaffRecipients(resident.locId)
 
     await publishTicketNotificationSafe({
       ticket: newTicket,
@@ -912,6 +896,8 @@ export async function escalateTicket(req: AuthenticatedRequest, res: Response): 
         reason: ticket.escalationReason,
         escalatedAt: ticket.escalatedAt,
       },
+      // Property staff (web app admins and L3) need to see an escalation, not only those already on the ticket
+      extraRecipients: await listLocationStaffRecipients(ticket.locId),
     })
 
     res.status(200).json({

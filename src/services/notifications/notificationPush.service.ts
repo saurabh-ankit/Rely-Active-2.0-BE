@@ -36,6 +36,9 @@ function buildPushData(event: NotificationEvent): Record<string, string> {
     actionType: toDataValue(event.actionType),
     actionValue: toDataValue(event.actionValue),
     severity: toDataValue(event.severity),
+    // Who did it (RESIDENT / FAMILY_MEMBER from the resident app, USER for staff, SYSTEM), so the
+    // app can keep a resident's own actions to the notification bar
+    actorType: toDataValue(event.actorType),
     occurredAt: event.occurredAt.toISOString(),
     // FCM data is limited to 4KB; a cut-off JSON can't be parsed, so drop an oversized payload
     title: toDataValue(event.title),
@@ -59,12 +62,18 @@ function extractInvalidTokens(result: Awaited<ReturnType<typeof sendPushToTokens
   return Array.from(invalidTokens)
 }
 
-/** Android channels the mobile apps create; each kind of push goes to its own channel. */
+/**
+ * Android channels the mobile apps create; each kind of push goes to its own channel. The `_v2`
+ * channels carry the apps' custom sounds (Android fixes a channel's sound when it is created).
+ */
 export const ANDROID_CHANNELS = {
-  TICKETS: 'tickets',
-  GATE_APPROVALS: 'gate_approvals',
-  GATE_UPDATES: 'gate_updates',
+  TICKETS: 'tickets_v2',
+  GATE_APPROVALS: 'gate_approvals_v2',
+  GATE_UPDATES: 'gate_updates_v2',
 } as const
+
+/** The apps' notification sound (android/app/src/main/res/raw/rely_alert.mp3). */
+export const ANDROID_NOTIFICATION_SOUND = 'rely_alert'
 
 /** Gate approval requests (and their "already decided" follow-ups) are handled by the app itself. */
 const DATA_ONLY_EVENTS = new Set(['GATE_VISITOR_APPROVAL_REQUESTED', 'GATE_VISITOR_DECIDED'])
@@ -78,10 +87,11 @@ function pushOptions(event: NotificationEvent) {
     return {
       dataOnly,
       androidChannelId: dataOnly ? ANDROID_CHANNELS.GATE_APPROVALS : ANDROID_CHANNELS.GATE_UPDATES,
+      androidSound: ANDROID_NOTIFICATION_SOUND,
       ttlSeconds: GATE_APPROVAL_TTL_SECONDS,
     }
   }
-  return { androidChannelId: ANDROID_CHANNELS.TICKETS }
+  return { androidChannelId: ANDROID_CHANNELS.TICKETS, androidSound: ANDROID_NOTIFICATION_SOUND }
 }
 
 export async function dispatchNotificationPush(input: DispatchNotificationPushInput): Promise<void> {
