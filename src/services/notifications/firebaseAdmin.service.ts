@@ -19,6 +19,8 @@ export interface SendPushToTokensInput {
   dataOnly?: boolean
   /** Android notification channel the app created for this kind of push. */
   androidChannelId?: string
+  /** res/raw sound the app ships (Android 7 and older; newer versions use the channel's sound). */
+  androidSound?: string
   /** Drop the push if it can't be delivered within this time (e.g. a gate approval). */
   ttlSeconds?: number
 }
@@ -137,7 +139,9 @@ export async function sendPushToTokens(input: SendPushToTokensInput): Promise<Se
         android: {
           priority: 'high',
           ...(ttl ? { ttl } : {}),
-          ...(input.androidChannelId ? { notification: { channelId: input.androidChannelId, sound: 'default' } } : {}),
+          ...(input.androidChannelId
+            ? { notification: { channelId: input.androidChannelId, sound: input.androidSound || 'default' } }
+            : {}),
         },
         apns: {
           payload: {

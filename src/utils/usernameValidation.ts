@@ -1,15 +1,16 @@
 import { Op } from 'sequelize'
-import { User, Resident, ResidentFamilyMember } from '../models/index.js'
+import { User, Resident, ResidentFamilyMember, ResidentGuardian } from '../models/index.js'
 
 interface ExcludeOptions {
   excludeUserId?: string | null
   excludeResidentId?: string | null
   excludeFamilyMemberId?: string | null
+  excludeGuardianId?: string | null
 }
 
 /**
  * Checks whether a given username already exists in Users (employees/admin),
- * Primary Residents, or Resident Family Members.
+ * Primary Residents, Resident Family Members, or Resident Guardians.
  * Returns the conflicting username if taken, or null if available.
  */
 export async function checkUsernameAvailability(
@@ -43,6 +44,14 @@ export async function checkUsernameAvailability(
   }
   const existingFm = await ResidentFamilyMember.findOne({ where: fmWhere })
   if (existingFm) return username
+
+  // 4. Check ResidentGuardian table
+  const guardianWhere: Record<string, unknown> = { username, isDeleted: false }
+  if (options.excludeGuardianId) {
+    guardianWhere.id = { [Op.ne]: options.excludeGuardianId }
+  }
+  const existingGuardian = await ResidentGuardian.findOne({ where: guardianWhere })
+  if (existingGuardian) return username
 
   return null
 }

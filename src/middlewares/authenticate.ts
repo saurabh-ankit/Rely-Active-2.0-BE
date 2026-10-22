@@ -1,6 +1,8 @@
 import type { NextFunction, Request, Response } from 'express'
 import { verifyToken } from '../utils/jwt.js'
-import { Resident, ResidentFamilyMember, User, UserLocation } from '../models/index.js'
+import { Resident, ResidentFamilyMember, ResidentGuardian, User, UserLocation } from '../models/index.js'
+import { listCareRecipients, resolveActingRecipient, type CareRecipient } from '../services/residentGuardian.service.js'
+import { isGuardianAllowed } from '../utils/guardianAccess.js'
 
 export interface AuthenticatedRequest extends Request {
   user?: {
@@ -11,6 +13,10 @@ export interface AuthenticatedRequest extends Request {
     companyId?: string | null
     defaultLocationId?: string | null
     roles: string[]
+    /** Set when a guardian is acting for one of the flat's residents (see `actingFor`). */
+    guardianId?: string
+    guardianName?: string
+    actingFor?: CareRecipient
   }
   locationId?: string | null
 }
@@ -28,6 +34,51 @@ export async function authenticate(req: AuthenticatedRequest, res: Response, nex
 
     const token = authHeader.substring(7)
     const decoded = verifyToken(token)
+
+    if (decoded.roles?.includes('RESIDENT_GUARDIAN')) {
+      const guardian = await ResidentGuardian.findByPk(decoded.userId, {
+        include: [{ model: Resident, as: 'resident' }],
+      })
+      const household = guardian?.resident
+      if (!guardian || guardian.isDeleted || !guardian.isActive || !household || household.isDeleted) {
+        res.status(401).json({ success: false, message: 'Invalid token or guardian account deactivated.' })
+        return
+      }
+      if (!isGuardianAllowed(req.method, req.originalUrl)) {
+        res.status(403).json({ success: false, message: 'This action is not available for guardians.' })
+        return
+      }
+
+      // Act as the resident chosen in the app (X-Acting-For: RESIDENT:<id> | FAMILY_MEMBER:<id>), so
+      // household data is the flat's and personal data (orders, appointments, medical) is theirs.
+      const recipients = await listCareRecipients(household.id)
+      const acting = resolveActingRecipient(recipients, req.headers['x-acting-for'])
+      if (!acting) {
+        res.status(403).json({
+          success: false,
+          message: recipients.length
+            ? 'Select one of your family members residing in the flat.'
+            : 'No one is residing in this flat.',
+        })
+        return
+      }
+
+      req.user = {
+        id: acting.familyMemberId || household.id,
+        residentId: household.id,
+        ...(acting.familyMemberId ? { familyMemberId: acting.familyMemberId } : {}),
+        email: guardian.email,
+        companyId: household.companyId,
+        defaultLocationId: household.locId,
+        roles: ['RESIDENT_GUARDIAN', acting.familyMemberId ? 'RESIDENT_FAMILY_MEMBER' : 'RESIDENT'],
+        guardianId: guardian.id,
+        guardianName: `${guardian.firstName} ${guardian.lastName ?? ''}`.trim(),
+        actingFor: acting,
+      }
+      req.locationId = household.locId || null
+      next()
+      return
+    }
 
     if (decoded.roles?.includes('RESIDENT')) {
       const resident = await Resident.findByPk(decoded.userId)

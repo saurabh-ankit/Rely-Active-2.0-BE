@@ -50,6 +50,20 @@ import {
   updateResidentNokContact,
   deleteResidentNokContact,
 } from '../controllers/residentNok.controller.js'
+import {
+  createResidentGuardian,
+  deleteResidentGuardian,
+  getResidentGuardians,
+  updateResidentGuardian,
+} from '../controllers/residentGuardian.controller.js'
+import {
+  createResidentNokContactSchema,
+  updateResidentNokContactSchema,
+} from '../../validations/residentNokContact.validation.js'
+import {
+  createResidentGuardianSchema,
+  updateResidentGuardianSchema,
+} from '../../validations/residentGuardian.validation.js'
 import { upload } from '../../middlewares/upload.js'
 import { authenticate } from '../../middlewares/authenticate.js'
 import { validateBody, validateParams, validateQuery } from '../../middlewares/validate/index.js'
@@ -80,10 +94,6 @@ import {
 import { residentTimelineQuerySchema } from '../../validations/residentTimeline.validation.js'
 import { createResidentDocumentSchema } from '../../validations/residentDocument.validation.js'
 import { updateResidentConditionSchema } from '../../validations/residentCondition.validation.js'
-import {
-  createResidentNokContactSchema,
-  updateResidentNokContactSchema,
-} from '../../validations/residentNokContact.validation.js'
 
 const router = Router()
 
@@ -109,6 +119,7 @@ const uploadIncidentFiles = upload.fields([
 ])
 
 const uploadNokPhoto = upload.fields([{ name: 'photo', maxCount: 1 }])
+const uploadGuardianPhoto = upload.fields([{ name: 'photo', maxCount: 1 }])
 
 // Resident Billing
 router.get('/billing', getResidentBillingData)
@@ -330,6 +341,24 @@ router.delete(
   validateParams(residentClinicalItemParamSchema),
   deleteResidentNokContact,
 )
+
+// ── Resident guardians (non-residing family who look after the flat's residents) ──
+router.get('/:residentId/guardians', validateParams(residentIdParamSchema), getResidentGuardians)
+router.post(
+  '/:residentId/guardians',
+  validateParams(residentIdParamSchema),
+  uploadGuardianPhoto,
+  validateBody(createResidentGuardianSchema),
+  createResidentGuardian,
+)
+router.put(
+  '/:residentId/guardians/:id',
+  validateParams(residentClinicalItemParamSchema),
+  uploadGuardianPhoto,
+  validateBody(updateResidentGuardianSchema),
+  updateResidentGuardian,
+)
+router.delete('/:residentId/guardians/:id', validateParams(residentClinicalItemParamSchema), deleteResidentGuardian)
 
 // Resident Onboarding & Operations
 router.post('/', uploadResidentPhoto, createResident)
