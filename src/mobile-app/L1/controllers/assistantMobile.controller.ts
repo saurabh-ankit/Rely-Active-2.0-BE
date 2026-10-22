@@ -5,6 +5,7 @@ import {
   FnbDish,
   FnbGlobalMealSlot,
   FnbGlobalPackage,
+  FnbMenu,
   FnbMenuItem,
   FnbPropertyMealSlot,
   FnbPropertyPackage,
@@ -17,6 +18,7 @@ import {
   Ticket,
 } from '../../../models/index.js'
 import { TicketStatus } from '../../../enums/ticket.enum.js'
+import { FnbMenuStatus } from '../../../enums/fnb.enum.js'
 import {
   analyzeVoiceTranscriptWithGemini,
   extractFoodDetailsFromText,
@@ -227,8 +229,8 @@ export async function processVoiceAssistantQuery(req: AuthenticatedRequest, res:
       else if (lowerQ.startsWith('namaste')) salutation = 'Namaste'
 
       const greetingReply = displayName
-        ? `${salutation} ${displayName}! How can I assist you today? You can ask me to raise a service ticket, check ticket status, or view today's dining menu.`
-        : `${salutation}! How can I assist you today? You can ask me to raise a service ticket, check ticket status, or view today's dining menu.`
+        ? `${salutation} ${displayName}! How can I assist you today? You can ask me to raise a service ticket, check ticket status, or view today's menu.`
+        : `${salutation}! How can I assist you today? You can ask me to raise a service ticket, check ticket status, or view today's menu.`
 
       res.status(200).json({
         success: true,
@@ -321,18 +323,34 @@ export async function processVoiceAssistantQuery(req: AuthenticatedRequest, res:
       const days = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday']
       const targetDayOfWeek = days[today.getDay()] || 'friday'
 
-      // 4. Fetch menu items scheduled for this location & day
-      const whereCondition: WhereOptions & { locId?: string } = {
-        [Op.or]: [{ date: todayStr }, { dayOfWeek: targetDayOfWeek }, { dayOfWeek: targetDayOfWeek?.toUpperCase() }],
-      }
-      if (locId) {
-        whereCondition.locId = locId
-      }
+      // 4. Fetch menu items scheduled for this location & day (only if menu is published)
+      let menuItems: FnbMenuItem[] = []
+      let publishedMenu: FnbMenu | null = null
 
-      const menuItems = await FnbMenuItem.findAll({
-        where: whereCondition,
-        include: [{ model: FnbDish, as: 'dish' }],
-      })
+      if (locId) {
+        publishedMenu = await FnbMenu.findOne({
+          where: {
+            locId,
+            status: FnbMenuStatus.PUBLISHED,
+          },
+          order: [['updatedAt', 'DESC']],
+        })
+
+        if (publishedMenu) {
+          menuItems = await FnbMenuItem.findAll({
+            where: {
+              menuId: publishedMenu.id,
+              locId,
+              [Op.or]: [
+                { date: todayStr },
+                { dayOfWeek: targetDayOfWeek },
+                { dayOfWeek: targetDayOfWeek?.toUpperCase() },
+              ],
+            },
+            include: [{ model: FnbDish, as: 'dish' }],
+          })
+        }
+      }
 
       // Fetch special menus if any
       const specialSlots = await FnbPropertySpecialSlot.findAll({
@@ -617,6 +635,7 @@ export async function processVoiceAssistantQuery(req: AuthenticatedRequest, res:
         date: todayStr,
         dayOfWeek: targetDayOfWeek,
         locationId: locId,
+        isMenuPublished: Boolean(publishedMenu),
         targetMealSlot: isSpecialRequest ? 'special' : matchedSlot ? matchedSlot.key : targetMealSlot || null,
         hasActivePackage: Boolean(activePkg),
         activePackage: activePkg,
@@ -635,18 +654,23 @@ export async function processVoiceAssistantQuery(req: AuthenticatedRequest, res:
       }
 
       // 7. Generate intelligent speech response dynamically based on meal slot or special inquiry
+      const formatSpecialSummaryList = (): string[] => {
+        return formattedSpecial.map((s) => {
+          const dishNames = (s.dishes || []).map((d) => d.name).filter(Boolean)
+          const isGenericSlotName = /^(special\s*(meal\s*)?slot|special)$/i.test(s.name.trim())
+          if (dishNames.length > 0) {
+            return isGenericSlotName ? dishNames.join(', ') : `${s.name} (${dishNames.join(', ')})`
+          }
+          return s.name
+        })
+      }
+
       if (isSpecialRequest) {
         if (formattedSpecial.length > 0) {
-          const specialSummaries = formattedSpecial.map((s) => {
-            const dishNames = (s.dishes || []).map((d) => d.name).filter(Boolean)
-            if (dishNames.length > 0) {
-              return `${s.name} (${dishNames.join(', ')})`
-            }
-            return s.name
-          })
-          textReply = `Today's special menu features: ${specialSummaries.join('; ')}. Here are the special dishes for today.`
+          const specialSummaries = formatSpecialSummaryList()
+          textReply = `Today's special menu features: ${specialSummaries.join('; ')}.`
         } else {
-          textReply = 'There are no special dishes scheduled for today. Here is the dining menu.'
+          textReply = 'There are no special dishes scheduled for today.'
         }
       } else if (matchedSlot) {
         const uniqueDishes = Array.from(new Set(matchedSlot.items.map((d) => d.name).filter(Boolean)))
@@ -655,9 +679,9 @@ export async function processVoiceAssistantQuery(req: AuthenticatedRequest, res:
         const prefix = isNight ? "Tonight's" : "Today's"
 
         if (uniqueDishes.length > 0) {
-          textReply = `${prefix} ${slotDisplay.toLowerCase()} menu features: ${uniqueDishes.join(', ')}. Here is the complete ${slotDisplay.toLowerCase()} menu.`
+          textReply = `${prefix} ${slotDisplay.toLowerCase()} menu features: ${uniqueDishes.join(', ')}.`
         } else {
-          textReply = `No dishes are currently configured for ${slotDisplay.toLowerCase()} today. Here is the dining menu.`
+          textReply = `No dishes are published for ${slotDisplay.toLowerCase()} today.`
         }
       } else {
         // Dynamic summary of all configured slots that have dishes
@@ -669,15 +693,12 @@ export async function processVoiceAssistantQuery(req: AuthenticatedRequest, res:
           })
 
         if (slotSummaries.length > 0) {
-          textReply = `Today's menu features: ${slotSummaries.join(', ')}. Here is the complete menu for today.`
+          textReply = `Today's menu features: ${slotSummaries.join(', ')}.`
+        } else if (formattedSpecial.length > 0) {
+          const specialSummaries = formatSpecialSummaryList()
+          textReply = `Today's regular menu has not been published yet, but the special menu features: ${specialSummaries.join('; ')}.`
         } else {
-          const allActive = formattedAllDishes.map((d) => d.name).filter(Boolean)
-          const uniqueAll = Array.from(new Set(allActive))
-          if (uniqueAll.length > 0) {
-            textReply = `Today's menu features: ${uniqueAll.slice(0, 10).join(', ')}. Here is the complete menu for today.`
-          } else {
-            textReply = "Here is today's dining menu."
-          }
+          textReply = "Today's menu has not been published yet."
         }
       }
     }
