@@ -149,9 +149,7 @@ export const getAssets = async (req: AuthenticatedRequest, res: Response) => {
           Sequelize.where(Sequelize.fn('LOWER', Sequelize.col('Asset.assetTag')), {
             [Op.like]: `%${searchStr.toLowerCase()}%`,
           }),
-          Sequelize.where(Sequelize.fn('LOWER', Sequelize.col('item.name')), {
-            [Op.like]: `%${searchStr.toLowerCase()}%`,
-          }),
+          { '$item.name$': { [Op.like]: `%${searchStr.toLowerCase()}%` } },
         ]
       }
     }
@@ -235,6 +233,9 @@ export const getAssets = async (req: AuthenticatedRequest, res: Response) => {
       offset,
       order: [['createdAt', 'DESC']],
       distinct: true,
+      // Without this, `limit` puts Assets in a subquery and `$item.name$`
+      // search references the join outside its scope.
+      subQuery: false,
     })
 
     const assetsWithWarranty = assets.map((asset) => {
