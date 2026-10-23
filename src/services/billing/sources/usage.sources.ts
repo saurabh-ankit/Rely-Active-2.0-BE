@@ -28,7 +28,7 @@ import {
   InventoryStockTransactionLine,
 } from '../../../models/inventoryStock.model.js'
 import { localDay, localDayBounds, roundMoney, toDay } from '../../../utils/billing/dates.js'
-import { chargeResidentId, flatFamilyMemberId } from '../context.js'
+import { chargeResidentId, flatFamilyMemberId, isMovedAway } from '../context.js'
 import { usageLine, type ServiceLine, type UsageSource, type UnitBillingContext } from '../types.js'
 
 type ChargeWithAssignment = AdditionalTaskCharge & { taskAssignment?: CareTaskAssignment | null }
@@ -334,7 +334,10 @@ export const venueBookingSource: UsageSource = {
   },
 }
 
-/** Tickets are free unless staff recorded an invoice amount on them. */
+/**
+ * Tickets are free unless staff recorded an invoice amount on them. A ticket raised by a resident
+ * who has since moved to another flat is billed there, with the flat it was raised for.
+ */
 export const maintenanceSource: UsageSource = {
   serviceType: ServiceType.MAINTENANCE,
   async load(ctx, from, to) {
@@ -347,6 +350,7 @@ export const maintenanceSource: UsageSource = {
     })
     const lines: ServiceLine[] = []
     for (const t of tickets) {
+      if (isMovedAway(ctx, t.residentId, t.familyMemberId)) continue
       const day = localDay(t.completedAt ?? t.resolvedAt ?? t.closedAt ?? t.updatedAt)
       if (!day || day < from || day > to) continue
       const amount = roundMoney(Number(t.invoiceAmount))
@@ -361,6 +365,7 @@ export const maintenanceSource: UsageSource = {
           price: amount,
           total: amount,
           serviceDate: day,
+          fromUnitId: t.unitId,
         }),
       )
     }
@@ -368,26 +373,36 @@ export const maintenanceSource: UsageSource = {
   },
 }
 
-/** Charges staff logged against the flat before billing. */
+/**
+ * Charges staff logged against the flat before billing. One logged for a resident follows them
+ * when they move to another flat.
+ */
 export const miscellaneousItemSource: UsageSource = {
   serviceType: ServiceType.MISCELLANEOUS_AS_SERVICE,
   async load(ctx, from, to) {
     const items = await UnitMiscellaneousItem.findAll({
-      where: { unitId: ctx.unitId, isDeleted: false, serviceDate: { [Op.between]: [from, to] } },
+      where: {
+        [Op.or]: [{ unitId: ctx.unitId }, ...(ctx.residentIds.length ? [{ residentId: ctx.residentIds }] : [])],
+        isDeleted: false,
+        serviceDate: { [Op.between]: [from, to] },
+      },
     })
-    return items.map((item) => {
-      const day = toDay(item.serviceDate) as string
-      return usageLine(ServiceType.MISCELLANEOUS_AS_SERVICE, {
-        sourceId: item.id,
-        residentId: item.residentId,
-        name: item.name,
-        description: `${item.description ? `${item.description} ` : ''}(on ${day})`,
-        quantity: Number(item.quantity),
-        price: Number(item.price),
-        total: roundMoney(Number(item.total)),
-        serviceDate: day,
+    return items
+      .filter((item) => !isMovedAway(ctx, item.residentId, null))
+      .map((item) => {
+        const day = toDay(item.serviceDate) as string
+        return usageLine(ServiceType.MISCELLANEOUS_AS_SERVICE, {
+          sourceId: item.id,
+          residentId: item.residentId,
+          name: item.name,
+          description: `${item.description ? `${item.description} ` : ''}(on ${day})`,
+          quantity: Number(item.quantity),
+          price: Number(item.price),
+          total: roundMoney(Number(item.total)),
+          serviceDate: day,
+          fromUnitId: item.unitId,
+        })
       })
-    })
   },
 }
 

@@ -4,6 +4,7 @@ import { ServiceType } from '../enums/billing.enum.js'
 import { BaseAttributes, BaseModel, baseModelColumns } from './base.model.js'
 
 import type { Invoice } from './invoice.model.js'
+import type { PropertyUnit } from './propertyUnit.model.js'
 import type { Resident } from './resident.model.js'
 
 /** One billed line on an invoice (snapshot of the source record at billing time). */
@@ -29,6 +30,8 @@ export interface ServicesInvoiceAttributes extends BaseAttributes {
   serviceEndDate?: string | null
   /** Reconciliation line for a previous period (package adjustment). */
   isAdjustment?: boolean
+  /** Old flat this line was used in, when carried over after the resident moved. */
+  fromUnitId?: string | null
   isDeleted?: boolean
 }
 
@@ -44,6 +47,7 @@ export type ServicesInvoiceCreationAttributes = Optional<
   | 'serviceStartDate'
   | 'serviceEndDate'
   | 'isAdjustment'
+  | 'fromUnitId'
   | 'isDeleted'
   | 'createdBy'
   | 'updatedBy'
@@ -70,10 +74,12 @@ export class ServicesInvoice
   declare serviceStartDate: string | null
   declare serviceEndDate: string | null
   declare isAdjustment: boolean
+  declare fromUnitId: string | null
   declare isDeleted: boolean
 
   declare invoice?: Invoice
   declare resident?: Resident
+  declare fromUnit?: PropertyUnit
 }
 
 const num = (field: keyof ServicesInvoiceAttributes, type: DataTypes.DataType) => ({
@@ -103,6 +109,7 @@ ServicesInvoice.init(
     serviceStartDate: { type: DataTypes.DATEONLY, allowNull: true },
     serviceEndDate: { type: DataTypes.DATEONLY, allowNull: true },
     isAdjustment: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: false },
+    fromUnitId: { type: DataTypes.UUID, allowNull: true, comment: 'FK -> property_units.id (old flat)' },
     isDeleted: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: false },
   },
   {

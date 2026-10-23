@@ -142,7 +142,12 @@ export const getInvoices = handle('Failed to list invoices', async (req, res) =>
   const unitId = param(req, 'unitId')
   await assertUnitAccess(req, unitId)
   const { page, limit } = parse(pageQuerySchema, req.query)
-  res.json({ success: true, data: await getUnitInvoices(unitId, { page, limit }) })
+  // Invoices of flats the residents moved here from (paid ones too, to follow what was carried
+  // where): the unpaid ones are collected here.
+  res.json({
+    success: true,
+    data: await getUnitInvoices(unitId, { page, limit }, { previousFlats: 'all' }),
+  })
 })
 
 export const getInvoice = handle('Failed to fetch invoice', async (req, res) => {

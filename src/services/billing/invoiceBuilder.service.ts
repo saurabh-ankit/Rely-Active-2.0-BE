@@ -7,7 +7,8 @@ import {
   USAGE_SERVICE_TYPES,
   VOID_INVOICE_STATUSES,
 } from '../../enums/billing.enum.js'
-import { Invoice, ServicesInvoice } from '../../models/index.js'
+import { Invoice, Resident, ServicesInvoice } from '../../models/index.js'
+import { movedAwayInvoiceIds, previousFlatInvoices } from './movedInvoices.js'
 import type { InvoiceBillTo } from '../../models/invoice.model.js'
 import {
   addDays,
@@ -20,7 +21,16 @@ import {
   startOfMonth,
   todayDay,
 } from '../../utils/billing/dates.js'
-import { BillingError, describeConsumer, loadUnitContext, resolveBillTo, residentName } from './context.js'
+import {
+  BILLABLE_RESIDENT_WHERE,
+  BillingError,
+  describeConsumer,
+  fromUnitFor,
+  labelOldFlats,
+  loadUnitContext,
+  resolveBillTo,
+  residentName,
+} from './context.js'
 import { RECURRING_SOURCES } from './sources/recurring.sources.js'
 import { getTaxConfig } from './tax.service.js'
 import { USAGE_SOURCES } from './sources/usage.sources.js'
@@ -41,8 +51,14 @@ export interface PendingInvoiceSummary {
   paidAmount: number
   balance: number
   status: string
-  /** Pending (nothing paid): carried into the new invoice automatically. Others stay payable on their own. */
+  /**
+   * Carried into the new invoice automatically: this flat's pending ones (nothing paid), and every
+   * unpaid invoice of a flat the residents moved here from. Others stay payable on their own.
+   */
   carryForward: boolean
+  /** The old flat it was raised on, for an invoice the residents brought along when they moved here. */
+  fromUnitId: string | null
+  fromUnitNumber: string | null
 }
 
 export interface InvoicePreview {
@@ -77,6 +93,8 @@ export interface InvoicePreview {
   pendingInvoices: PendingInvoiceSummary[]
   /** An existing invoice already covering part of this range (creating would be refused). */
   overlappingInvoice: { id: string; invoiceNumber: string; startDate: string; endDate: string } | null
+  /** Flats the residents lived in before this one; lines from them carry `fromUnitId`. */
+  previousFlats: { unitId: string; unitNumber: string; lastDay: string }[]
 }
 
 export interface BuildOptions {
@@ -113,6 +131,7 @@ const recurringLine = (
   to: string,
   amount: number,
   tag: string,
+  fromUnitId: string | null = null,
 ): ServiceLine => {
   const days = daysInclusive(from, to)
   // A whole calendar month is the package's monthly price, with no quantity (shown as N/A).
@@ -137,7 +156,32 @@ const recurringLine = (
     serviceEndDate: to,
     date: from,
     isAdjustment: false,
+    fromUnitId,
+    fromUnitNumber: null,
   }
+}
+
+/** Starts an item after the days already billed for it on another flat (resident moved here). */
+const afterBilledElsewhere = (ctx: UnitBillingContext, source: RecurringSource, item: RecurringItem) => {
+  const billedUntil = ctx.billedElsewhere.get(`${source.serviceType}:${item.sourceId}`)
+  if (!billedUntil || (item.activeFrom && item.activeFrom > billedUntil)) return item
+  const activeFrom = addDays(billedUntil, 1)
+  return item.activeTo && item.activeTo < activeFrom ? null : { ...item, activeFrom }
+}
+
+/** [from, to] split on the days the resident moved, so days in the old flat are their own line. */
+const splitOnMoves = (ctx: UnitBillingContext, residentId: string | null, from: string, to: string) => {
+  const cuts = (residentId ? (ctx.moves.get(residentId) ?? []) : [])
+    .map((m) => m.moveDate)
+    .filter((d) => d > from && d <= to)
+  const segments: { from: string; to: string }[] = []
+  let segFrom = from
+  for (const cut of cuts) {
+    segments.push({ from: segFrom, to: addDays(cut, -1) })
+    segFrom = cut
+  }
+  segments.push({ from: segFrom, to })
+  return segments
 }
 
 async function unitInvoices(unitId: string, excludeInvoiceId: string | undefined, transaction?: Transaction) {
@@ -192,14 +236,20 @@ async function recurringLines(ctx: UnitBillingContext, mode: BillingMode, start:
   const lines: ServiceLine[] = []
   const itemsBySource = new Map<RecurringSource, RecurringItem[]>()
   for (const source of RECURRING_SOURCES) {
-    const items = await source.load(ctx)
+    const items = (await source.load(ctx))
+      .map((item) => afterBilledElsewhere(ctx, source, item))
+      .filter((item): item is RecurringItem => !!item)
     itemsBySource.set(source, items)
     for (const item of items) {
       const cost = activeCost(item, start, end)
       if (!cost || cost.amount <= 0) continue
-      lines.push(
-        recurringLine(source, item, cost.from, cost.to, cost.amount, mode === BillingMode.MONTHLY ? 'Advance' : ''),
-      )
+      for (const seg of splitOnMoves(ctx, item.residentId, cost.from, cost.to)) {
+        const amount = prorateMonthly(item.monthlyPrice, seg.from, seg.to)
+        if (amount <= 0) continue
+        const fromUnitId = fromUnitFor(ctx, item.residentId, seg.from)
+        const tag = fromUnitId ? '' : mode === BillingMode.MONTHLY ? 'Advance' : ''
+        lines.push(recurringLine(source, item, seg.from, seg.to, amount, tag, fromUnitId))
+      }
     }
   }
   return { lines, itemsBySource }
@@ -211,6 +261,7 @@ async function recurringLines(ctx: UnitBillingContext, mode: BillingMode, start:
  * what was billed for that period, and add the difference as a charge or refund.
  */
 async function adjustmentLines(
+  ctx: UnitBillingContext,
   invoices: Invoice[],
   start: string,
   itemsBySource: Map<RecurringSource, RecurringItem[]>,
@@ -255,6 +306,8 @@ async function adjustmentLines(
     for (const key of keys) {
       const sourceId = key.slice(source.serviceType.length + 1)
       const item = items.find((i) => i.sourceId === sourceId)
+      // A resident who moved to another flat: the days already billed here stay billed here.
+      if (!item && ctx.movedAwayResidentIds.has(billed.get(key)?.residentId ?? '')) continue
       const actual = item ? (activeCost(item, pFrom, pTo)?.amount ?? 0) : 0
       const already = roundMoney(billed.get(key)?.total ?? 0)
       const diff = roundMoney(actual - already)
@@ -283,16 +336,14 @@ async function adjustmentLines(
         serviceEndDate: pTo,
         date: pFrom,
         isAdjustment: true,
+        fromUnitId: null,
+        fromUnitNumber: null,
       })
     }
   }
   return lines
 }
 
-/**
- * Usage charges in the range, plus any recorded late for an already-invoiced period
- * (back to the flat's first invoice), minus anything already on an invoice.
- */
 /**
  * Window of usage charges an invoice picks up.
  * MONTHLY (Assist): the services of the months before the bill's month — everything unbilled
@@ -304,7 +355,8 @@ async function adjustmentLines(
 function usageWindow(ctx: UnitBillingContext, invoices: Invoice[], mode: BillingMode, start: string, end: string) {
   if (mode === BillingMode.MONTHLY) {
     const to = addDays(startOfMonth(start), -1)
-    const from = ctx.movedInDate ?? startOfMonth(to)
+    // From the first move-in: a resident who moved here brings their old flat's unbilled services.
+    const from = ctx.usageFromDate ?? startOfMonth(to)
     return from <= to ? { from, to } : null
   }
   const firstInvoiced = invoices.reduce<string | null>(
@@ -314,60 +366,111 @@ function usageWindow(ctx: UnitBillingContext, invoices: Invoice[], mode: Billing
   return { from: firstInvoiced && firstInvoiced < start ? firstInvoiced : start, to: end }
 }
 
-/** Usage charges in [from, to] that are on no invoice yet. */
+/**
+ * Usage charges in [from, to] that are on no invoice yet — on any flat's invoice, since a
+ * resident who moved brings their charges along. Charges from the resident's time in another
+ * flat are marked with that flat.
+ */
 async function usageLines(
   ctx: UnitBillingContext,
-  invoices: Invoice[],
   from: string,
   to: string,
+  excludeInvoiceId?: string,
   transaction?: Transaction,
 ) {
-  const billedRows = invoices.length
-    ? await ServicesInvoice.findAll({
-        where: {
-          invoiceId: invoices.map((inv) => inv.id),
-          isDeleted: false,
-          serviceType: [...USAGE_SERVICE_TYPES],
-          sourceId: { [Op.ne]: null },
-        },
-        attributes: ['serviceType', 'sourceId'],
-        transaction: transaction ?? null,
-      })
-    : []
+  const candidates: ServiceLine[] = []
+  for (const source of USAGE_SOURCES) candidates.push(...(await source.load(ctx, from, to)))
+  if (!candidates.length) return []
+
+  const billedRows = await ServicesInvoice.findAll({
+    where: {
+      isDeleted: false,
+      serviceType: [...USAGE_SERVICE_TYPES],
+      sourceId: [...new Set(candidates.map((l) => l.sourceId))],
+      ...(excludeInvoiceId ? { invoiceId: { [Op.ne]: excludeInvoiceId } } : {}),
+    },
+    attributes: ['serviceType', 'sourceId'],
+    include: [
+      {
+        model: Invoice,
+        as: 'invoice',
+        attributes: [],
+        where: { isDeleted: false, status: { [Op.notIn]: [...VOID_INVOICE_STATUSES] } },
+      },
+    ],
+    transaction: transaction ?? null,
+  })
   const billed = new Set(billedRows.map((r) => `${r.serviceType}:${r.sourceId}`))
 
-  const lines: ServiceLine[] = []
-  for (const source of USAGE_SOURCES) {
-    for (const line of await source.load(ctx, from, to)) {
-      if (!billed.has(line.id)) lines.push(line)
-    }
-  }
-  return lines
+  return candidates
+    .filter((line) => !billed.has(line.id))
+    .map((line) => {
+      const own = line.fromUnitId && line.fromUnitId !== ctx.unitId ? line.fromUnitId : null
+      return { ...line, fromUnitId: own ?? fromUnitFor(ctx, line.residentId, line.serviceStartDate) }
+    })
 }
 
 /**
- * Unpaid invoices for earlier periods. Pending ones (nothing paid yet) are carried into the new
- * invoice automatically; partly paid or overdue ones stay payable on their own invoice.
+ * Unpaid invoices for earlier periods, oldest first:
+ * - this flat's own: pending ones (nothing paid) are carried into the new invoice; partly paid or
+ *   overdue ones stay payable on their own. Invoices that went with a resident who moved out of
+ *   this flat are left out — they are owed on that resident's new flat.
+ * - every unpaid invoice of a flat the residents moved here from: always carried, for its
+ *   remaining balance (partly paid ones too).
  */
+export async function openInvoicesToCollect(
+  unitId: string,
+  beforeDay: string,
+  excludeInvoiceId?: string,
+  transaction?: Transaction,
+  lock = false,
+): Promise<{ invoice: Invoice; carryForward: boolean; fromOldFlat: boolean }[]> {
+  const lockOpt = lock && transaction ? { lock: transaction.LOCK.UPDATE } : {}
+  const [own, movedAway, residents] = await Promise.all([
+    Invoice.findAll({
+      where: {
+        unitId,
+        isDeleted: false,
+        status: { [Op.in]: [...OPEN_INVOICE_STATUSES] },
+        endDate: { [Op.lt]: beforeDay },
+        ...(excludeInvoiceId ? { id: { [Op.ne]: excludeInvoiceId } } : {}),
+      },
+      order: [['startDate', 'ASC']],
+      transaction: transaction ?? null,
+      ...lockOpt,
+    }),
+    movedAwayInvoiceIds(unitId, transaction),
+    Resident.findAll({
+      where: { unitId, ...BILLABLE_RESIDENT_WHERE },
+      attributes: ['id'],
+      transaction: transaction ?? null,
+    }),
+  ])
+  const previous = await previousFlatInvoices(
+    residents.map((r) => r.id),
+    unitId,
+    { openOnly: true, transaction, lock },
+  )
+  return [
+    ...own
+      .filter((inv) => !movedAway.has(inv.id) && Number(inv.remainingBalance) > 0)
+      .map((invoice) => ({
+        invoice,
+        carryForward: invoice.status === InvoiceStatus.PENDING && Number(invoice.paidAmount) === 0,
+        fromOldFlat: false,
+      })),
+    ...previous.map((invoice) => ({ invoice, carryForward: true, fromOldFlat: true })),
+  ].sort((a, b) => String(a.invoice.startDate).localeCompare(String(b.invoice.startDate)))
+}
+
 export async function pendingInvoices(
   unitId: string,
   beforeDay: string,
   excludeInvoiceId?: string,
   transaction?: Transaction,
 ): Promise<PendingInvoiceSummary[]> {
-  const open = await Invoice.findAll({
-    where: {
-      unitId,
-      isDeleted: false,
-      status: { [Op.in]: [...OPEN_INVOICE_STATUSES] },
-      endDate: { [Op.lt]: beforeDay },
-      ...(excludeInvoiceId ? { id: { [Op.ne]: excludeInvoiceId } } : {}),
-    },
-    order: [['startDate', 'ASC']],
-    transaction: transaction ?? null,
-  })
-  return open
-    .map((inv) => ({
+  return (await openInvoicesToCollect(unitId, beforeDay, excludeInvoiceId, transaction)).map(
+    ({ invoice: inv, carryForward, fromOldFlat }) => ({
       id: inv.id,
       invoiceNumber: inv.invoiceNumber,
       startDate: String(inv.startDate),
@@ -376,9 +479,13 @@ export async function pendingInvoices(
       paidAmount: Number(inv.paidAmount),
       balance: Number(inv.remainingBalance),
       status: inv.status,
-      carryForward: inv.status === InvoiceStatus.PENDING && Number(inv.paidAmount) === 0,
-    }))
-    .filter((inv) => inv.balance > 0)
+      carryForward,
+      fromUnitId: fromOldFlat ? inv.unitId : null,
+      fromUnitNumber: fromOldFlat
+        ? ((inv as Invoice & { unit?: { unit_number: string } }).unit?.unit_number ?? null)
+        : null,
+    }),
+  )
 }
 
 export async function buildInvoicePreview(opts: BuildOptions): Promise<InvoicePreview> {
@@ -396,17 +503,20 @@ export async function buildInvoicePreview(opts: BuildOptions): Promise<InvoicePr
   const { lines: recurring, itemsBySource } = await recurringLines(ctx, opts.billingMode, start, end)
   const adjustments =
     opts.billingMode === BillingMode.MONTHLY
-      ? await adjustmentLines(invoices, start, itemsBySource, opts.transaction)
+      ? await adjustmentLines(ctx, invoices, start, itemsBySource, opts.transaction)
       : []
   const servicesPeriod = usageWindow(ctx, invoices, opts.billingMode, start, end)
   const usage = servicesPeriod
-    ? await usageLines(ctx, invoices, servicesPeriod.from, servicesPeriod.to, opts.transaction)
+    ? await usageLines(ctx, servicesPeriod.from, servicesPeriod.to, opts.excludeInvoiceId, opts.transaction)
     : []
 
-  const services = [...recurring, ...adjustments, ...usage]
+  const services = (await labelOldFlats(ctx, [...recurring, ...adjustments, ...usage]))
     .map((s) => ({ ...s, ...describeConsumer(ctx, s.residentId, s.familyMemberId) }))
     .sort(
       (a, b) =>
+        // Charges carried over from an old flat first, grouped by that flat.
+        Number(!a.fromUnitId) - Number(!b.fromUnitId) ||
+        (a.fromUnitNumber ?? '').localeCompare(b.fromUnitNumber ?? '') ||
         TYPE_ORDER.indexOf(a.serviceType) - TYPE_ORDER.indexOf(b.serviceType) ||
         Number(a.isAdjustment) - Number(b.isAdjustment) ||
         a.date.localeCompare(b.date) ||
@@ -462,12 +572,49 @@ export async function buildInvoicePreview(opts: BuildOptions): Promise<InvoicePr
           endDate: String(overlapping.endDate),
         }
       : null,
+    previousFlats: previousFlats(ctx),
   }
+}
+
+/** Each earlier flat of the residents, with the last day they lived there. */
+const previousFlats = (ctx: UnitBillingContext) => {
+  const byUnit = new Map<string, string>()
+  for (const moves of ctx.moves.values()) {
+    for (const m of moves) {
+      if (m.fromUnitId === ctx.unitId) continue
+      const lastDay = addDays(m.moveDate, -1)
+      if (lastDay > (byUnit.get(m.fromUnitId) ?? '')) byUnit.set(m.fromUnitId, lastDay)
+    }
+  }
+  return [...byUnit].map(([unitId, lastDay]) => ({
+    unitId,
+    unitNumber: ctx.unitNumbers.get(unitId) ?? '',
+    lastDay,
+  }))
 }
 
 /** Usage charges in [from, to] that are on no invoice yet. */
 export async function getUnbilledUsage(unitId: string, from: string, to: string): Promise<ServiceLine[]> {
   const ctx = await loadUnitContext(unitId)
+  return labelOldFlats(ctx, await usageLines(ctx, from, to))
+}
+
+/**
+ * Everything not yet billed for one resident (and their family members) on a flat up to a day:
+ * rent / package days after the flat's last invoice, and unbilled services. Used to show what a
+ * resident moving to another flat takes along.
+ */
+export async function getUnbilledForResident(unitId: string, residentId: string, upTo: string) {
+  const ctx = await loadUnitContext(unitId)
   const invoices = await unitInvoices(unitId, undefined)
-  return usageLines(ctx, invoices, from, to)
+  const next = nextBillableStart(invoices, ctx)
+  const recurring = next <= upTo ? (await recurringLines(ctx, BillingMode.CUSTOM, next, upTo)).lines : []
+  const usage = ctx.usageFromDate && ctx.usageFromDate <= upTo ? await usageLines(ctx, ctx.usageFromDate, upTo) : []
+  const lines = (await labelOldFlats(ctx, [...recurring, ...usage]))
+    .filter((l) => l.residentId === residentId)
+    .map((s) => ({ ...s, ...describeConsumer(ctx, s.residentId, s.familyMemberId) }))
+    .sort(
+      (a, b) => TYPE_ORDER.indexOf(a.serviceType) - TYPE_ORDER.indexOf(b.serviceType) || a.date.localeCompare(b.date),
+    )
+  return { lines, total: roundMoney(lines.reduce((sum, l) => sum + l.total, 0)) }
 }

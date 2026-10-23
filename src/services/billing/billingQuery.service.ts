@@ -23,7 +23,8 @@ import {
   UserDetail,
 } from '../../models/index.js'
 import { endOfMonth, localDay, roundMoney, toDay, todayDay } from '../../utils/billing/dates.js'
-import { BILLABLE_RESIDENT_WHERE, BillingError, residentName } from './context.js'
+import { BILLABLE_RESIDENT_WHERE, BillingError, residentName, residentStartDays } from './context.js'
+import { inWindow, loadMoves, moveWindows, previousFlatInvoices } from './movedInvoices.js'
 import { ResidentStatus } from '../../enums/resident.enum.js'
 
 export interface Page {
@@ -175,7 +176,8 @@ export const serializeInvoice = (inv: InvoiceWithParts) => {
         endDate: c.sourceInvoice?.endDate ?? null,
         status: c.sourceInvoice?.status ?? null,
         carriedAmount: c.carriedAmount,
-        paidAmount: sumAmounts(c.sourceInvoice?.allocations),
+        // Paid through this invoice: leave out what was paid on it before it was carried.
+        paidAmount: roundMoney(sumAmounts(c.sourceInvoice?.allocations) - Number(c.originalPaid || 0)),
       }))
       .sort((a, b) => String(a.startDate ?? '').localeCompare(String(b.startDate ?? ''))),
     createdAt: inv.createdAt,
@@ -198,6 +200,8 @@ export const serializeInvoice = (inv: InvoiceWithParts) => {
         serviceStartDate: s.serviceStartDate,
         serviceEndDate: s.serviceEndDate,
         isAdjustment: s.isAdjustment,
+        fromUnitId: s.fromUnitId,
+        fromUnitNumber: s.fromUnit?.unit_number ?? null,
       })),
     miscellaneousItems: (inv.miscellaneousItems ?? [])
       .filter((m) => !m.isDeleted)
@@ -229,7 +233,12 @@ export const serializeInvoice = (inv: InvoiceWithParts) => {
 }
 
 const invoiceIncludes = [
-  { model: ServicesInvoice, as: 'services', required: false },
+  {
+    model: ServicesInvoice,
+    as: 'services',
+    required: false,
+    include: [{ model: PropertyUnit, as: 'fromUnit', attributes: ['id', 'unit_number'], required: false }],
+  },
   { model: MiscellaneousBilling, as: 'miscellaneousItems', required: false },
   { model: Receipt, as: 'receipts', required: false, include: [allocationInclude] },
   { model: InvoiceDocument, as: 'documents', required: false },
@@ -262,7 +271,16 @@ export async function getInvoiceById(invoiceId: string) {
   return serializeInvoice(inv as InvoiceWithParts)
 }
 
-export async function getUnitInvoices(unitId: string, page: Page, opts: { excludeDrafts?: boolean } = {}) {
+/**
+ * A flat's invoices, newest first. `previousFlats` also returns the invoices of flats its
+ * residents moved here from (they owe them here): 'open' those still unpaid (billing page), 'all'
+ * their whole bill history there (resident app).
+ */
+export async function getUnitInvoices(
+  unitId: string,
+  page: Page,
+  opts: { excludeDrafts?: boolean; previousFlats?: 'open' | 'all' } = {},
+) {
   const where = {
     unitId,
     isDeleted: false,
@@ -279,7 +297,29 @@ export async function getUnitInvoices(unitId: string, page: Page, opts: { exclud
     limit: page.limit,
     offset: (page.page - 1) * page.limit,
   })
-  return { invoices: rows.map((r) => serializeInvoice(r as InvoiceWithParts)), pagination: pagination(total, page) }
+  let fromPreviousFlats: ReturnType<typeof serializeInvoice>[] = []
+  if (opts.previousFlats) {
+    const residents = await Resident.findAll({ where: { unitId, ...BILLABLE_RESIDENT_WHERE }, attributes: ['id'] })
+    const previous = await previousFlatInvoices(
+      residents.map((r) => r.id),
+      unitId,
+      { openOnly: opts.previousFlats === 'open' },
+    )
+    if (previous.length) {
+      const full = await Invoice.findAll({
+        where: { id: previous.map((p) => p.id) },
+        include: invoiceIncludes,
+        order: [['startDate', 'DESC']],
+      })
+      fromPreviousFlats = full.map((r) => serializeInvoice(r as InvoiceWithParts))
+    }
+  }
+  return {
+    invoices: rows.map((r) => serializeInvoice(r as InvoiceWithParts)),
+    /** Invoices of flats the residents moved here from (each carries its own unitNumber). */
+    fromPreviousFlats,
+    pagination: pagination(total, page),
+  }
 }
 
 /** Receipts for a flat, flattened with their invoice's details (Assist's receipts list shape). */
@@ -460,6 +500,7 @@ export async function getBillingUnits(
           'phone',
           'moveInDate',
           'moveOutDate',
+          'unitId',
           'createdAt',
           'updatedAt',
         ],
@@ -467,6 +508,17 @@ export async function getBillingUnits(
     ],
     order: [['unit_number', 'ASC']],
   })
+  const allResidents = units.flatMap((unit) => (unit as PropertyUnit & { residents?: Resident[] }).residents ?? [])
+  const startDays = await residentStartDays(allResidents)
+  // A household that moved owes its old flat's unpaid invoices on its new flat.
+  const windows = moveWindows(await loadMoves({ unitIds, residentIds: allResidents.map((r) => r.id) }))
+  const oldFlatIds = [...new Set(windows.map((w) => w.fromUnitId))].filter((id) => !unitIds.includes(id))
+  const oldFlatOpen = oldFlatIds.length
+    ? await Invoice.findAll({
+        where: { unitId: oldFlatIds, isDeleted: false, status: { [Op.in]: [...OPEN_INVOICE_STATUSES] } },
+        attributes: ['id', 'unitId', 'startDate', 'status', 'remainingBalance'],
+      })
+    : []
   const invoices = await Invoice.findAll({
     where: { unitId: unitIds, isDeleted: false, status: { [Op.notIn]: [...VOID_INVOICE_STATUSES] } },
     attributes: [
@@ -488,8 +540,9 @@ export async function getBillingUnits(
   const rows = units.map((unit) => {
     const u = unit as PropertyUnit & { floor?: PropertyFloor & { block?: PropertyBlock }; residents?: Resident[] }
     const residents = u.residents ?? []
-    // A resident without a move-in date counts from when they were added.
-    const movedIn = residents.map((r) => toDay(r.moveInDate) ?? localDay(r.createdAt) ?? monthStart)
+    // A resident without a move-in date counts from when they were added; one who moved here
+    // from another flat, from the first day that flat didn't bill.
+    const movedIn = residents.map((r) => startDays.get(r.id) ?? monthStart)
     const movedInDate = movedIn.length ? movedIn.reduce((a, b) => (a < b ? a : b)) : null
     // Moved out only when every billed resident has actually left (off-site residents aren't listed).
     const leftDates = residents.map(
@@ -502,7 +555,19 @@ export async function getBillingUnits(
 
     const mine = invoices.filter((i) => i.unitId === unit.id)
     const forMonth = mine.filter((i) => String(i.startDate) <= monthEnd && String(i.endDate) >= monthStart)
-    const openAll = mine.filter((i) => (OPEN_INVOICE_STATUSES as readonly InvoiceStatus[]).includes(i.status))
+    const isOpen = (i: Invoice) => (OPEN_INVOICE_STATUSES as readonly InvoiceStatus[]).includes(i.status)
+    const residentIds = residents.map((r) => r.id)
+    // Own unpaid invoices, less those that went with a household that moved out; plus the unpaid
+    // invoices of the flats this household moved here from.
+    const openAll = [
+      ...mine.filter((i) => isOpen(i) && !windows.some((w) => w.fromUnitId === unit.id && inWindow(i, w))),
+      ...[...invoices, ...oldFlatOpen].filter(
+        (i) =>
+          i.unitId !== unit.id &&
+          isOpen(i) &&
+          windows.some((w) => residentIds.includes(w.residentId) && inWindow(i, w)),
+      ),
+    ]
 
     let monthStatus: MonthBillingStatus
     if (forMonth.length) monthStatus = invoicesStatus(forMonth)

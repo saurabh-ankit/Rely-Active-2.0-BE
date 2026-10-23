@@ -245,6 +245,7 @@ import { Invoice } from './invoice.model.js'
 import { ServicesInvoice } from './servicesInvoice.model.js'
 import { MiscellaneousBilling } from './miscellaneousBilling.model.js'
 import { UnitMiscellaneousItem } from './unitMiscellaneousItem.model.js'
+import { ResidentUnitMove } from './residentUnitMove.model.js'
 import { Receipt } from './receipt.model.js'
 import { InvoiceDocument } from './invoiceDocument.model.js'
 import { CarriedForwardInvoice } from './carriedForwardInvoice.model.js'
@@ -619,6 +620,7 @@ FnbMenuItem.belongsTo(FnbMenu, { foreignKey: 'menuId', as: 'menu' })
 FnbMenuItem.belongsTo(FnbDish, { foreignKey: 'dishId', as: 'dish' })
 
 FnbResidentOrder.belongsTo(Resident, { foreignKey: 'residentId', as: 'resident' })
+FnbResidentOrder.belongsTo(PropertyUnit, { foreignKey: 'unitId', as: 'deliveryUnit' })
 FnbResidentOrder.belongsTo(ResidentFamilyMember, { foreignKey: 'familyMemberId', as: 'familyMember' })
 FnbResidentOrder.belongsTo(FnbResidentPackage, { foreignKey: 'residentPackageId', as: 'residentPackage' })
 FnbResidentOrder.belongsTo(FnbPropertySpecialSlot, { foreignKey: 'specialMealSlotId', as: 'specialMealSlot' })
@@ -896,6 +898,7 @@ Invoice.belongsTo(Resident, { foreignKey: 'billToResidentId', as: 'billToResiden
 Invoice.hasMany(ServicesInvoice, { foreignKey: 'invoiceId', as: 'services' })
 ServicesInvoice.belongsTo(Invoice, { foreignKey: 'invoiceId', as: 'invoice' })
 ServicesInvoice.belongsTo(Resident, { foreignKey: 'residentId', as: 'resident' })
+ServicesInvoice.belongsTo(PropertyUnit, { foreignKey: 'fromUnitId', as: 'fromUnit' })
 
 Invoice.hasMany(MiscellaneousBilling, { foreignKey: 'invoiceId', as: 'miscellaneousItems' })
 MiscellaneousBilling.belongsTo(Invoice, { foreignKey: 'invoiceId', as: 'invoice' })
@@ -903,6 +906,10 @@ MiscellaneousBilling.belongsTo(Invoice, { foreignKey: 'invoiceId', as: 'invoice'
 PropertyUnit.hasMany(UnitMiscellaneousItem, { foreignKey: 'unitId', as: 'miscellaneousItems' })
 UnitMiscellaneousItem.belongsTo(PropertyUnit, { foreignKey: 'unitId', as: 'unit' })
 UnitMiscellaneousItem.belongsTo(Resident, { foreignKey: 'residentId', as: 'resident' })
+Resident.hasMany(ResidentUnitMove, { foreignKey: 'residentId', as: 'unitMoves' })
+ResidentUnitMove.belongsTo(Resident, { foreignKey: 'residentId', as: 'resident' })
+ResidentUnitMove.belongsTo(PropertyUnit, { foreignKey: 'fromUnitId', as: 'fromUnit' })
+ResidentUnitMove.belongsTo(PropertyUnit, { foreignKey: 'toUnitId', as: 'toUnit' })
 
 Invoice.hasMany(Receipt, { foreignKey: 'invoiceId', as: 'receipts' })
 Receipt.belongsTo(Invoice, { foreignKey: 'invoiceId', as: 'invoice' })
@@ -1187,6 +1194,7 @@ export {
   ServicesInvoice,
   MiscellaneousBilling,
   UnitMiscellaneousItem,
+  ResidentUnitMove,
   Receipt,
   InvoiceDocument,
   CarriedForwardInvoice,
