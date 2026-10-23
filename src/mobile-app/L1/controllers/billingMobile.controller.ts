@@ -3,7 +3,8 @@ import type { AuthenticatedRequest } from '../../../middlewares/authenticate.js'
 import { logger } from '../../../config/logger.js'
 import { Invoice, Resident, ResidentFamilyMember } from '../../../models/index.js'
 import { InvoiceDocumentType, InvoiceStatus } from '../../../enums/billing.enum.js'
-import { BillingError } from '../../../services/billing/context.js'
+import { BILLABLE_RESIDENT_WHERE, BillingError } from '../../../services/billing/context.js'
+import { previousFlatInvoices } from '../../../services/billing/movedInvoices.js'
 import { getInvoiceById, getUnitInvoices } from '../../../services/billing/billingQuery.service.js'
 import { ensureInvoicePdf, ensureReceiptPdf } from '../../../services/billing/billingPdf.service.js'
 
@@ -50,10 +51,20 @@ const handle =
 
 async function ownInvoice(req: AuthenticatedRequest) {
   const unitId = await callerUnitId(req)
-  const invoice = await Invoice.findOne({
-    where: { id: String(req.params.invoiceId || ''), unitId, isDeleted: false },
+  const invoiceId = String(req.params.invoiceId || '')
+  let invoice = await Invoice.findOne({
+    where: { id: invoiceId, unitId, isDeleted: false },
     attributes: ['id', 'status'],
   })
+  if (!invoice) {
+    // A bill from a flat the household lived in before moving here.
+    const residents = await Resident.findAll({ where: { unitId, ...BILLABLE_RESIDENT_WHERE }, attributes: ['id'] })
+    const previous = await previousFlatInvoices(
+      residents.map((r) => r.id),
+      unitId,
+    )
+    invoice = previous.find((p) => p.id === invoiceId) ?? null
+  }
   if (!invoice || invoice.status === InvoiceStatus.DRAFT) throw new BillingError('Bill not found', 404)
   return invoice
 }
@@ -62,7 +73,11 @@ export const getMyInvoices = handle('Failed to list resident bills', async (req,
   const unitId = await callerUnitId(req)
   const page = Math.max(1, Number(req.query.page) || 1)
   const limit = Math.min(50, Math.max(1, Number(req.query.limit) || 20))
-  res.json({ success: true, data: await getUnitInvoices(unitId, { page, limit }, { excludeDrafts: true }) })
+  // Also the bills of flats the household lived in before (shown with that flat's number).
+  res.json({
+    success: true,
+    data: await getUnitInvoices(unitId, { page, limit }, { excludeDrafts: true, previousFlats: 'all' }),
+  })
 })
 
 export const getMyInvoice = handle('Failed to fetch resident bill', async (req, res) => {

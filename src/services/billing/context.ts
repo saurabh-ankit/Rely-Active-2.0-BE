@@ -1,9 +1,19 @@
 import { Op } from 'sequelize'
+import { RECURRING_SERVICE_TYPES, VOID_INVOICE_STATUSES } from '../../enums/billing.enum.js'
 import { OwnershipType, ResidentStatus, ResidentType } from '../../enums/resident.enum.js'
-import { PropertyBlock, PropertyFloor, PropertyUnit, Resident, ResidentFamilyMember } from '../../models/index.js'
+import {
+  Invoice,
+  PropertyBlock,
+  PropertyFloor,
+  PropertyUnit,
+  Resident,
+  ResidentFamilyMember,
+  ResidentUnitMove,
+  ServicesInvoice,
+} from '../../models/index.js'
 import type { InvoiceBillTo } from '../../models/invoice.model.js'
-import { localDay, toDay } from '../../utils/billing/dates.js'
-import type { UnitBillingContext } from './types.js'
+import { addDays, localDay, toDay } from '../../utils/billing/dates.js'
+import type { ServiceLine, UnitBillingContext } from './types.js'
 
 export class BillingError extends Error {
   constructor(
@@ -26,6 +36,48 @@ export const BILLABLE_RESIDENT_WHERE = {
 
 export const residentName = (r: Pick<Resident, 'firstName' | 'lastName'>): string =>
   `${r.firstName || ''} ${r.lastName || ''}`.trim() || 'Resident'
+
+/** A resident's original move-in day (when they were added, if no date was recorded). */
+export const originalMoveIn = (r: Pick<Resident, 'moveInDate' | 'createdAt'>): string | null =>
+  toDay(r.moveInDate) ?? localDay(r.createdAt)
+
+/**
+ * The day each resident is billed from on the flat they live in now. A resident who moved here
+ * from another flat starts the day after that flat's last invoice before the move: days the old
+ * flat never billed come to the new flat, and days it billed in advance aren't billed again.
+ * Everyone else: move-in.
+ */
+export async function residentStartDays(
+  residents: Pick<Resident, 'id' | 'unitId' | 'moveInDate' | 'createdAt'>[],
+): Promise<Map<string, string | null>> {
+  const starts = new Map(residents.map((r) => [r.id, originalMoveIn(r)]))
+  if (!residents.length) return starts
+  const moves = await ResidentUnitMove.findAll({
+    where: { residentId: residents.map((r) => r.id), isDeleted: false },
+    order: [['moveDate', 'DESC']],
+  })
+  const latestIn = new Map<string, ResidentUnitMove>()
+  for (const r of residents) {
+    const move = moves.find((m) => m.residentId === r.id && m.toUnitId === r.unitId)
+    if (move) latestIn.set(r.id, move)
+  }
+  if (!latestIn.size) return starts
+  const fromUnitIds = [...new Set([...latestIn.values()].map((m) => m.fromUnitId))]
+  const oldInvoices = await Invoice.findAll({
+    where: { unitId: fromUnitIds, isDeleted: false, status: { [Op.notIn]: [...VOID_INVOICE_STATUSES] } },
+    attributes: ['unitId', 'startDate', 'endDate'],
+  })
+  for (const [residentId, move] of latestIn) {
+    const moveDate = String(move.moveDate)
+    const lastBilled = oldInvoices
+      .filter((inv) => inv.unitId === move.fromUnitId && String(inv.startDate) < moveDate)
+      .map((inv) => String(inv.endDate))
+      .sort()
+      .at(-1)
+    if (lastBilled) starts.set(residentId, addDays(lastBilled, 1))
+  }
+  return starts
+}
 
 export async function loadUnitContext(unitId: string): Promise<UnitBillingContext> {
   const unit = await PropertyUnit.findOne({
@@ -53,6 +105,73 @@ export async function loadUnitContext(unitId: string): Promise<UnitBillingContex
   const propertyId = floor?.block?.propertyId || residents[0]?.locId
   if (!propertyId) throw new BillingError('Could not resolve the property for this flat')
 
+  // Moves of this flat's residents (from elsewhere), and residents who left this flat for another.
+  const moveRows = await ResidentUnitMove.findAll({
+    where: {
+      isDeleted: false,
+      [Op.or]: [...(residentIds.length ? [{ residentId: residentIds }] : []), { fromUnitId: unitId }],
+    },
+    order: [['moveDate', 'ASC']],
+  })
+  const moves = new Map<string, { fromUnitId: string; moveDate: string }[]>()
+  for (const m of moveRows) {
+    if (!residentIds.includes(m.residentId)) continue
+    moves.set(m.residentId, [
+      ...(moves.get(m.residentId) ?? []),
+      { fromUnitId: m.fromUnitId, moveDate: String(m.moveDate) },
+    ])
+  }
+  const previousUnitIds = [...new Set([...moves.values()].flat().map((m) => m.fromUnitId))]
+  const unitNumbers = new Map([[unitId, unit.unit_number]])
+  if (previousUnitIds.length) {
+    const units = await PropertyUnit.findAll({ where: { id: previousUnitIds }, attributes: ['id', 'unit_number'] })
+    for (const u of units) unitNumbers.set(u.id, u.unit_number)
+  }
+  const movedAwayResidentIds = new Set(
+    moveRows.filter((m) => m.fromUnitId === unitId && !residentIds.includes(m.residentId)).map((m) => m.residentId),
+  )
+  const movedAwayFamilyMemberIds = new Set(
+    movedAwayResidentIds.size
+      ? (
+          await ResidentFamilyMember.findAll({
+            where: { residentId: [...movedAwayResidentIds] },
+            attributes: ['id'],
+          })
+        ).map((f) => f.id)
+      : [],
+  )
+
+  // Rent / package days a moved resident was already billed for on their old flat.
+  const billedElsewhere = new Map<string, string>()
+  if (moves.size) {
+    const rows = await ServicesInvoice.findAll({
+      where: {
+        residentId: [...moves.keys()],
+        isDeleted: false,
+        serviceType: [...RECURRING_SERVICE_TYPES],
+        sourceId: { [Op.ne]: null },
+        isAdjustment: false,
+      },
+      attributes: ['serviceType', 'sourceId', 'serviceEndDate'],
+      include: [
+        {
+          model: Invoice,
+          as: 'invoice',
+          attributes: [],
+          where: { unitId: { [Op.ne]: unitId }, isDeleted: false, status: { [Op.notIn]: [...VOID_INVOICE_STATUSES] } },
+        },
+      ],
+    })
+    for (const row of rows) {
+      const key = `${row.serviceType}:${row.sourceId}`
+      const end = String(row.serviceEndDate ?? '')
+      if (end && end > (billedElsewhere.get(key) ?? '')) billedElsewhere.set(key, end)
+    }
+  }
+
+  const starts = await residentStartDays(residents)
+  const earliest = (days: (string | null | undefined)[]) => days.filter((d): d is string => !!d).sort()[0] ?? null
+
   return {
     unitId,
     unitNumber: unit.unit_number,
@@ -62,12 +181,45 @@ export async function loadUnitContext(unitId: string): Promise<UnitBillingContex
     familyToResident,
     familyMemberIds: [...familyToResident.keys()],
     familyMembers,
-    movedInDate:
-      residents
-        .map((r) => toDay(r.moveInDate) ?? localDay(r.createdAt))
-        .filter((d): d is string => !!d)
-        .sort()[0] ?? null,
+    movedInDate: earliest(residents.map((r) => starts.get(r.id))),
+    usageFromDate: earliest(residents.map(originalMoveIn)),
+    moves,
+    movedAwayResidentIds,
+    movedAwayFamilyMemberIds,
+    billedElsewhere,
+    unitNumbers,
   }
+}
+
+/**
+ * The old flat a charge was used in: the flat the resident lived in on that day, when it is not
+ * this one (null for charges from their time in this flat).
+ */
+export function fromUnitFor(ctx: UnitBillingContext, residentId: string | null, day: string): string | null {
+  if (!residentId) return null
+  const next = (ctx.moves.get(residentId) ?? []).find((m) => m.moveDate > day)
+  return next && next.fromUnitId !== ctx.unitId ? next.fromUnitId : null
+}
+
+/** Whether a charge belongs to a resident (or their family member) who moved from this flat to another. */
+export const isMovedAway = (
+  ctx: UnitBillingContext,
+  residentId: string | null | undefined,
+  familyMemberId: string | null | undefined,
+) =>
+  (!!residentId && ctx.movedAwayResidentIds.has(residentId)) ||
+  (!!familyMemberId && ctx.movedAwayFamilyMemberIds.has(familyMemberId))
+
+/** Fills in the old flat's number on lines carried over from it. */
+export async function labelOldFlats(ctx: UnitBillingContext, lines: ServiceLine[]): Promise<ServiceLine[]> {
+  const missing = [...new Set(lines.map((l) => l.fromUnitId).filter((id): id is string => !!id))].filter(
+    (id) => !ctx.unitNumbers.has(id),
+  )
+  if (missing.length) {
+    const units = await PropertyUnit.findAll({ where: { id: missing }, attributes: ['id', 'unit_number'] })
+    for (const u of units) ctx.unitNumbers.set(u.id, u.unit_number)
+  }
+  return lines.map((l) => (l.fromUnitId ? { ...l, fromUnitNumber: ctx.unitNumbers.get(l.fromUnitId) ?? null } : l))
 }
 
 /**

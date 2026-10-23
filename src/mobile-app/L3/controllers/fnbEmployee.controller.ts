@@ -24,6 +24,7 @@ import {
 import { uploadBase64ToS3 } from '../../../middlewares/s3/index.js'
 import { FnbSubscriptionStatus } from '../../../enums/fnb.enum.js'
 import sequelize from '../../../config/db/index.js'
+import { deliveryUnitInclude, showDeliveryUnit } from '../../../utils/fnbDeliveryUnit.util.js'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -1252,6 +1253,7 @@ export async function getResidentOrdersForProperty(req: Request, res: Response):
     const orders = await FnbResidentOrder.findAll({
       where: whereClause,
       include: [
+        deliveryUnitInclude,
         {
           model: Resident,
           as: 'resident',
@@ -1361,6 +1363,7 @@ export async function getResidentOrdersForProperty(req: Request, res: Response):
       ],
       order: [['createdAt', 'DESC']],
     })
+    orders.forEach(showDeliveryUnit)
 
     let filteredOrders = orders
     if (typeof search === 'string' && search.trim()) {
@@ -1521,6 +1524,7 @@ export async function getAssignedDeliveries(req: Request, res: Response): Promis
           model: FnbResidentOrder,
           as: 'order',
           include: [
+            deliveryUnitInclude,
             {
               model: Resident,
               as: 'resident',
@@ -1560,6 +1564,7 @@ export async function getAssignedDeliveries(req: Request, res: Response): Promis
       ],
       order: [['createdAt', 'DESC']],
     })
+    deliveries.forEach((d) => d.order && showDeliveryUnit(d.order))
 
     res.status(200).json({
       success: true,
