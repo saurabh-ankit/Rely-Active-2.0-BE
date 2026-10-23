@@ -32,13 +32,17 @@ import {
 import {
   createResidentFluidBalance as createFluidBalance,
   deleteResidentFluidBalanceEntry as deleteFluidBalance,
+  getResidentFluidBalanceSummary as getFluidBalanceSummary,
+  listResidentFluidBalanceByDate,
   updateResidentFluidBalanceEntry as updateFluidBalance,
 } from '../../services/residentFluidBalance.service.js'
+import { getTodayDateStr } from '../../mobile-app/L3/controllers/medical.controller.js'
 import {
   createResidentIncident as createIncident,
   deleteResidentIncident as deleteIncident,
   updateResidentIncident as updateIncident,
 } from '../../services/residentIncident.service.js'
+import { getIncidentSop, updateIncidentSopStep } from '../../services/incidentSop.service.js'
 import { listMedicationAdministrations } from '../../services/medicationTask.service.js'
 import type {
   CreateResidentMedicationInput,
@@ -56,10 +60,12 @@ import type {
 } from '../../validations/residentLabReport.validation.js'
 import type {
   CreateResidentFluidBalanceInput,
+  ListResidentFluidBalanceQuery,
   UpdateResidentFluidBalanceInput,
 } from '../../validations/residentFluidBalance.validation.js'
 import type {
   CreateResidentIncidentInput,
+  UpdateIncidentSopStepInput,
   UpdateResidentIncidentInput,
 } from '../../validations/residentIncident.validation.js'
 
@@ -354,6 +360,43 @@ export async function deleteResidentLabReport(req: AuthenticatedRequest, res: Re
 // ── Fluid balance ────────────────────────────────────────────────────────────
 
 /**
+ * GET /residents/:residentId/fluid-balance/summary
+ * Intake, output and net totals over the last 24 hours.
+ */
+export async function getResidentFluidBalanceSummary(req: AuthenticatedRequest, res: Response): Promise<void> {
+  try {
+    const residentId = String(req.params.residentId || '').trim()
+    if (!residentId) {
+      throw new HttpError(400, 'Resident ID is required')
+    }
+
+    const data = await getFluidBalanceSummary(residentId)
+    res.status(200).json({ success: true, message: 'Fluid balance summary fetched successfully', data })
+  } catch (err) {
+    sendError(res, err, 'getResidentFluidBalanceSummary')
+  }
+}
+
+/**
+ * GET /residents/:residentId/fluid-balance?date=YYYY-MM-DD
+ * Fluid balance history for one day (defaults to today).
+ */
+export async function getResidentFluidBalanceHistory(req: AuthenticatedRequest, res: Response): Promise<void> {
+  try {
+    const residentId = String(req.params.residentId || '').trim()
+    if (!residentId) {
+      throw new HttpError(400, 'Resident ID is required')
+    }
+
+    const date = (req.query as ListResidentFluidBalanceQuery).date ?? getTodayDateStr()
+    const data = await listResidentFluidBalanceByDate(residentId, date)
+    res.status(200).json({ success: true, message: 'Fluid balance history fetched successfully', data })
+  } catch (err) {
+    sendError(res, err, 'getResidentFluidBalanceHistory')
+  }
+}
+
+/**
  * POST /residents/:residentId/fluid-balance
  */
 export async function createResidentFluidBalance(req: AuthenticatedRequest, res: Response): Promise<void> {
@@ -434,7 +477,8 @@ export async function createResidentIncident(req: AuthenticatedRequest, res: Res
 
 /**
  * PUT /residents/:residentId/incidents/:id (multipart)
- * Fields: incidentType?, severity?, incidentAt?, notes?. Files: photos, voiceNote (appended).
+ * Fields: incidentType?, severity?, incidentAt?, notes?, removePhotoIds? (comma-separated UUIDs),
+ * removeVoiceNote? (booleanish). Files: photos (appended, max 5 total), voiceNote (replaces existing).
  */
 export async function updateResidentIncident(req: AuthenticatedRequest, res: Response): Promise<void> {
   try {
@@ -458,5 +502,48 @@ export async function deleteResidentIncident(req: AuthenticatedRequest, res: Res
     res.status(200).json({ success: true, message: 'Incident deleted successfully' })
   } catch (err) {
     sendError(res, err, 'deleteResidentIncident')
+  }
+}
+
+/**
+ * GET /residents/:residentId/incidents/:incidentId/sop
+ * The incident's SOP checklist (Skin/Wound and Fall/Injury only).
+ */
+export async function getResidentIncidentSop(req: AuthenticatedRequest, res: Response): Promise<void> {
+  try {
+    const residentId = String(req.params.residentId || '').trim()
+    const incidentId = String(req.params.incidentId || '').trim()
+    if (!residentId || !incidentId) {
+      throw new HttpError(400, 'Resident ID and incident ID are required')
+    }
+    const data = await getIncidentSop(residentId, incidentId)
+    res.status(200).json({ success: true, message: 'Incident SOP fetched successfully', data })
+  } catch (err) {
+    sendError(res, err, 'getResidentIncidentSop')
+  }
+}
+
+/**
+ * PATCH /residents/:residentId/incidents/:incidentId/sop/:stepId
+ * Marks an SOP step done / not done and/or saves its note.
+ */
+export async function updateResidentIncidentSopStep(req: AuthenticatedRequest, res: Response): Promise<void> {
+  try {
+    const residentId = String(req.params.residentId || '').trim()
+    const incidentId = String(req.params.incidentId || '').trim()
+    const stepId = String(req.params.stepId || '').trim()
+    if (!residentId || !incidentId || !stepId) {
+      throw new HttpError(400, 'Resident ID, incident ID and step ID are required')
+    }
+    const data = await updateIncidentSopStep({
+      residentId,
+      incidentId,
+      stepId,
+      input: req.body as UpdateIncidentSopStepInput,
+      userId: req.user?.id ?? null,
+    })
+    res.status(200).json({ success: true, message: 'SOP step updated successfully', data })
+  } catch (err) {
+    sendError(res, err, 'updateResidentIncidentSopStep')
   }
 }

@@ -723,6 +723,12 @@ export async function up({ context: queryInterface }: { context: QueryInterface 
         type: DataTypes.STRING(1000),
         allowNull: true,
       },
+      is_paid: {
+        type: DataTypes.BOOLEAN,
+        allowNull: false,
+        defaultValue: false,
+        comment: 'Whether the lab report was already paid (shows payment method + receipt)',
+      },
       isActive: {
         type: DataTypes.BOOLEAN,
         allowNull: false,
@@ -747,6 +753,18 @@ export async function up({ context: queryInterface }: { context: QueryInterface 
     await queryInterface.addIndex('resident_lab_reports', ['isDeleted', 'reportDate'], {
       name: 'idx_resident_lab_reports_deleted_date',
     })
+  } else {
+    await addColumnIfMissing(queryInterface, 'resident_lab_reports', 'is_paid', {
+      type: DataTypes.BOOLEAN,
+      allowNull: false,
+      defaultValue: false,
+      comment: 'Whether the lab report was already paid (shows payment method + receipt)',
+    })
+    await queryInterface.sequelize.query(`
+      UPDATE resident_lab_reports
+      SET is_paid = 1
+      WHERE paymentMethod IS NOT NULL OR receiptFileUrl IS NOT NULL
+    `)
   }
 
   tables = tableNames(await queryInterface.showAllTables())

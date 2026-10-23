@@ -136,6 +136,7 @@ export function formatLabReport(report: ResidentLabReport): Record<string, unkno
     paymentMethod: report.paymentMethod,
     reportFileUrl: report.reportFileUrl,
     receiptFileUrl: report.receiptFileUrl,
+    isPaid: !!report.isPaid,
     isActive: report.isActive,
     createdById: report.createdBy || null,
     createdByName: userName(report.creator),

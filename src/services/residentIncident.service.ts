@@ -127,6 +127,8 @@ async function findResidentIncident(residentId: string, id: string) {
   return row
 }
 
+const MAX_INCIDENT_PHOTOS = 5
+
 export async function updateResidentIncident(params: {
   residentId: string
   id: string
@@ -138,13 +140,24 @@ export async function updateResidentIncident(params: {
   const row = await findResidentIncident(residentId, id)
   const folder = `resident-incidents/${residentId}`
 
+  const removePhotoIds = new Set(input.removePhotoIds ?? [])
+  let photos = fileList(row.photos).filter((photo) => !removePhotoIds.has(photo.id))
+  let voiceNotes = input.removeVoiceNote ? [] : fileList(row.voiceNotes)
+
   const [newPhotos, newVoiceNotes] = await Promise.all([
     uploadIncidentFiles(files?.photos ?? [], folder, userId, 'IMAGE'),
     uploadIncidentFiles(files?.voiceNotes ?? [], folder, userId, 'AUDIO'),
   ])
 
-  const photos = [...fileList(row.photos), ...newPhotos]
-  const voiceNotes = [...fileList(row.voiceNotes), ...newVoiceNotes]
+  if (photos.length + newPhotos.length > MAX_INCIDENT_PHOTOS) {
+    throw new HttpError(400, `An incident can have at most ${MAX_INCIDENT_PHOTOS} photos`)
+  }
+  photos = [...photos, ...newPhotos]
+
+  // New voice note replaces existing (max 1); otherwise keep after optional remove.
+  if (newVoiceNotes.length > 0) {
+    voiceNotes = newVoiceNotes.slice(0, 1)
+  }
 
   await row.update({
     incidentType: input.incidentType !== undefined ? input.incidentType : row.incidentType,
