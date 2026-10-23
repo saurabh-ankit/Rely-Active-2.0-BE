@@ -1,5 +1,8 @@
 import { z } from 'zod'
 
+/** Allowance for device clock drift when rejecting future recorded times. */
+const FUTURE_TOLERANCE_MS = 5 * 60 * 1000
+
 const nameSchema = z
   .string({ message: 'Allergy name is required' })
   .trim()
@@ -18,6 +21,10 @@ const recordedAtSchema = z
   .string()
   .trim()
   .refine((value) => !Number.isNaN(new Date(value).getTime()), 'Recorded at must be a valid date')
+  .refine(
+    (value) => new Date(value).getTime() <= Date.now() + FUTURE_TOLERANCE_MS,
+    'Recorded at cannot be in the future',
+  )
   .optional()
   .nullable()
   .or(z.literal('').transform(() => null))

@@ -1229,6 +1229,7 @@ export async function assignDoctorCareTask(req: Request, res: Response): Promise
     const operatingUserId = authReq.user?.id || null
     const {
       residentId,
+      familyMemberId: bodyFamilyMemberId,
       taskId,
       startDate,
       endDate,
@@ -1257,6 +1258,30 @@ export async function assignDoctorCareTask(req: Request, res: Response): Promise
     if (!resident || resident.isDeleted || !resident.isResiding) {
       res.status(400).json({ success: false, message: 'Resident not found or is non-residing' })
       return
+    }
+
+    // 1b. Optional family member: must belong to resident and be residing
+    const familyMemberId: string | null = bodyFamilyMemberId || null
+    if (familyMemberId) {
+      const familyMember = await ResidentFamilyMember.findByPk(familyMemberId)
+      if (!familyMember || familyMember.isDeleted) {
+        res.status(404).json({ success: false, message: 'Specified family member not found' })
+        return
+      }
+      if (familyMember.residentId !== residentId) {
+        res.status(400).json({
+          success: false,
+          message: 'Family member does not belong to the specified resident',
+        })
+        return
+      }
+      if (!familyMember.isResiding) {
+        res.status(400).json({
+          success: false,
+          message: 'Cannot assign care task to a non-residing family member',
+        })
+        return
+      }
     }
 
     // 2. Verify care task exists
@@ -1298,7 +1323,7 @@ export async function assignDoctorCareTask(req: Request, res: Response): Promise
       finalPrice = Number(task.price) || 0
     }
 
-    // 6. Check active package subscription for resident to auto-link
+    // 6. Check active package subscription for assignee (resident or family member) to auto-link
     let packageSubscriptionId: string | null = null
     let carePackageId: string | null = null
     let normalizedSource: 'PACKAGE' | 'ADDON' = 'ADDON'
@@ -1306,7 +1331,7 @@ export async function assignDoctorCareTask(req: Request, res: Response): Promise
     const activeSubscription = await PackageSubscription.findOne({
       where: {
         residentId,
-        familyMemberId: null,
+        familyMemberId: familyMemberId,
         status: SubscriptionStatus.ACTIVE,
         isDeleted: false,
       },
@@ -1344,6 +1369,7 @@ export async function assignDoctorCareTask(req: Request, res: Response): Promise
     for (const slotTime of scheduledTimes) {
       const assignment = await CareTaskAssignment.create({
         residentId,
+        familyMemberId,
         taskId,
         propertyId,
         packageSubscriptionId,

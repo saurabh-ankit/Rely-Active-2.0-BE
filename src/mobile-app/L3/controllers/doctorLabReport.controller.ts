@@ -102,7 +102,7 @@ export async function listResidentLabReports(req: AuthenticatedRequest, res: Res
 
 /**
  * POST /doctor/residents/:residentId/lab-reports
- * Multipart: report (required), receipt (optional)
+ * Multipart: report (required), receipt (required when isPaid)
  */
 export async function createResidentLabReport(req: AuthenticatedRequest, res: Response): Promise<void> {
   try {
@@ -132,6 +132,11 @@ export async function createResidentLabReport(req: AuthenticatedRequest, res: Re
       throw new HttpError(400, 'Lab report file is required')
     }
 
+    const isPaid = !!input.isPaid
+    if (isPaid && !receiptFile) {
+      throw new HttpError(400, 'Receipt file is required when already paid')
+    }
+
     const setting = await LabTestSetting.findOne({
       where: { id: input.labTestSettingId, isDeleted: false, isActive: true },
     })
@@ -148,7 +153,7 @@ export async function createResidentLabReport(req: AuthenticatedRequest, res: Re
 
     const [reportUpload, receiptUpload] = await Promise.all([
       uploadFileToS3(reportFile, 'resident-lab-reports/reports'),
-      receiptFile ? uploadFileToS3(receiptFile, 'resident-lab-reports/receipts') : Promise.resolve(null),
+      isPaid && receiptFile ? uploadFileToS3(receiptFile, 'resident-lab-reports/receipts') : Promise.resolve(null),
     ])
 
     const report = await ResidentLabReport.create({
@@ -160,9 +165,10 @@ export async function createResidentLabReport(req: AuthenticatedRequest, res: Re
       reportDate: input.reportDate.trim(),
       notes: input.notes?.trim() || null,
       cost: input.cost ?? null,
-      paymentMethod: input.paymentMethod ?? null,
+      paymentMethod: isPaid ? (input.paymentMethod ?? null) : null,
       reportFileUrl: reportUpload.location,
-      receiptFileUrl: receiptUpload?.location ?? null,
+      receiptFileUrl: isPaid ? (receiptUpload?.location ?? null) : null,
+      isPaid,
       isActive: true,
       isDeleted: false,
       createdBy,

@@ -36,12 +36,16 @@ import {
   createResidentLabReport,
   updateResidentLabReport,
   deleteResidentLabReport,
+  getResidentFluidBalanceSummary,
+  getResidentFluidBalanceHistory,
   createResidentFluidBalance,
   updateResidentFluidBalance,
   deleteResidentFluidBalance,
   createResidentIncident,
   updateResidentIncident,
   deleteResidentIncident,
+  getResidentIncidentSop,
+  updateResidentIncidentSopStep,
   MAX_INCIDENT_PHOTOS,
   MAX_INCIDENT_VOICE_NOTES,
 } from '../controllers/residentClinical.controller.js'
@@ -76,10 +80,13 @@ import {
 } from '../../validations/residentAllergy.validation.js'
 import {
   createResidentFluidBalanceSchema,
+  listResidentFluidBalanceQuerySchema,
   updateResidentFluidBalanceSchema,
 } from '../../validations/residentFluidBalance.validation.js'
 import {
   createResidentIncidentSchema,
+  incidentSopParamsSchema,
+  updateIncidentSopStepSchema,
   updateResidentIncidentSchema,
 } from '../../validations/residentIncident.validation.js'
 import { residentTimelineQuerySchema } from '../../validations/residentTimeline.validation.js'
@@ -247,6 +254,19 @@ router.delete(
   deleteResidentAllergy,
 )
 
+router.get(
+  '/:residentId/fluid-balance/summary',
+  authenticate,
+  validateParams(residentIdParamSchema),
+  getResidentFluidBalanceSummary,
+)
+router.get(
+  '/:residentId/fluid-balance',
+  authenticate,
+  validateParams(residentIdParamSchema),
+  validateQuery(listResidentFluidBalanceQuerySchema),
+  getResidentFluidBalanceHistory,
+)
 router.post(
   '/:residentId/fluid-balance',
   authenticate,
@@ -289,6 +309,19 @@ router.delete(
   authenticate,
   validateParams(residentClinicalItemParamSchema),
   deleteResidentIncident,
+)
+router.get(
+  '/:residentId/incidents/:incidentId/sop',
+  authenticate,
+  validateParams(incidentSopParamsSchema),
+  getResidentIncidentSop,
+)
+router.patch(
+  '/:residentId/incidents/:incidentId/sop/:stepId',
+  authenticate,
+  validateParams(incidentSopParamsSchema),
+  validateBody(updateIncidentSopStepSchema),
+  updateResidentIncidentSopStep,
 )
 
 router.get(

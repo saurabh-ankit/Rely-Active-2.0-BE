@@ -24,6 +24,7 @@ export interface ResidentLabReportAttributes extends BaseAttributes {
   paymentMethod?: LabPaymentMethod | null
   reportFileUrl: string
   receiptFileUrl?: string | null
+  isPaid?: boolean
   isActive?: boolean
   isDeleted?: boolean
 }
@@ -36,6 +37,7 @@ export type ResidentLabReportCreationAttributes = Optional<
   | 'cost'
   | 'paymentMethod'
   | 'receiptFileUrl'
+  | 'isPaid'
   | 'isActive'
   | 'isDeleted'
   | 'createdBy'
@@ -59,6 +61,7 @@ export class ResidentLabReport
   declare paymentMethod: LabPaymentMethod | null
   declare reportFileUrl: string
   declare receiptFileUrl: string | null
+  declare isPaid: boolean
   declare isActive: boolean
   declare isDeleted: boolean
 
@@ -118,6 +121,13 @@ ResidentLabReport.init(
     receiptFileUrl: {
       type: DataTypes.STRING(1000),
       allowNull: true,
+    },
+    isPaid: {
+      type: DataTypes.BOOLEAN,
+      allowNull: false,
+      defaultValue: false,
+      field: 'is_paid',
+      comment: 'Whether the lab report was already paid (shows payment method + receipt)',
     },
     isActive: {
       type: DataTypes.BOOLEAN,

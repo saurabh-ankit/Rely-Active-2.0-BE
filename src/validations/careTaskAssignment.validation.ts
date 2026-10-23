@@ -2,6 +2,7 @@ import { z } from 'zod'
 
 export const createCareTaskAssignmentSchema = z.object({
   residentId: z.string().uuid('Valid resident ID is required'),
+  familyMemberId: z.string().uuid().optional().nullable(),
   taskId: z.string().uuid('Valid care task ID is required'),
   propertyId: z.string().uuid().optional().nullable(),
   packageSubscriptionId: z.string().uuid().optional().nullable(),

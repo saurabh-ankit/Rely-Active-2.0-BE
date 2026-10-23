@@ -1162,6 +1162,7 @@ export async function createCareTaskAssignment(req: Request, res: Response): Pro
 
     const {
       residentId,
+      familyMemberId: bodyFamilyMemberId,
       taskId,
       billingType,
       startDate,
@@ -1182,6 +1183,30 @@ export async function createCareTaskAssignment(req: Request, res: Response): Pro
     if (!resident.isResiding) {
       res.status(400).json({ success: false, message: 'Cannot assign care task to a non-residing resident' })
       return
+    }
+
+    // 1b. Optional family member: must belong to resident and be residing
+    const familyMemberId: string | null = bodyFamilyMemberId || null
+    if (familyMemberId) {
+      const familyMember = await ResidentFamilyMember.findByPk(familyMemberId)
+      if (!familyMember || familyMember.isDeleted) {
+        res.status(404).json({ success: false, message: 'Specified family member not found' })
+        return
+      }
+      if (familyMember.residentId !== residentId) {
+        res.status(400).json({
+          success: false,
+          message: 'Family member does not belong to the specified resident',
+        })
+        return
+      }
+      if (!familyMember.isResiding) {
+        res.status(400).json({
+          success: false,
+          message: 'Cannot assign care task to a non-residing family member',
+        })
+        return
+      }
     }
 
     // 2. Verify care task exists
@@ -1241,6 +1266,7 @@ export async function createCareTaskAssignment(req: Request, res: Response): Pro
     for (const scheduledTime of timesList) {
       const newAssignment = await CareTaskAssignment.create({
         residentId,
+        familyMemberId,
         taskId,
         propertyId,
         packageSubscriptionId: normalizedSource === 'PACKAGE' ? packageSubscriptionId || null : null,
@@ -1269,6 +1295,12 @@ export async function createCareTaskAssignment(req: Request, res: Response): Pro
             model: Resident,
             as: 'resident',
             attributes: ['id', 'firstName', 'lastName', 'phone', 'locId', 'unitId'],
+          },
+          {
+            model: ResidentFamilyMember,
+            as: 'familyMember',
+            attributes: ['id', 'firstName', 'lastName', 'relation'],
+            required: false,
           },
           {
             model: CareTask,
@@ -1301,12 +1333,13 @@ export async function createCareTaskAssignment(req: Request, res: Response): Pro
       createdAssignments.push(loaded || newAssignment)
     }
 
+    const assigneeLabel = familyMemberId ? 'family member' : 'resident'
     res.status(201).json({
       success: true,
       message:
         createdAssignments.length > 1
           ? `Successfully created ${createdAssignments.length} care task assignments for scheduled times.`
-          : 'Care task assigned to resident successfully',
+          : `Care task assigned to ${assigneeLabel} successfully`,
       data: createdAssignments[0],
       assignments: createdAssignments,
     })

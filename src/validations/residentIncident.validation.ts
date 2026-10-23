@@ -12,6 +12,23 @@ const notesSchema = z
   .nullable()
   .or(z.literal('').transform(() => null))
 
+const booleanish = z
+  .union([z.boolean(), z.enum(['true', 'false'])])
+  .transform((val) => val === true || val === 'true')
+  .optional()
+
+/** Multipart may send comma-separated UUIDs or a JSON array string. */
+const removePhotoIdsSchema = z
+  .union([z.string(), z.array(z.string())])
+  .optional()
+  .transform((value) => {
+    if (value === undefined) return undefined
+    const raw = Array.isArray(value) ? value : value.split(',')
+    const ids = raw.map((id) => id.trim()).filter(Boolean)
+    return ids.length > 0 ? ids : undefined
+  })
+  .pipe(z.array(z.string().uuid('Each removePhotoId must be a valid UUID')).optional())
+
 export const createResidentIncidentSchema = z.object({
   incidentType: z.enum(IncidentType, {
     message: `Incident type must be one of ${Object.values(IncidentType).join(', ')}`,
@@ -54,10 +71,21 @@ export const updateResidentIncidentSchema = z
       )
       .optional(),
     notes: notesSchema,
+    removePhotoIds: removePhotoIdsSchema,
+    removeVoiceNote: booleanish,
   })
-  .refine((data) => Object.values(data).some((value) => value !== undefined), {
-    message: 'Provide at least one field to update',
-  })
+  .refine(
+    (data) =>
+      data.incidentType !== undefined ||
+      data.severity !== undefined ||
+      data.incidentAt !== undefined ||
+      data.notes !== undefined ||
+      (data.removePhotoIds !== undefined && data.removePhotoIds.length > 0) ||
+      data.removeVoiceNote === true,
+    {
+      message: 'Provide at least one field to update',
+    },
+  )
 
 export type UpdateResidentIncidentInput = z.infer<typeof updateResidentIncidentSchema>
 
