@@ -13,8 +13,22 @@ export interface UnitBillingContext {
   familyToResident: Map<string, string>
   familyMemberIds: string[]
   familyMembers: ResidentFamilyMember[]
-  /** First day anyone billed for this flat moved in (null if no resident has a date). */
+  /**
+   * First day this flat is billed from (null if no resident has a date). A resident who moved
+   * here from another flat counts from the day after that flat's last invoice (or the move).
+   */
   movedInDate: string | null
+  /** Earliest original move-in of the residents: unbilled services are picked up from here. */
+  usageFromDate: string | null
+  /** Moves of this flat's residents, oldest first (to tell which flat a charge was used in). */
+  moves: Map<string, { fromUnitId: string; moveDate: string }[]>
+  /** Residents (and their family members) who moved from this flat to another: billed there now. */
+  movedAwayResidentIds: Set<string>
+  movedAwayFamilyMemberIds: Set<string>
+  /** `${serviceType}:${sourceId}` → last day already billed on another flat (rent / packages). */
+  billedElsewhere: Map<string, string>
+  /** Flat numbers by id, for "From old flat …" labels. */
+  unitNumbers: Map<string, string>
 }
 
 /** A billable line, as shown on the invoice screen and saved to services_invoice. */
@@ -41,6 +55,9 @@ export interface ServiceLine {
   /** Display date (service date / period start). */
   date: string
   isAdjustment: boolean
+  /** Old flat the charge was used in, when the resident has since moved here. */
+  fromUnitId: string | null
+  fromUnitNumber: string | null
 }
 
 /** A monthly charge active over a date range (rent, care package, food package). */
@@ -80,6 +97,8 @@ export const usageLine = (
     price: number
     total: number
     serviceDate: string
+    /** Set when the source record belongs to another flat (e.g. a ticket on the old flat). */
+    fromUnitId?: string | null
   },
 ): ServiceLine => ({
   id: `${serviceType}:${fields.sourceId}`,
@@ -99,4 +118,6 @@ export const usageLine = (
   serviceEndDate: fields.serviceDate,
   date: fields.serviceDate,
   isAdjustment: false,
+  fromUnitId: fields.fromUnitId ?? null,
+  fromUnitNumber: null,
 })

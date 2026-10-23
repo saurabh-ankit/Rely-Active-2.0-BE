@@ -8,11 +8,14 @@ import type { FnbResidentOrderDetail } from './fnbResidentOrderDetail.model.js'
 import type { FnbPropertySpecialSlot } from './fnbPropertySpecialSlot.model.js'
 
 import type { FnbFoodDelivery } from './fnbFoodDelivery.model.js'
+import type { PropertyUnit } from './propertyUnit.model.js'
 
 export interface FnbResidentOrderAttributes extends BaseAttributes {
   locId: string
   residentId?: string | null
   familyMemberId?: string | null
+  /** Flat the order is delivered to, fixed when it is placed (the resident may move later). */
+  unitId?: string | null
   residentPackageId?: string | null
   date: Date | string
   mealSlotId?: string | null
@@ -42,6 +45,7 @@ export type FnbResidentOrderCreationAttributes = Optional<
   | 'id'
   | 'residentId'
   | 'familyMemberId'
+  | 'unitId'
   | 'residentPackageId'
   | 'mealSlotId'
   | 'specialMealSlotId'
@@ -76,6 +80,7 @@ export class FnbResidentOrder
   declare locId: string
   declare residentId: string | null
   declare familyMemberId: string | null
+  declare unitId: string | null
   declare residentPackageId: string | null
   declare date: Date | string
   declare mealSlotId: string | null
@@ -102,6 +107,7 @@ export class FnbResidentOrder
   declare specialMealSlot?: FnbPropertySpecialSlot
   declare details?: FnbResidentOrderDetail[]
   declare delivery?: FnbFoodDelivery
+  declare deliveryUnit?: PropertyUnit
 }
 
 FnbResidentOrder.init(
@@ -118,6 +124,11 @@ FnbResidentOrder.init(
     familyMemberId: {
       type: DataTypes.UUID,
       allowNull: true,
+    },
+    unitId: {
+      type: DataTypes.UUID,
+      allowNull: true,
+      comment: 'FK -> property_units.id (delivery flat)',
     },
     residentPackageId: {
       type: DataTypes.UUID,

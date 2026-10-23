@@ -44,6 +44,15 @@ import type { ResidentTimelineQuery } from '../../validations/residentTimeline.v
 import type { CreateResidentDocumentInput } from '../../validations/residentDocument.validation.js'
 import type { UpdateResidentConditionInput } from '../../validations/residentCondition.validation.js'
 import { verifyToken } from '../../utils/jwt.js'
+import sequelize from '../../config/db/index.js'
+import {
+  applyUnitChange,
+  checkUnitChange,
+  getFlatHistory,
+  getUnitChangeImpact,
+  UnitChangeError,
+  type UnitChangeChoices,
+} from '../../services/residentUnitMove.service.js'
 
 export async function createResident(req: AuthenticatedRequest, res: Response): Promise<void> {
   try {
@@ -542,7 +551,8 @@ export async function getResidentById(req: Request, res: Response): Promise<void
 
     res.status(200).json({
       success: true,
-      data: resident,
+      // The flats lived in (oldest first) and the day they moved into the current one.
+      data: { ...resident.toJSON(), ...(await getFlatHistory(resident)) },
     })
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Error fetching resident profile'
@@ -582,7 +592,25 @@ export async function updateResident(req: Request, res: Response): Promise<void>
       carePackageStartDate,
       taskSchedules: rawTaskSchedules,
       familyMembers,
+      unitId,
+      unitChange: rawUnitChange,
     } = req.body
+
+    // Moving to another flat: check it before changing anything.
+    const newUnitId = unitId && String(unitId) !== resident.unitId ? String(unitId) : null
+    let unitChange: UnitChangeChoices = {}
+    if (newUnitId) {
+      try {
+        await checkUnitChange(resident, newUnitId)
+      } catch (err) {
+        if (err instanceof UnitChangeError) {
+          res.status(err.status).json({ success: false, message: err.message })
+          return
+        }
+        throw err
+      }
+      if (rawUnitChange) unitChange = typeof rawUnitChange === 'string' ? JSON.parse(rawUnitChange) : rawUnitChange
+    }
 
     let taskSchedules: Array<{ taskId: string; taskName?: string; frequency?: number; times?: string[] }> | undefined
     if (rawTaskSchedules) {
@@ -886,6 +914,12 @@ export async function updateResident(req: Request, res: Response): Promise<void>
       }
     }
 
+    if (newUnitId) {
+      await sequelize.transaction((transaction) =>
+        applyUnitChange(resident, newUnitId, unitChange, validUserId, transaction),
+      )
+    }
+
     await resident.update({
       firstName: firstName ? firstName.trim() : resident.firstName,
       lastName: lastName !== undefined ? lastName : resident.lastName,
@@ -1032,6 +1066,26 @@ export async function updateResident(req: Request, res: Response): Promise<void>
     })
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Error updating resident'
+    res.status(500).json({ success: false, message })
+  }
+}
+
+/** What moving the resident to another flat affects: unbilled charges, orders, tickets, assets… */
+export async function getResidentUnitChangeImpact(req: Request, res: Response): Promise<void> {
+  try {
+    const toUnitId = String(req.query.toUnitId || '')
+    if (!toUnitId) {
+      res.status(400).json({ success: false, message: 'toUnitId is required' })
+      return
+    }
+    const data = await getUnitChangeImpact(String(req.params.id), toUnitId)
+    res.status(200).json({ success: true, data })
+  } catch (err: unknown) {
+    if (err instanceof UnitChangeError) {
+      res.status(err.status).json({ success: false, message: err.message })
+      return
+    }
+    const message = err instanceof Error ? err.message : 'Error checking the flat change'
     res.status(500).json({ success: false, message })
   }
 }

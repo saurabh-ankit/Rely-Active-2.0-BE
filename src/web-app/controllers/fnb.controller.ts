@@ -32,6 +32,7 @@ import { AuthenticatedRequest } from '../../middlewares/authenticate.js'
 import { uploadFileToS3, uploadBase64ToS3 } from '../../middlewares/s3/index.js'
 import { FnbMenuStatus, FnbSubscriptionStatus, FnbDietaryType } from '../../enums/fnb.enum.js'
 import { Op } from 'sequelize'
+import { deliveryUnitInclude, showDeliveryUnit } from '../../utils/fnbDeliveryUnit.util.js'
 
 // ─── From dish.controller.ts ───────────────────────────────────────────
 export async function getAllDishes(req: Request, res: Response): Promise<void> {
@@ -1688,6 +1689,7 @@ export async function getResidentOrdersForProperty(req: Request, res: Response):
     const orders = await FnbResidentOrder.findAll({
       where: whereClause,
       include: [
+        deliveryUnitInclude,
         {
           model: Resident,
           as: 'resident',
@@ -1797,6 +1799,7 @@ export async function getResidentOrdersForProperty(req: Request, res: Response):
       ],
       order: [['createdAt', 'DESC']],
     })
+    orders.forEach(showDeliveryUnit)
 
     // Filter by search query if provided (searching resident name, unit number, block, floor, or order ID)
     let filteredOrders = orders

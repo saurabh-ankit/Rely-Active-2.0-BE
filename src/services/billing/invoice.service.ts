@@ -23,7 +23,7 @@ import { addDays, roundMoney, todayDay } from '../../utils/billing/dates.js'
 import { generateInvoiceNumber, generateReceiptNumber } from '../../utils/billing/numbering.js'
 import { BillingError } from './context.js'
 import { getTaxConfig } from './tax.service.js'
-import { buildInvoicePreview } from './invoiceBuilder.service.js'
+import { buildInvoicePreview, openInvoicesToCollect } from './invoiceBuilder.service.js'
 import type { InvoiceBillTo } from '../../models/invoice.model.js'
 import type { ServiceLine } from './types.js'
 
@@ -81,29 +81,37 @@ function computeDiscount(total: number, input: SaveInvoiceInput) {
   return { discount, discountPercentage: null, discountAmount: discount }
 }
 
-const carryForwardLine = (inv: Invoice, balance: number): ServiceLine => ({
-  id: `${ServiceType.CARRY_FORWARD}:${inv.id}`,
-  serviceType: ServiceType.CARRY_FORWARD,
-  type: ServiceType.CARRY_FORWARD,
-  name: `Previous balance carried forward (${inv.invoiceNumber})`,
-  description: `Unpaid balance of ${inv.invoiceNumber} (${inv.startDate} to ${inv.endDate})`,
-  quantity: 1,
-  price: balance,
-  total: balance,
-  residentId: null,
-  familyMemberId: null,
-  consumerType: null,
-  consumerName: null,
-  sourceId: inv.id,
-  serviceStartDate: String(inv.startDate),
-  serviceEndDate: String(inv.endDate),
-  date: String(inv.startDate),
-  isAdjustment: false,
-})
+const carryForwardLine = (inv: Invoice, balance: number, fromOldFlat: boolean): ServiceLine => {
+  const oldFlat = fromOldFlat ? ((inv as Invoice & { unit?: PropertyUnit }).unit?.unit_number ?? null) : null
+  return {
+    id: `${ServiceType.CARRY_FORWARD}:${inv.id}`,
+    serviceType: ServiceType.CARRY_FORWARD,
+    type: ServiceType.CARRY_FORWARD,
+    name: `Previous balance carried forward (${inv.invoiceNumber})`,
+    description: `Unpaid balance of ${inv.invoiceNumber} (${inv.startDate} to ${inv.endDate})${
+      oldFlat ? ` · old flat ${oldFlat}` : ''
+    }`,
+    quantity: 1,
+    price: balance,
+    total: balance,
+    residentId: null,
+    familyMemberId: null,
+    consumerType: null,
+    consumerName: null,
+    sourceId: inv.id,
+    serviceStartDate: String(inv.startDate),
+    serviceEndDate: String(inv.endDate),
+    date: String(inv.startDate),
+    isAdjustment: false,
+    fromUnitId: fromOldFlat ? inv.unitId : null,
+    fromUnitNumber: oldFlat,
+  }
+}
 
 /**
  * Lines to save: the selected preview lines, misc lines, and a carry-forward line for every
- * earlier invoice still Pending (nothing paid). Partly paid / overdue invoices are not carried.
+ * earlier invoice to carry (see openInvoicesToCollect): this flat's still Pending ones (nothing
+ * paid), and every unpaid invoice of a flat the residents moved here from, for what is left on it.
  */
 async function assembleLines(
   invoice: { unitId: string; startDate: string; excludeInvoiceId?: string },
@@ -116,23 +124,14 @@ async function assembleLines(
   const lines = services.filter((s) => selected.has(s.id))
   const misc = (input.miscellaneousServices ?? []).filter((m) => !m.isCarryForward && !m.originalInvoiceId)
 
-  const carried = (
-    await Invoice.findAll({
-      where: {
-        unitId: invoice.unitId,
-        isDeleted: false,
-        status: InvoiceStatus.PENDING,
-        endDate: { [Op.lt]: invoice.startDate },
-        ...(invoice.excludeInvoiceId ? { id: { [Op.ne]: invoice.excludeInvoiceId } } : {}),
-      },
-      order: [['startDate', 'ASC']],
-      transaction,
-      lock: transaction.LOCK.UPDATE,
-    })
-  ).filter((inv) => Number(inv.paidAmount) === 0 && Number(inv.discountedAmount) > 0)
+  const toCarry = (
+    await openInvoicesToCollect(invoice.unitId, invoice.startDate, invoice.excludeInvoiceId, transaction, true)
+  ).filter((c) => c.carryForward)
   // The carried amount is always the source invoice's current balance, never a client value.
-  for (const inv of carried) lines.push(carryForwardLine(inv, roundMoney(Number(inv.discountedAmount))))
-  return { lines, misc, carried }
+  for (const { invoice: inv, fromOldFlat } of toCarry) {
+    lines.push(carryForwardLine(inv, roundMoney(Number(inv.discountedAmount) - Number(inv.paidAmount)), fromOldFlat))
+  }
+  return { lines, misc, carried: toCarry.map((c) => c.invoice) }
 }
 
 async function writeInvoiceContents(
@@ -161,6 +160,7 @@ async function writeInvoiceContents(
       serviceStartDate: l.serviceStartDate,
       serviceEndDate: l.serviceEndDate,
       isAdjustment: l.isAdjustment,
+      fromUnitId: l.fromUnitId,
       createdBy: userId,
     })),
     { transaction },
@@ -407,6 +407,8 @@ export async function updateInvoice(
         serviceEndDate: l.serviceEndDate ?? '',
         date: l.serviceStartDate ?? '',
         isAdjustment: false,
+        fromUnitId: l.fromUnitId,
+        fromUnitNumber: null,
       })
     }
     if (!lines.length && !misc.length) throw new BillingError('Select at least one service to bill')
@@ -445,6 +447,13 @@ async function settledAmount(invoiceId: string, transaction: Transaction) {
 }
 
 /**
+ * Paid towards a carried invoice since it was carried (through newer invoices). What was paid on
+ * it before it was carried (a partly paid one) is already left out of the carried amount.
+ */
+const paidSinceCarried = async (link: CarriedForwardInvoice, transaction: Transaction) =>
+  roundMoney((await settledAmount(link.sourceInvoiceId, transaction)) - Number(link.originalPaid || 0))
+
+/**
  * Splits a payment on an invoice: the balances it carries are settled first, oldest first, each
  * up to what is still unpaid on it (and on through what that one carries), then its own charges.
  * The invoice itself gets a row for the whole amount; each carried invoice reached gets its share.
@@ -463,7 +472,7 @@ async function planAllocation(invoiceId: string, amount: number, transaction: Tr
   let left = amount
   for (const c of carried) {
     if (left <= 0) break
-    const due = roundMoney(Number(c.carriedAmount) - (await settledAmount(c.sourceInvoiceId, transaction)))
+    const due = roundMoney(Number(c.carriedAmount) - (await paidSinceCarried(c, transaction)))
     const take = roundMoney(Math.min(due, left))
     if (take <= 0) continue
     rows.push(...(await planAllocation(c.sourceInvoiceId, take, transaction)))
@@ -477,7 +486,7 @@ async function settleCarriedInvoices(invoiceIds: string[], userId: string | null
   for (const invoiceId of invoiceIds) {
     const link = await CarriedForwardInvoice.findOne({ where: { sourceInvoiceId: invoiceId }, transaction })
     if (!link) continue
-    if ((await settledAmount(invoiceId, transaction)) + 0.004 < Number(link.carriedAmount)) continue
+    if ((await paidSinceCarried(link, transaction)) + 0.004 < Number(link.carriedAmount)) continue
     await Invoice.update(
       { status: InvoiceStatus.PAID, remainingBalance: 0, updatedBy: userId },
       { where: { id: invoiceId, status: { [Op.ne]: InvoiceStatus.PAID } }, transaction },

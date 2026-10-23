@@ -7,6 +7,7 @@ import {
   getResidentById,
   getResidentsByUnit,
   updateResident,
+  getResidentUnitChangeImpact,
   getResidentCareTeam,
   assignCareTeamMember,
   removeCareTeamMember,
@@ -331,6 +332,7 @@ router.delete('/:residentId/guardians/:id', validateParams(residentClinicalItemP
 router.post('/', uploadResidentPhoto, createResident)
 router.get('/', getAllResidents)
 router.get('/unit/:unitId', getResidentsByUnit)
+router.get('/:id/unit-change-impact', getResidentUnitChangeImpact)
 router.get('/:id', getResidentById)
 router.put('/:id', uploadResidentPhoto, updateResident)
 router.delete('/:id', deleteResident)

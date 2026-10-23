@@ -420,6 +420,8 @@ export async function placeMealOrder(req: AuthenticatedRequest, res: Response): 
         locId: resident.locId,
         residentId: resident.id,
         familyMemberId,
+        // Delivered to the flat the resident lives in when ordering (kept if they move later).
+        unitId: resident.unitId,
         residentPackageId: activePkg?.id || null,
         date: targetDate,
         mealSlotId: mealSlotId || null,

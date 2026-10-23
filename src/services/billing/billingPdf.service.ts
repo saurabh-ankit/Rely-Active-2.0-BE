@@ -5,6 +5,7 @@ import {
   Invoice,
   InvoiceDocument,
   Property,
+  PropertyUnit,
   Receipt,
   ReceiptAllocation,
   ServicesInvoice,
@@ -71,13 +72,16 @@ const STYLES = `
   .stamp { display: inline-block; padding: 4px 10px; border: 2px solid #157347; color: #157347; font-weight: bold; border-radius: 4px; }
 `
 
-/** "Resident: Shyamal Jha" / "Family member: Radha Jha (Spouse)" tag after a line's name. */
+/**
+ * "Resident: Shyamal Jha" / "Family member: Radha Jha (Spouse)" tag after a line's name, and
+ * "From old flat B-12" on a charge carried over after the resident moved.
+ */
 const consumerTag = (s: ServicesInvoice) =>
-  s.consumerName
+  (s.consumerName
     ? `<span class="who ${s.consumerType === 'FAMILY_MEMBER' ? 'fam' : 'res'}">${
         s.consumerType === 'FAMILY_MEMBER' ? 'Family member' : 'Resident'
       }: ${esc(s.consumerName)}</span>`
-    : ''
+    : '') + (s.fromUnit ? `<span class="who">From old flat ${esc(s.fromUnit.unit_number)}</span>` : '')
 
 const dmy = (value: Date | string | null | undefined) => {
   if (!value) return ''
@@ -380,7 +384,10 @@ export async function buildInvoicePdf(invoiceId: string): Promise<{ invoice: Inv
   if (!invoice) throw new BillingError('Invoice not found', 404)
   // Misc lines added at billing are mirrored in services_invoice, so this is every line.
   const [services, company, property] = await Promise.all([
-    ServicesInvoice.findAll({ where: { invoiceId, isDeleted: false } }),
+    ServicesInvoice.findAll({
+      where: { invoiceId, isDeleted: false },
+      include: [{ model: PropertyUnit, as: 'fromUnit', attributes: ['id', 'unit_number'], required: false }],
+    }),
     Company.findOne({ where: { isDeleted: false } }),
     Property.findByPk(invoice.propertyId),
   ])
