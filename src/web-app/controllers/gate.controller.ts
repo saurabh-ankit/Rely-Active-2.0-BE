@@ -2,6 +2,7 @@ import { Request, Response } from 'express'
 import { Op } from 'sequelize'
 import {
   GateEntry,
+  GateEntryItem,
   GatePreapproved,
   PropertyUnit,
   Resident,
@@ -113,6 +114,7 @@ export const getEntries = async (req: Request, res: Response) => {
         staffInclude('clockedInByUser'),
         staffInclude('clockedOutByUser'),
         ...gateRaisedByIncludes(),
+        { model: GateEntryItem, as: 'items', attributes: ['id', 'itemName', 'quantity', 'isChecked'] },
       ],
       order: [['createdAt', 'DESC']],
       limit: limitNum,
@@ -197,10 +199,15 @@ export const getPreapproved = async (req: Request, res: Response) => {
 export const updateEntryStatus = async (req: Request, res: Response) => {
   try {
     const { entryId } = req.params
-    const { status } = req.body
+    const { status, checkedItems } = req.body
 
     const entry = await GateEntry.findByPk(entryId as string)
     if (!entry) return res.status(404).json({ success: false, message: 'Entry not found' })
+
+    // Items the guard ticked off while checking the visitor out.
+    if (status === 'Completed' && Array.isArray(checkedItems) && checkedItems.length > 0) {
+      await GateEntryItem.update({ isChecked: true }, { where: { entryId: entry.id, id: checkedItems } })
+    }
 
     const updateData: Record<string, unknown> = { status }
 
@@ -230,5 +237,43 @@ export const updateEntryStatus = async (req: Request, res: Response) => {
     return res.status(200).json({ success: true, data: entry })
   } catch (error) {
     return res.status(500).json({ success: false, message: 'Error updating entry', error })
+  }
+}
+
+/** Adds the items an office visitor is carrying, so the guard can check them off at exit. */
+export const addEntryItems = async (req: Request, res: Response) => {
+  try {
+    const { locId, entryId } = req.params
+    const raw: unknown = req.body?.items
+    if (!Array.isArray(raw)) return res.status(400).json({ success: false, message: 'items must be an array' })
+
+    const items = raw
+      .map((i) => ({
+        itemName: typeof i?.itemName === 'string' ? i.itemName.trim() : '',
+        quantity: Number(i?.quantity ?? 1),
+      }))
+      .filter((i) => i.itemName)
+    if (items.length === 0) return res.status(400).json({ success: false, message: 'Add at least one item' })
+    if (items.some((i) => !Number.isInteger(i.quantity) || i.quantity < 1)) {
+      return res.status(400).json({ success: false, message: 'Quantity must be a whole number of at least 1' })
+    }
+    if (items.some((i) => i.itemName.length > 255)) {
+      return res.status(400).json({ success: false, message: 'Item name must be at most 255 characters' })
+    }
+
+    const entry = await GateEntry.findOne({ where: { id: entryId as string, locId: locId as string } })
+    if (!entry) return res.status(404).json({ success: false, message: 'Entry not found' })
+    if (entry.status === 'Completed' || entry.status === 'Rejected') {
+      return res.status(400).json({ success: false, message: 'Items cannot be added once the visit has ended' })
+    }
+
+    const userId = (req as Request & { user?: { id: string } }).user?.id || null
+    const created = await GateEntryItem.bulkCreate(
+      items.map((i) => ({ ...i, entryId: entry.id, createdBy: userId, updatedBy: userId })),
+    )
+
+    return res.status(201).json({ success: true, data: created })
+  } catch (error) {
+    return res.status(500).json({ success: false, message: 'Error adding items', error })
   }
 }

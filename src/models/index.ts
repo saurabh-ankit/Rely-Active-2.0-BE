@@ -73,6 +73,7 @@ import { Specialization } from './specialization.model.js'
 import { DoctorSpecialization } from './doctorSpecialization.model.js'
 import { GatePreapproved } from './gatePreapproved.model.js'
 import { GateEntry } from './gateEntry.model.js'
+import { GateEntryItem } from './gateEntryItem.model.js'
 import { FnbGlobalMealSlot } from './fnbGlobalMealSlot.model.js'
 import { FnbPropertyMealSlot } from './fnbPropertyMealSlot.model.js'
 import { FnbGlobalSpecialSlot } from './fnbGlobalSpecialSlot.model.js'
@@ -775,6 +776,9 @@ GateEntry.belongsTo(User, { foreignKey: 'clockedOutBy', as: 'clockedOutByUser' }
 GateEntry.belongsTo(User, { foreignKey: 'approvedBy', as: 'approvedByUser' })
 // Who raised the entry: the guard for a walk-in (createdBy has no FK, hence constraints: false).
 GateEntry.belongsTo(User, { foreignKey: 'createdBy', as: 'createdByUser', constraints: false })
+
+GateEntry.hasMany(GateEntryItem, { foreignKey: 'entryId', as: 'items' })
+GateEntryItem.belongsTo(GateEntry, { foreignKey: 'entryId', as: 'entry' })
 // A pre-approval's createdBy is the resident or the family member who made it; this resolves the latter.
 GatePreapproved.belongsTo(ResidentFamilyMember, {
   foreignKey: 'createdBy',
@@ -1160,6 +1164,7 @@ export {
   DoctorSpecialization,
   GatePreapproved,
   GateEntry,
+  GateEntryItem,
   FnbResidentOrderDetail,
   FnbFoodDelivery,
   FnbGlobalMealSlot,

@@ -1,7 +1,8 @@
-import { DataTypes, Sequelize } from 'sequelize'
-import { BaseModel, BaseAttributes, baseModelColumns } from './base.model.js'
-import GateEntry from './gateEntry.model.js'
+import { DataTypes, Optional } from 'sequelize'
+import sequelize from '../config/db/index.js'
+import { BaseAttributes, BaseModel, baseModelColumns } from './base.model.js'
 
+/** An item an office visitor carries through the gate, checked off by the guard on the way out. */
 export interface GateEntryItemAttributes extends BaseAttributes {
   entryId: string
   itemName: string
@@ -9,52 +10,50 @@ export interface GateEntryItemAttributes extends BaseAttributes {
   isChecked: boolean
 }
 
-class GateEntryItem extends BaseModel<GateEntryItemAttributes> implements GateEntryItemAttributes {
-  public entryId!: string
-  public itemName!: string
-  public quantity!: number
-  public isChecked!: boolean
+export type GateEntryItemCreationAttributes = Optional<
+  GateEntryItemAttributes,
+  'id' | 'createdBy' | 'updatedBy' | 'createdAt' | 'updatedAt' | 'quantity' | 'isChecked'
+>
+
+export class GateEntryItem
+  extends BaseModel<GateEntryItemAttributes, GateEntryItemCreationAttributes>
+  implements GateEntryItemAttributes
+{
+  declare entryId: string
+  declare itemName: string
+  declare quantity: number
+  declare isChecked: boolean
 }
 
-export const initGateEntryItem = (sequelize: Sequelize) => {
-  GateEntryItem.init(
-    {
-      ...baseModelColumns,
-      entryId: {
-        type: DataTypes.UUID,
-        allowNull: false,
-        references: {
-          model: 'gate_entries',
-          key: 'id',
-        },
-        onDelete: 'CASCADE',
-      },
-      itemName: {
-        type: DataTypes.STRING(255),
-        allowNull: false,
-      },
-      quantity: {
-        type: DataTypes.INTEGER,
-        allowNull: false,
-        defaultValue: 1,
-      },
-      isChecked: {
-        type: DataTypes.BOOLEAN,
-        allowNull: false,
-        defaultValue: false,
-      },
+GateEntryItem.init(
+  {
+    ...baseModelColumns,
+    entryId: {
+      type: DataTypes.UUID,
+      allowNull: false,
+      references: { model: 'gate_entries', key: 'id' },
+      onDelete: 'CASCADE',
     },
-    {
-      sequelize,
-      tableName: 'gate_entry_items',
-      timestamps: true,
+    itemName: {
+      type: DataTypes.STRING(255),
+      allowNull: false,
     },
-  )
-}
-
-export const setupGateEntryItemAssociations = () => {
-  GateEntryItem.belongsTo(GateEntry, { foreignKey: 'entryId', as: 'entry' })
-  GateEntry.hasMany(GateEntryItem, { foreignKey: 'entryId', as: 'items' })
-}
+    quantity: {
+      type: DataTypes.INTEGER,
+      allowNull: false,
+      defaultValue: 1,
+    },
+    isChecked: {
+      type: DataTypes.BOOLEAN,
+      allowNull: false,
+      defaultValue: false,
+    },
+  },
+  {
+    sequelize,
+    tableName: 'gate_entry_items',
+    timestamps: true,
+  },
+)
 
 export default GateEntryItem
