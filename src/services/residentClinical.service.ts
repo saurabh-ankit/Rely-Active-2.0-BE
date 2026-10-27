@@ -14,8 +14,10 @@ import {
   UserDetail,
 } from '../models/index.js'
 import { DiagnosisCondition, DiagnosisStatus } from '../enums/diagnosis.enum.js'
+import { ServiceType } from '../enums/billing.enum.js'
 import { HttpError } from '../middlewares/error/http-error.js'
 import type { ConsultantFileEntry } from '../models/consultant.model.js'
+import { invoicedSourceIds } from './billing/invoicedSources.js'
 import { getResidentCurrentCondition, userInclude, userName } from './residentCondition.service.js'
 
 export interface ResidentDoctorNote {
@@ -313,5 +315,10 @@ export async function listResidentLabReportsForResident(residentId: string) {
       ['createdAt', 'DESC'],
     ],
   })
-  return rows.map(formatLabReport)
+  const invoiced = await invoicedSourceIds(
+    ServiceType.LAB_TEST,
+    rows.map((r) => r.id),
+  )
+  // Invoiced reports are locked; the UI shows them read-only.
+  return rows.map((r) => ({ ...formatLabReport(r), isInvoiced: invoiced.has(r.id) }))
 }

@@ -322,14 +322,31 @@ export async function getUnitInvoices(
   }
 }
 
-/** Receipts for a flat, flattened with their invoice's details (Assist's receipts list shape). */
+/**
+ * Receipts for a flat, flattened with their invoice's details (Assist's receipts list shape).
+ * Includes payments made on the flats its residents moved here from, for the invoices that came
+ * with them (the same ones the Invoices tab lists); each row carries its flat's unitNumber.
+ */
 export async function getUnitReceipts(unitId: string, page: Page) {
-  const where = { unitId, isDeleted: false }
+  const residents = await Resident.findAll({ where: { unitId, ...BILLABLE_RESIDENT_WHERE }, attributes: ['id'] })
+  const previousIds = (
+    await previousFlatInvoices(
+      residents.map((r) => r.id),
+      unitId,
+    )
+  ).map((inv) => inv.id)
+  const where = previousIds.length
+    ? { isDeleted: false, [Op.or]: [{ unitId }, { invoiceId: previousIds }] }
+    : { unitId, isDeleted: false }
   const total = await Receipt.count({ where })
   const receipts = await Receipt.findAll({
     where,
     include: [
-      { model: Invoice, as: 'invoice' },
+      {
+        model: Invoice,
+        as: 'invoice',
+        include: [{ model: PropertyUnit, as: 'unit', attributes: ['id', 'unit_number'] }],
+      },
       allocationInclude,
       {
         model: User,
@@ -382,6 +399,9 @@ export async function getUnitReceipts(unitId: string, page: Page) {
         ),
         invoiceId: inv?.id ?? r.invoiceId,
         invoiceNumber: inv?.invoiceNumber ?? null,
+        /** The flat the invoice was raised on; differs from this flat for a previous flat's receipt. */
+        unitNumber: (inv as InvoiceWithParts | undefined)?.unit?.unit_number ?? null,
+        fromPreviousFlat: !!inv && inv.unitId !== unitId,
         startDate: inv?.startDate ?? null,
         endDate: inv?.endDate ?? null,
         status: inv ? effectiveStatus(inv) : null,

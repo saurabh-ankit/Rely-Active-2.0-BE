@@ -1,3 +1,4 @@
+import { ServiceType } from '../enums/billing.enum.js'
 import { HttpError } from '../middlewares/error/http-error.js'
 import { uploadFileToS3 } from '../middlewares/s3/index.js'
 import { LabTestSetting, ResidentLabReport } from '../models/index.js'
@@ -5,6 +6,7 @@ import type {
   CreateResidentLabReportInput,
   UpdateResidentLabReportInput,
 } from '../validations/residentLabReport.validation.js'
+import { invoicedSourceIds } from './billing/invoicedSources.js'
 import { formatLabReport, getClinicalResident, labReportInclude } from './residentClinical.service.js'
 
 const REPORT_FOLDER = 'resident-lab-reports/reports'
@@ -31,6 +33,13 @@ async function findResidentLabReport(residentId: string, id: string): Promise<Re
     throw new HttpError(404, 'Lab report not found')
   }
   return row
+}
+
+/** An invoiced lab report is locked, so the invoice keeps matching it. */
+async function assertNotInvoiced(report: ResidentLabReport): Promise<void> {
+  if ((await invoicedSourceIds(ServiceType.LAB_TEST, [report.id])).size) {
+    throw new HttpError(409, 'This lab report is already on an invoice and can no longer be changed')
+  }
 }
 
 export async function createResidentLabReport(params: {
@@ -93,6 +102,7 @@ export async function updateResidentLabReport(params: {
 }) {
   const { residentId, id, input, files, userId } = params
   const report = await findResidentLabReport(residentId, id)
+  await assertNotInvoiced(report)
 
   if (input.labTestSettingId && input.labTestSettingId !== report.labTestSettingId) {
     await assertActiveLabTest(input.labTestSettingId)
@@ -143,5 +153,6 @@ export async function updateResidentLabReport(params: {
 export async function deleteResidentLabReport(params: { residentId: string; id: string; userId: string | null }) {
   const { residentId, id, userId } = params
   const report = await findResidentLabReport(residentId, id)
+  await assertNotInvoiced(report)
   await report.update({ isDeleted: true, isActive: false, updatedBy: userId })
 }
