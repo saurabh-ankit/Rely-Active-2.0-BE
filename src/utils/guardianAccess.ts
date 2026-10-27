@@ -37,6 +37,7 @@ const RULES: Rule[] = [
   // 5. Doctor appointments + view medical details
   { methods: ALL, pattern: /^\/(medical\/)?appointments(\/.*)?$/ },
   { methods: READ, pattern: /^\/medical\/history(\/.*)?$/ },
+  { methods: READ, pattern: /^\/medical\/care-team(\/.*)?$/ },
   // 7. Bills: view and download only
   { methods: READ, pattern: /^\/billing(\/.*)?$/ },
   // 9. Feedback forms

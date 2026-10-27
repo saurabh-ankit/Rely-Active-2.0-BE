@@ -1,5 +1,5 @@
 import { NotificationActionType, NotificationModule, NotificationRecipientType } from '../../enums/notification.enum.js'
-import { UserLocation, type Ticket } from '../../models/index.js'
+import { TicketFeedback, UserLocation, type Ticket } from '../../models/index.js'
 import type { NotificationActorInput } from './notificationAudience.service.js'
 import { createNotificationEvent, type NotificationRecipientInput } from './notification.service.js'
 
@@ -13,6 +13,8 @@ export interface PublishTicketNotificationInput {
   dedupeKey?: string | null
   actionValue?: string | null
   extraRecipients?: NotificationRecipientInput[]
+  /** Only the resident and family member on the ticket (not the staff). */
+  householdOnly?: boolean
 }
 
 /** Staff mapped to the ticket's property (web app admins and L3), e.g. for a new or escalated ticket. */
@@ -76,7 +78,9 @@ function collectTicketRecipients(ticket: Ticket): NotificationRecipientInput[] {
  */
 export async function publishTicketNotification(input: PublishTicketNotificationInput): Promise<void> {
   const ticket = input.ticket
-  const recipients = [...collectTicketRecipients(ticket), ...(input.extraRecipients || [])]
+  const recipients = [...collectTicketRecipients(ticket), ...(input.extraRecipients || [])].filter(
+    (recipient) => !input.householdOnly || recipient.recipientType !== NotificationRecipientType.USER,
+  )
   if (recipients.length === 0) {
     return
   }
@@ -109,5 +113,42 @@ export async function publishTicketNotificationSafe(input: PublishTicketNotifica
     await publishTicketNotification(input)
   } catch (error) {
     console.error('Failed to publish ticket notification:', error)
+  }
+}
+
+/**
+ * Once a ticket is closed (verified) from the web, asks the household how the service was. The
+ * resident app opens a feedback popup from it; it also lands in their notifications (Updates).
+ * Sent once per ticket, and not when feedback was already given.
+ */
+export async function requestTicketFeedbackSafe(input: {
+  ticket: Ticket
+  actor?: NotificationActorInput | null
+  closedByName?: string | null
+}): Promise<void> {
+  try {
+    const { ticket } = input
+    if (!ticket.residentId) return
+    if (await TicketFeedback.findOne({ where: { ticketId: ticket.id }, attributes: ['id'] })) return
+
+    await publishTicketNotification({
+      ticket,
+      eventCode: 'TICKET_FEEDBACK_REQUESTED',
+      title: 'How was the service?',
+      message: `${ticket.title || 'Your ticket'} (${ticket.ticketNumber}) is closed. Tap to rate the service and share your feedback.`,
+      actor: input.actor || null,
+      dedupeKey: `ticket-feedback-request:${ticket.id}`,
+      householdOnly: true,
+      payload: {
+        ticketNumber: ticket.ticketNumber,
+        title: ticket.title,
+        category: ticket.category,
+        status: ticket.status,
+        closedAt: ticket.closedAt || ticket.verifiedAt || new Date(),
+        closedBy: input.closedByName || null,
+      },
+    })
+  } catch (error) {
+    console.error('Failed to request ticket feedback:', error)
   }
 }

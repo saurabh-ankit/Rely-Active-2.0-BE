@@ -30,7 +30,10 @@ import { TicketActivityType, TicketPriority, TicketStatus } from '../../enums/ti
 import { uploadFileToS3 } from '../../middlewares/s3/index.js'
 import { resolveNotificationActor } from '../../services/notifications/notificationAudience.service.js'
 import { buildTatUpdatedNotificationContent } from '../../services/notifications/ticketNotificationContent.service.js'
-import { publishTicketNotificationSafe } from '../../services/notifications/ticketNotification.service.js'
+import {
+  publishTicketNotificationSafe,
+  requestTicketFeedbackSafe,
+} from '../../services/notifications/ticketNotification.service.js'
 
 /**
  * Fetch master ticket categories and sub-categories
@@ -904,6 +907,14 @@ export async function updateTicketOptions(req: AuthenticatedRequest, res: Respon
         ...(tatNotification?.payload || {}),
       },
     })
+    // Closed from the web without the verify step: ask for feedback the same way
+    if (statusChanged && ticket.status === TicketStatus.CLOSED) {
+      await requestTicketFeedbackSafe({
+        ticket,
+        actor: resolveNotificationActor(req, userName),
+        closedByName: userName,
+      })
+    }
 
     res.status(200).json({
       success: true,
@@ -983,6 +994,11 @@ export async function verifyTicket(req: AuthenticatedRequest, res: Response): Pr
         status: ticket.status,
         verificationNotes: ticket.verificationNotes || null,
       },
+    })
+    await requestTicketFeedbackSafe({
+      ticket,
+      actor: resolveNotificationActor(req, verifierName),
+      closedByName: verifierName,
     })
 
     res.status(200).json({

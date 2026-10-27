@@ -122,7 +122,7 @@ export async function listCriticalResidentIds(options: {
         WHERE isDeleted = 0
       ) m
       WHERE m.rn = 1
-    ) manual ON manual.residentId = r.id
+    ) manual_log ON manual_log.residentId = r.id  -- not "manual": a reserved word in MySQL 8.4+
     LEFT JOIN (
       SELECT residentId, \`condition\`, updatedAt
       FROM (
@@ -142,10 +142,10 @@ export async function listCriticalResidentIds(options: {
       AND ${locFilter}
       AND (
         CASE
-          WHEN manual.residentId IS NULL AND doctor.residentId IS NULL THEN r.careLevel = :careCritical
-          WHEN manual.residentId IS NULL THEN doctor.\`condition\` = :conditionCritical
-          WHEN doctor.residentId IS NULL THEN manual.\`condition\` = :conditionCritical
-          WHEN manual.updatedAt >= doctor.updatedAt THEN manual.\`condition\` = :conditionCritical
+          WHEN manual_log.residentId IS NULL AND doctor.residentId IS NULL THEN r.careLevel = :careCritical
+          WHEN manual_log.residentId IS NULL THEN doctor.\`condition\` = :conditionCritical
+          WHEN doctor.residentId IS NULL THEN manual_log.\`condition\` = :conditionCritical
+          WHEN manual_log.updatedAt >= doctor.updatedAt THEN manual_log.\`condition\` = :conditionCritical
           ELSE doctor.\`condition\` = :conditionCritical
         END
       )

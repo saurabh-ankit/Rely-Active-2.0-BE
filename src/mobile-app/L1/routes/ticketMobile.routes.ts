@@ -37,6 +37,14 @@ router.post(
 router.get('/:id', getResidentTicketById)
 router.patch('/:id/tat', updateTicketTat)
 router.patch('/:id/escalate', escalateTicket)
-router.post('/:id/feedback', submitTicketFeedback)
+// multipart (one photo, one voice note) or JSON
+router.post(
+  '/:id/feedback',
+  upload.fields([
+    { name: 'photo', maxCount: 1 },
+    { name: 'audio', maxCount: 1 },
+  ]),
+  submitTicketFeedback,
+)
 
 export default router

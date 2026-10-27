@@ -15,6 +15,7 @@ import {
 import { TicketActivityType, TicketFeedbackRating } from '../../../enums/ticket.enum.js'
 import { TicketPriority, TicketStatus } from '../../../enums/ticket.enum.js'
 import type { AuthenticatedRequest } from '../../../middlewares/authenticate.js'
+import { HttpError } from '../../../middlewares/error/http-error.js'
 import { uploadFileToS3, uploadBase64ToS3 } from '../../../middlewares/s3/index.js'
 import { resolveNotificationActor } from '../../../services/notifications/notificationAudience.service.js'
 import { buildTatUpdatedNotificationContent } from '../../../services/notifications/ticketNotificationContent.service.js'
@@ -356,6 +357,8 @@ export async function getResidentTickets(req: AuthenticatedRequest, res: Respons
               rating: t.feedback.rating,
               comment: t.feedback.comment,
               submittedAt: t.feedback.createdAt,
+              photoUrl: (t.feedback.attachments as Partial<TicketFeedbackAttachments> | null)?.photoUrl ?? null,
+              audioUrl: (t.feedback.attachments as Partial<TicketFeedbackAttachments> | null)?.audioUrl ?? null,
             }
           : null,
         workStartedAt: t.workStartedAt || null,
@@ -916,6 +919,31 @@ export async function escalateTicket(req: AuthenticatedRequest, res: Response): 
  * Resident feedback on a finished ticket. Re-submitting replaces the previous
  * feedback rather than adding a second one.
  */
+/** The photo and voice note attached to ticket feedback. */
+interface TicketFeedbackAttachments {
+  photoUrl: string | null
+  audioUrl: string | null
+}
+
+/** Uploads the feedback photo / voice note sent with the form, if any. */
+async function uploadFeedbackMedia(req: AuthenticatedRequest): Promise<Partial<TicketFeedbackAttachments>> {
+  const files = (req.files || {}) as Record<string, Express.Multer.File[]>
+  const photo = files.photo?.[0]
+  const audio = files.audio?.[0]
+  const media: Partial<TicketFeedbackAttachments> = {}
+  if (photo) {
+    if (!photo.mimetype.startsWith('image/')) throw new HttpError(400, 'Feedback photo must be an image')
+    media.photoUrl = (await uploadFileToS3(photo, 'tickets/feedback/photos')).location
+  }
+  if (audio) {
+    if (!audio.mimetype.startsWith('audio/') && !audio.mimetype.startsWith('video/')) {
+      throw new HttpError(400, 'Feedback voice note must be an audio file')
+    }
+    media.audioUrl = (await uploadFileToS3(audio, 'tickets/feedback/audio')).location
+  }
+  return media
+}
+
 export async function submitTicketFeedback(req: AuthenticatedRequest, res: Response): Promise<void> {
   try {
     const household = resolveHousehold(req)
@@ -954,10 +982,18 @@ export async function submitTicketFeedback(req: AuthenticatedRequest, res: Respo
     }
 
     const existing = await TicketFeedback.findOne({ where: { ticketId: ticket.id } })
+    // A new photo / voice note replaces the earlier one; leaving it out keeps it
+    const media = await uploadFeedbackMedia(req)
+    const previous = (existing?.attachments || {}) as Partial<TicketFeedbackAttachments>
+    const attachments: TicketFeedbackAttachments = {
+      photoUrl: media.photoUrl ?? previous.photoUrl ?? null,
+      audioUrl: media.audioUrl ?? previous.audioUrl ?? null,
+    }
 
     if (existing) {
       existing.rating = rating
       existing.comment = comment || null
+      existing.attachments = { ...attachments }
       await existing.save()
 
       await publishTicketNotificationSafe({
@@ -982,6 +1018,7 @@ export async function submitTicketFeedback(req: AuthenticatedRequest, res: Respo
       familyMemberId: household.familyMemberId,
       rating,
       comment: comment || null,
+      attachments: { ...attachments },
     })
 
     await publishTicketNotificationSafe({
@@ -998,6 +1035,10 @@ export async function submitTicketFeedback(req: AuthenticatedRequest, res: Respo
 
     res.status(201).json({ success: true, message: 'Thanks for your feedback', data: feedback })
   } catch (err) {
+    if (err instanceof HttpError) {
+      res.status(err.status).json({ success: false, message: err.message })
+      return
+    }
     console.error('Error submitting ticket feedback:', err)
     res.status(500).json({ success: false, message: 'Failed to submit feedback' })
   }
