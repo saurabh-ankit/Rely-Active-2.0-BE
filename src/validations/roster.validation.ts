@@ -26,6 +26,10 @@ const slotTimeRangeSchema = z
 
 const optionalLocationRef = z.union([uuid, z.literal('none'), z.null()]).optional()
 
+/** Catalog amenity UUID, or legacy property amenity name (resolved server-side). */
+const amenityRef = z.union([uuid, z.string().trim().min(1).max(150), z.literal('none'), z.null()]).optional()
+const optionalAmenityList = z.array(z.union([uuid, z.string().trim().min(1).max(150), z.literal('none')])).optional()
+
 const shiftCode = z
   .string()
   .trim()
@@ -89,6 +93,7 @@ export const createEmployeeShiftSchema = z
     unitId: optionalLocationRef,
     blockId: optionalLocationRef,
     floorId: optionalLocationRef,
+    amenityId: amenityRef,
     slotTimeRange: slotTimeRangeSchema,
   })
   .superRefine((data, ctx) => {
@@ -96,7 +101,23 @@ export const createEmployeeShiftSchema = z
     const hasBlock = data.blockId && data.blockId !== 'none'
     const hasFloor = data.floorId && data.floorId !== 'none'
     const hasUnit = data.unitId && data.unitId !== 'none'
-    if (hasArea && (hasBlock || hasFloor || hasUnit)) {
+    const hasAmenity = data.amenityId && data.amenityId !== 'none'
+    const hasUnitHierarchy = !!(hasBlock || hasFloor || hasUnit)
+    if (hasAmenity && hasArea) {
+      ctx.addIssue({
+        code: 'custom',
+        message: 'Cannot provide both amenity and area',
+        path: ['amenityId'],
+      })
+    }
+    if (hasAmenity && hasUnitHierarchy) {
+      ctx.addIssue({
+        code: 'custom',
+        message: 'Cannot provide both amenity and block/floor/unit',
+        path: ['amenityId'],
+      })
+    }
+    if (hasArea && hasUnitHierarchy) {
       ctx.addIssue({
         code: 'custom',
         message: 'Cannot provide both area and block/floor/unit',
@@ -144,6 +165,8 @@ export const bulkCreateEmployeeShiftSchema = z
     blockIds: optionalUuidList,
     floorId: optionalLocationRef,
     floorIds: optionalUuidList,
+    amenityId: amenityRef,
+    amenityIds: optionalAmenityList,
     slotTimeRange: slotTimeRangeSchema,
   })
   .superRefine((data, ctx) => {
@@ -157,6 +180,23 @@ export const bulkCreateEmployeeShiftSchema = z
       (Array.isArray(data.blockIds) && data.blockIds.some((id) => id && id !== 'none')) ||
       (data.floorId && data.floorId !== 'none') ||
       (Array.isArray(data.floorIds) && data.floorIds.some((id) => id && id !== 'none'))
+    const hasAmenity =
+      (data.amenityId && data.amenityId !== 'none') ||
+      (Array.isArray(data.amenityIds) && data.amenityIds.some((id) => id && id !== 'none'))
+    if (hasAmenity && hasArea) {
+      ctx.addIssue({
+        code: 'custom',
+        message: 'Cannot provide both amenity and area',
+        path: ['amenityId'],
+      })
+    }
+    if (hasAmenity && hasUnit) {
+      ctx.addIssue({
+        code: 'custom',
+        message: 'Cannot provide both amenity and unit',
+        path: ['amenityId'],
+      })
+    }
     if (hasArea && hasUnit) {
       ctx.addIssue({
         code: 'custom',
@@ -178,6 +218,7 @@ export const updateEmployeeShiftSchema = z
     unitId: optionalLocationRef,
     blockId: optionalLocationRef,
     floorId: optionalLocationRef,
+    amenityId: amenityRef,
     slotTimeRange: slotTimeRangeSchema,
   })
   .superRefine((data, ctx) => {
@@ -185,7 +226,23 @@ export const updateEmployeeShiftSchema = z
     const hasBlock = data.blockId && data.blockId !== 'none'
     const hasFloor = data.floorId && data.floorId !== 'none'
     const hasUnit = data.unitId && data.unitId !== 'none'
-    if (hasArea && (hasBlock || hasFloor || hasUnit)) {
+    const hasAmenity = data.amenityId && data.amenityId !== 'none'
+    const hasUnitHierarchy = !!(hasBlock || hasFloor || hasUnit)
+    if (hasAmenity && hasArea) {
+      ctx.addIssue({
+        code: 'custom',
+        message: 'Cannot provide both amenity and area',
+        path: ['amenityId'],
+      })
+    }
+    if (hasAmenity && hasUnitHierarchy) {
+      ctx.addIssue({
+        code: 'custom',
+        message: 'Cannot provide both amenity and block/floor/unit',
+        path: ['amenityId'],
+      })
+    }
+    if (hasArea && hasUnitHierarchy) {
       ctx.addIssue({
         code: 'custom',
         message: 'Cannot provide both area and block/floor/unit',

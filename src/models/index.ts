@@ -849,9 +849,11 @@ ShiftAssignment.belongsTo(ShiftArea, { foreignKey: 'areaId', as: 'area' })
 ShiftAssignment.belongsTo(PropertyUnit, { foreignKey: 'unitId', as: 'unit' })
 ShiftAssignment.belongsTo(PropertyBlock, { foreignKey: 'blockId', as: 'block' })
 ShiftAssignment.belongsTo(PropertyFloor, { foreignKey: 'floorId', as: 'floor' })
+ShiftAssignment.belongsTo(Amenity, { foreignKey: 'amenityId', as: 'amenity' })
 PropertyUnit.hasMany(ShiftAssignment, { foreignKey: 'unitId', as: 'employeeShiftAssignments' })
 PropertyBlock.hasMany(ShiftAssignment, { foreignKey: 'blockId', as: 'employeeShiftAssignments' })
 PropertyFloor.hasMany(ShiftAssignment, { foreignKey: 'floorId', as: 'employeeShiftAssignments' })
+Amenity.hasMany(ShiftAssignment, { foreignKey: 'amenityId', as: 'employeeShiftAssignments' })
 
 ShiftAssignment.hasMany(ShiftDate, {
   foreignKey: 'employeeShiftAssignmentId',
