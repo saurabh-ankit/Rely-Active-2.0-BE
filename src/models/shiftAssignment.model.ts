@@ -15,6 +15,7 @@ export interface ShiftAssignmentAttributes extends BaseAttributes {
   unitId?: string | null
   blockId?: string | null
   floorId?: string | null
+  amenityId?: string | null
   slotTimeRange?: string | null
   isActive: boolean
   isDeleted: boolean
@@ -29,6 +30,7 @@ export type ShiftAssignmentCreationAttributes = Optional<
   | 'unitId'
   | 'blockId'
   | 'floorId'
+  | 'amenityId'
   | 'slotTimeRange'
   | 'isActive'
   | 'isDeleted'
@@ -53,6 +55,7 @@ export class ShiftAssignment
   declare unitId: string | null
   declare blockId: string | null
   declare floorId: string | null
+  declare amenityId: string | null
   declare slotTimeRange: string | null
   declare isActive: boolean
   declare isDeleted: boolean
@@ -80,6 +83,7 @@ ShiftAssignment.init(
     unitId: { type: DataTypes.UUID, allowNull: true },
     blockId: { type: DataTypes.UUID, allowNull: true },
     floorId: { type: DataTypes.UUID, allowNull: true },
+    amenityId: { type: DataTypes.UUID, allowNull: true },
     slotTimeRange: { type: DataTypes.STRING(20), allowNull: true },
     isActive: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: true },
     isDeleted: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: false },

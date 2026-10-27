@@ -324,27 +324,29 @@ export function validateMedicalRosterLocationTargets(params: {
   modes: Array<MedicalRosterLocationMode | null>
   hasArea: boolean
   hasUnitHierarchy: boolean
+  hasAmenity?: boolean
 }): string | null {
   const active = params.modes.filter((m): m is MedicalRosterLocationMode => m === 'unit_only' || m === 'none')
   if (active.length === 0) return null
 
   const hasUnitOnly = active.includes('unit_only')
   const hasNone = active.includes('none')
+  const hasAmenity = !!params.hasAmenity
 
   if (hasUnitOnly && hasNone) {
     return 'Cannot mix Visiting Doctor with Nurse/In-house Doctor in the same roster assignment'
   }
 
   if (hasNone) {
-    if (params.hasArea || params.hasUnitHierarchy) {
-      return 'Visiting Doctor roster cannot be assigned to Area or Unit'
+    if (params.hasArea || params.hasUnitHierarchy || hasAmenity) {
+      return 'Visiting Doctor roster cannot be assigned to Area, Amenity or Unit'
     }
     return null
   }
 
   // unit_only
-  if (params.hasArea) {
-    return 'Nurse and In-house Doctor must be assigned to Unit (Area is not allowed)'
+  if (params.hasArea || hasAmenity) {
+    return 'Nurse and In-house Doctor must be assigned to Unit (Area/Amenity is not allowed)'
   }
   if (!params.hasUnitHierarchy) {
     return 'Nurse and In-house Doctor require a Unit assignment (select at least one block)'

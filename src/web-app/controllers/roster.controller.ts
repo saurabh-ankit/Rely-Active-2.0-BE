@@ -13,7 +13,9 @@ import {
 } from '../../enums/roster.enum.js'
 import type { AuthenticatedRequest } from '../../middlewares/authenticate.js'
 import {
+  Amenity,
   Property,
+  PropertyAmenity,
   PropertyBlock,
   PropertyFloor,
   PropertyUnit,
@@ -644,6 +646,10 @@ export const listEmployeeShifts = async (req: AuthenticatedRequest, res: Respons
           association: 'unit',
           attributes: ['id', 'unit_number'],
         },
+        {
+          association: 'amenity',
+          attributes: ['id', 'name'],
+        },
       ],
       order: [['startDate', 'ASC']],
     })
@@ -669,6 +675,7 @@ export const createEmployeeShift = async (req: AuthenticatedRequest, res: Respon
       unitId,
       blockId,
       floorId,
+      amenityId,
       slotTimeRange,
     } = req.body
 
@@ -736,8 +743,16 @@ export const createEmployeeShift = async (req: AuthenticatedRequest, res: Respon
     const resolvedBlockId = normalizeOptionalId(blockId)
     const resolvedFloorId = normalizeOptionalId(floorId)
     const resolvedUnitId = normalizeUnitId(unitId)
+    const amenityRef = normalizeOptionalId(amenityId)
+    const hasUnitHierarchy = !!(resolvedBlockId || resolvedFloorId || resolvedUnitId)
 
-    if (resolvedAreaId && (resolvedBlockId || resolvedFloorId || resolvedUnitId)) {
+    if (amenityRef && resolvedAreaId) {
+      return res.status(400).json(errorResponse('Cannot provide both amenity and area'))
+    }
+    if (amenityRef && hasUnitHierarchy) {
+      return res.status(400).json(errorResponse('Cannot provide both amenity and block/floor/unit'))
+    }
+    if (resolvedAreaId && hasUnitHierarchy) {
       return res.status(400).json(errorResponse('Cannot provide both area and block/floor/unit'))
     }
     if (resolvedUnitId && !resolvedFloorId) {
@@ -747,11 +762,26 @@ export const createEmployeeShift = async (req: AuthenticatedRequest, res: Respon
       return res.status(400).json(errorResponse('blockId is required when floorId or unitId is provided'))
     }
 
+    const createdBy = req.user?.id ?? null
+    let resolvedAmenityId: string | null = null
+    if (amenityRef) {
+      const { amenityIds, error: amenityError } = await resolveAmenityIdsForProperty({
+        locationId,
+        refs: [amenityRef],
+        operatingUserId: createdBy,
+      })
+      if (amenityError || !amenityIds[0]) {
+        return res.status(400).json(errorResponse(amenityError || 'Selected amenity is invalid for this property'))
+      }
+      resolvedAmenityId = amenityIds[0]
+    }
+
     const medicalModes = await getMedicalRosterLocationModesForEmployees([employeeId], locationId)
     const medicalLocationError = validateMedicalRosterLocationTargets({
       modes: medicalModes,
       hasArea: !!resolvedAreaId,
-      hasUnitHierarchy: !!(resolvedBlockId || resolvedFloorId || resolvedUnitId),
+      hasUnitHierarchy,
+      hasAmenity: !!resolvedAmenityId,
     })
     if (medicalLocationError) {
       return res.status(400).json(errorResponse(medicalLocationError))
@@ -779,7 +809,6 @@ export const createEmployeeShift = async (req: AuthenticatedRequest, res: Respon
         )
     }
 
-    const createdBy = req.user?.id ?? null
     const assignment = await ShiftAssignment.create({
       employeeId,
       shiftId,
@@ -788,10 +817,11 @@ export const createEmployeeShift = async (req: AuthenticatedRequest, res: Respon
       endDate,
       notes,
       workingDays: workingDays || null,
-      areaId: resolvedAreaId,
-      blockId: resolvedBlockId,
-      floorId: resolvedFloorId,
-      unitId: resolvedUnitId,
+      areaId: resolvedAmenityId ? null : resolvedAreaId,
+      blockId: resolvedAmenityId ? null : resolvedBlockId,
+      floorId: resolvedAmenityId ? null : resolvedFloorId,
+      unitId: resolvedAmenityId ? null : resolvedUnitId,
+      amenityId: resolvedAmenityId,
       slotTimeRange: resolvedSlot,
       createdBy,
     })
@@ -898,12 +928,14 @@ export const updateEmployeeShift = async (req: AuthenticatedRequest, res: Respon
       payload.areaId !== undefined ||
       payload.unitId !== undefined ||
       payload.blockId !== undefined ||
-      payload.floorId !== undefined
+      payload.floorId !== undefined ||
+      payload.amenityId !== undefined
 
     let nextAreaId = assignmentData.areaId as string | null
     let nextBlockId = assignmentData.blockId as string | null
     let nextFloorId = assignmentData.floorId as string | null
     let nextUnitId = assignmentData.unitId as string | null
+    let nextAmenityId = (assignmentData.amenityId as string | null) || null
 
     if (locationTouched) {
       const resolvedAreaId =
@@ -914,40 +946,69 @@ export const updateEmployeeShift = async (req: AuthenticatedRequest, res: Respon
         payload.floorId !== undefined ? normalizeOptionalId(payload.floorId) : (assignmentData.floorId as string | null)
       const resolvedUnitId =
         payload.unitId !== undefined ? normalizeUnitId(payload.unitId) : (assignmentData.unitId as string | null)
+      const resolvedAmenityId =
+        payload.amenityId !== undefined
+          ? normalizeOptionalId(payload.amenityId)
+          : (assignmentData.amenityId as string | null) || null
 
       const hasArea = !!resolvedAreaId
       const hasUnitHierarchy = !!(resolvedBlockId || resolvedFloorId || resolvedUnitId)
+      const hasAmenity = !!resolvedAmenityId
 
-      if (hasArea && hasUnitHierarchy) {
-        // Prefer the side explicitly sent in this request; clear the opposite.
-        if (payload.areaId !== undefined && normalizeAreaId(payload.areaId)) {
-          nextAreaId = resolvedAreaId
-          nextBlockId = null
-          nextFloorId = null
-          nextUnitId = null
-        } else {
-          nextAreaId = null
-          nextBlockId = resolvedBlockId
-          nextFloorId = resolvedFloorId
-          nextUnitId = resolvedUnitId
-        }
+      // Prefer the location mode explicitly sent in this request; clear the others.
+      if (payload.amenityId !== undefined && normalizeOptionalId(payload.amenityId)) {
+        nextAmenityId = resolvedAmenityId
+        nextAreaId = null
+        nextBlockId = null
+        nextFloorId = null
+        nextUnitId = null
+      } else if (payload.areaId !== undefined && normalizeAreaId(payload.areaId)) {
+        nextAmenityId = null
+        nextAreaId = resolvedAreaId
+        nextBlockId = null
+        nextFloorId = null
+        nextUnitId = null
+      } else if (
+        (payload.blockId !== undefined || payload.floorId !== undefined || payload.unitId !== undefined) &&
+        hasUnitHierarchy
+      ) {
+        nextAmenityId = null
+        nextAreaId = null
+        nextBlockId = resolvedBlockId
+        nextFloorId = resolvedFloorId
+        nextUnitId = resolvedUnitId
+      } else if (hasAmenity) {
+        nextAmenityId = resolvedAmenityId
+        nextAreaId = null
+        nextBlockId = null
+        nextFloorId = null
+        nextUnitId = null
       } else if (hasArea) {
+        nextAmenityId = null
         nextAreaId = resolvedAreaId
         nextBlockId = null
         nextFloorId = null
         nextUnitId = null
       } else if (hasUnitHierarchy) {
+        nextAmenityId = null
         nextAreaId = null
         nextBlockId = resolvedBlockId
         nextFloorId = resolvedFloorId
         nextUnitId = resolvedUnitId
       } else {
+        nextAmenityId = null
         nextAreaId = null
         nextBlockId = null
         nextFloorId = null
         nextUnitId = null
       }
 
+      if (nextAmenityId && nextAreaId) {
+        return res.status(400).json(errorResponse('Cannot provide both amenity and area'))
+      }
+      if (nextAmenityId && (nextBlockId || nextFloorId || nextUnitId)) {
+        return res.status(400).json(errorResponse('Cannot provide both amenity and block/floor/unit'))
+      }
       if (nextAreaId && (nextBlockId || nextFloorId || nextUnitId)) {
         return res.status(400).json(errorResponse('Cannot provide both area and block/floor/unit'))
       }
@@ -958,11 +1019,25 @@ export const updateEmployeeShift = async (req: AuthenticatedRequest, res: Respon
         return res.status(400).json(errorResponse('blockId is required when floorId or unitId is provided'))
       }
 
+      const updatedByPreview = req.user?.id ?? null
+      if (nextAmenityId) {
+        const { amenityIds, error: amenityError } = await resolveAmenityIdsForProperty({
+          locationId,
+          refs: [nextAmenityId],
+          operatingUserId: updatedByPreview,
+        })
+        if (amenityError || !amenityIds[0]) {
+          return res.status(400).json(errorResponse(amenityError || 'Selected amenity is invalid for this property'))
+        }
+        nextAmenityId = amenityIds[0]
+      }
+
       const medicalModes = await getMedicalRosterLocationModesForEmployees([nextEmp], locationId)
       const medicalLocationError = validateMedicalRosterLocationTargets({
         modes: medicalModes,
         hasArea: !!nextAreaId,
         hasUnitHierarchy: !!(nextBlockId || nextFloorId || nextUnitId),
+        hasAmenity: !!nextAmenityId,
       })
       if (medicalLocationError) {
         return res.status(400).json(errorResponse(medicalLocationError))
@@ -1000,6 +1075,7 @@ export const updateEmployeeShift = async (req: AuthenticatedRequest, res: Respon
       updatePayload.blockId = nextBlockId
       updatePayload.floorId = nextFloorId
       updatePayload.unitId = nextUnitId
+      updatePayload.amenityId = nextAmenityId
     } else if (payload.areaId !== undefined) {
       updatePayload.areaId = nextAreaId
     }
@@ -1210,14 +1286,120 @@ type BulkLocationTarget = {
   blockId: string | null
   floorId: string | null
   unitId: string | null
+  amenityId: string | null
 }
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 
 function normalizeIdList(value: unknown): string[] {
   if (!Array.isArray(value)) return []
   return value.map((id) => normalizeOptionalId(id)).filter((id): id is string => !!id)
 }
 
+/**
+ * Resolve amenity refs (catalog UUID or legacy property amenity name) to amenity UUIDs
+ * linked to the property. Creates Amenity + PropertyAmenity rows when the name is listed
+ * on the property's legacy amenities JSON but not yet in property_amenities.
+ */
+async function resolveAmenityIdsForProperty(params: {
+  locationId: string
+  refs: string[]
+  operatingUserId?: string | null
+}): Promise<{ amenityIds: string[]; error?: string }> {
+  const property = await Property.findOne({
+    where: { id: params.locationId, isDeleted: false },
+    attributes: ['id', 'amenities'],
+  })
+  if (!property) return { amenityIds: [], error: 'Property not found' }
+
+  const legacyNames = Array.isArray(property.amenities)
+    ? property.amenities.map((n) => String(n || '').trim()).filter(Boolean)
+    : []
+  const legacyByLower = new Map(legacyNames.map((n) => [n.toLowerCase(), n]))
+
+  const linkedRows = (await PropertyAmenity.findAll({
+    where: { propertyId: params.locationId, isDeleted: false },
+    include: [{ model: Amenity, as: 'amenity', required: false }],
+  })) as Array<PropertyAmenity & { amenity?: Amenity | null }>
+
+  const linkedByAmenityId = new Map(linkedRows.map((row) => [row.amenityId, row]))
+  const linkedByName = new Map<string, string>()
+  for (const row of linkedRows) {
+    const name = row.amenity?.name?.trim()
+    if (name) linkedByName.set(name.toLowerCase(), row.amenityId)
+  }
+
+  const resolved: string[] = []
+  for (const raw of params.refs) {
+    const ref = raw.trim()
+    if (!ref) continue
+
+    if (UUID_RE.test(ref) && linkedByAmenityId.has(ref)) {
+      resolved.push(ref)
+      continue
+    }
+
+    const linkedId = linkedByName.get(ref.toLowerCase())
+    if (linkedId) {
+      resolved.push(linkedId)
+      continue
+    }
+
+    const legacyName = legacyByLower.get(ref.toLowerCase())
+    if (!legacyName) {
+      return { amenityIds: [], error: 'One or more selected amenities are invalid for this property' }
+    }
+
+    const catalog = await Amenity.findAll({
+      where: { isDeleted: false },
+      attributes: ['id', 'name', 'isActive'],
+    })
+    let amenity = catalog.find((a) => a.name.trim().toLowerCase() === legacyName.toLowerCase()) || null
+    if (!amenity) {
+      amenity = await Amenity.create({
+        name: legacyName,
+        description: null,
+        isActive: true,
+        isDeleted: false,
+        createdBy: params.operatingUserId ?? null,
+        updatedBy: params.operatingUserId ?? null,
+      })
+    }
+
+    let link = await PropertyAmenity.findOne({
+      where: { propertyId: params.locationId, amenityId: amenity.id },
+    })
+    if (link) {
+      if (link.isDeleted || !link.isActive) {
+        await link.update({
+          isDeleted: false,
+          isActive: true,
+          updatedBy: params.operatingUserId ?? null,
+        })
+      }
+    } else {
+      link = await PropertyAmenity.create({
+        propertyId: params.locationId,
+        amenityId: amenity.id,
+        slotBookable: false,
+        settings: null,
+        isActive: true,
+        isDeleted: false,
+        createdBy: params.operatingUserId ?? null,
+        updatedBy: params.operatingUserId ?? null,
+      })
+    }
+
+    linkedByAmenityId.set(amenity.id, link)
+    linkedByName.set(legacyName.toLowerCase(), amenity.id)
+    resolved.push(amenity.id)
+  }
+
+  return { amenityIds: resolved }
+}
+
 async function resolveBulkLocationTargets(params: {
+  locationId: string
   areaId?: unknown
   areaIds?: unknown
   blockId?: unknown
@@ -1226,11 +1408,20 @@ async function resolveBulkLocationTargets(params: {
   floorIds?: unknown
   unitId?: unknown
   unitIds?: unknown
+  amenityId?: unknown
+  amenityIds?: unknown
+  operatingUserId?: string | null
 }): Promise<{ targets: BulkLocationTarget[]; error?: string }> {
   const areaIdsList = normalizeIdList(params.areaIds)
   if (areaIdsList.length === 0) {
     const singleArea = normalizeAreaId(params.areaId)
     if (singleArea) areaIdsList.push(singleArea)
+  }
+
+  const amenityIdsList = normalizeIdList(params.amenityIds)
+  if (amenityIdsList.length === 0) {
+    const singleAmenity = normalizeOptionalId(params.amenityId)
+    if (singleAmenity) amenityIdsList.push(singleAmenity)
   }
 
   const unitIdsList = normalizeIdList(params.unitIds)
@@ -1246,15 +1437,44 @@ async function resolveBulkLocationTargets(params: {
   if (singleBlock && !blockIdsList.includes(singleBlock)) blockIdsList.push(singleBlock)
 
   const hasArea = areaIdsList.length > 0
+  const hasAmenity = amenityIdsList.length > 0
   const hasUnitHierarchy = blockIdsList.length > 0 || floorIdsList.length > 0 || unitIdsList.length > 0
 
+  if (hasAmenity && hasArea) {
+    return { targets: [], error: 'Cannot provide both amenity and area' }
+  }
+  if (hasAmenity && hasUnitHierarchy) {
+    return { targets: [], error: 'Cannot provide both amenity and block/floor/unit' }
+  }
   if (hasArea && hasUnitHierarchy) {
     return { targets: [], error: 'Cannot provide both area and block/floor/unit' }
+  }
+
+  if (hasAmenity) {
+    const { amenityIds: resolvedAmenityIds, error: amenityError } = await resolveAmenityIdsForProperty({
+      locationId: params.locationId,
+      refs: amenityIdsList,
+      operatingUserId: params.operatingUserId ?? null,
+    })
+    if (amenityError) {
+      return { targets: [], error: amenityError }
+    }
+
+    return {
+      targets: resolvedAmenityIds.map((aId) => ({
+        amenityId: aId,
+        areaId: null,
+        blockId: null,
+        floorId: null,
+        unitId: null,
+      })),
+    }
   }
 
   if (hasArea) {
     return {
       targets: areaIdsList.map((aId) => ({
+        amenityId: null,
         areaId: aId,
         blockId: null,
         floorId: null,
@@ -1284,6 +1504,7 @@ async function resolveBulkLocationTargets(params: {
 
     return {
       targets: units.map((unit) => ({
+        amenityId: null,
         areaId: null,
         blockId: unit.floor?.blockId || null,
         floorId: unit.floorId,
@@ -1304,6 +1525,7 @@ async function resolveBulkLocationTargets(params: {
 
     return {
       targets: floors.map((floor) => ({
+        amenityId: null,
         areaId: null,
         blockId: floor.blockId,
         floorId: floor.id,
@@ -1324,6 +1546,7 @@ async function resolveBulkLocationTargets(params: {
 
     return {
       targets: blocks.map((block) => ({
+        amenityId: null,
         areaId: null,
         blockId: block.id,
         floorId: null,
@@ -1333,7 +1556,7 @@ async function resolveBulkLocationTargets(params: {
   }
 
   return {
-    targets: [{ areaId: null, blockId: null, floorId: null, unitId: null }],
+    targets: [{ amenityId: null, areaId: null, blockId: null, floorId: null, unitId: null }],
   }
 }
 
@@ -1355,6 +1578,8 @@ export const bulkCreateEmployeeShifts = async (req: AuthenticatedRequest, res: R
       blockIds,
       floorId,
       floorIds,
+      amenityId,
+      amenityIds,
       slotTimeRange,
     } = req.body
 
@@ -1372,8 +1597,10 @@ export const bulkCreateEmployeeShifts = async (req: AuthenticatedRequest, res: R
 
     const bulkSlot = typeof slotTimeRange === 'string' && slotTimeRange.trim() ? slotTimeRange.trim() : null
     const bulkWindow = resolveEffectiveShiftWindow(newShift.startTime, newShift.endTime, bulkSlot)
+    const createdBy = req.user?.id ?? null
 
     const { targets, error: targetError } = await resolveBulkLocationTargets({
+      locationId,
       areaId,
       areaIds,
       blockId,
@@ -1382,18 +1609,23 @@ export const bulkCreateEmployeeShifts = async (req: AuthenticatedRequest, res: R
       floorIds,
       unitId,
       unitIds,
+      amenityId,
+      amenityIds,
+      operatingUserId: createdBy,
     })
     if (targetError) {
       return res.status(400).json(errorResponse(targetError))
     }
 
     const hasAreaTarget = targets.some((t) => !!t.areaId)
+    const hasAmenityTarget = targets.some((t) => !!t.amenityId)
     const hasUnitHierarchyTarget = targets.some((t) => !!t.blockId || !!t.floorId || !!t.unitId)
     const medicalModes = await getMedicalRosterLocationModesForEmployees(employeeIds, locationId)
     const medicalLocationError = validateMedicalRosterLocationTargets({
       modes: medicalModes,
       hasArea: hasAreaTarget,
       hasUnitHierarchy: hasUnitHierarchyTarget,
+      hasAmenity: hasAmenityTarget,
     })
     if (medicalLocationError) {
       return res.status(400).json(errorResponse(medicalLocationError))
@@ -1469,7 +1701,6 @@ export const bulkCreateEmployeeShifts = async (req: AuthenticatedRequest, res: R
       return res.status(400).json(errorResponse('Conflicting assignments found', { conflicts }))
     }
 
-    const createdBy = req.user?.id ?? null
     const assignmentData = []
     for (const employeeId of employeeIds) {
       const effectiveDays = effectiveWorkingDaysByEmployee[String(employeeId)]
@@ -1487,6 +1718,7 @@ export const bulkCreateEmployeeShifts = async (req: AuthenticatedRequest, res: R
           blockId: target.blockId,
           floorId: target.floorId,
           unitId: target.unitId,
+          amenityId: target.amenityId,
           slotTimeRange: bulkSlot,
           createdBy,
         })
@@ -2090,6 +2322,10 @@ export const listShiftEmployeeDates = async (req: AuthenticatedRequest, res: Res
             {
               association: 'unit',
               attributes: ['id', 'unit_number'],
+            },
+            {
+              association: 'amenity',
+              attributes: ['id', 'name'],
             },
           ],
         },
