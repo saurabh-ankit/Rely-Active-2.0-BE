@@ -1,6 +1,12 @@
 import { Router } from 'express'
 import { authenticate } from '../../middlewares/authenticate.js'
-import { getDashboardStats, getEntries, getPreapproved, updateEntryStatus } from '../controllers/gate.controller.js'
+import {
+  addEntryItems,
+  getDashboardStats,
+  getEntries,
+  getPreapproved,
+  updateEntryStatus,
+} from '../controllers/gate.controller.js'
 
 const router = Router({ mergeParams: true })
 
@@ -10,5 +16,6 @@ router.get('/stats', getDashboardStats)
 router.get('/entries', getEntries)
 router.get('/preapproved', getPreapproved)
 router.patch('/entries/:entryId/status', updateEntryStatus)
+router.post('/entries/:entryId/items', addEntryItems)
 
 export default router
