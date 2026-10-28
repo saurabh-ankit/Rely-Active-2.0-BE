@@ -533,29 +533,37 @@ export async function getBillingUnits(
   // A household that moved owes its old flat's unpaid invoices on its new flat.
   const windows = moveWindows(await loadMoves({ unitIds, residentIds: allResidents.map((r) => r.id) }))
   const oldFlatIds = [...new Set(windows.map((w) => w.fromUnitId))].filter((id) => !unitIds.includes(id))
-  const oldFlatOpen = oldFlatIds.length
-    ? await Invoice.findAll({
-        where: { unitId: oldFlatIds, isDeleted: false, status: { [Op.in]: [...OPEN_INVOICE_STATUSES] } },
-        attributes: ['id', 'unitId', 'startDate', 'status', 'remainingBalance'],
-      })
-    : []
+  const invoiceAttributes = [
+    'id',
+    'unitId',
+    'invoiceNumber',
+    'startDate',
+    'endDate',
+    'discountedAmount',
+    'paidAmount',
+    'remainingBalance',
+    'isCarriedForward',
+    'status',
+    'dueDate',
+  ]
+  const billedWhere = { isDeleted: false, status: { [Op.notIn]: [...VOID_INVOICE_STATUSES] } }
   const invoices = await Invoice.findAll({
-    where: { unitId: unitIds, isDeleted: false, status: { [Op.notIn]: [...VOID_INVOICE_STATUSES] } },
-    attributes: [
-      'id',
-      'unitId',
-      'invoiceNumber',
-      'startDate',
-      'endDate',
-      'discountedAmount',
-      'paidAmount',
-      'remainingBalance',
-      'isCarriedForward',
-      'status',
-      'dueDate',
-    ],
+    where: { unitId: unitIds, ...billedWhere },
+    attributes: invoiceAttributes,
     order: [['startDate', 'ASC']],
   })
+  const oldFlatInvoices = oldFlatIds.length
+    ? await Invoice.findAll({
+        where: { unitId: oldFlatIds, ...billedWhere },
+        attributes: invoiceAttributes,
+        include: [{ model: PropertyUnit, as: 'unit', attributes: ['id', 'unit_number'] }],
+        order: [['startDate', 'ASC']],
+      })
+    : []
+  const unitNumberOf = new Map<string, string>([
+    ...units.map((u) => [u.id, u.unit_number] as [string, string]),
+    ...oldFlatInvoices.map((i) => [i.unitId, (i as InvoiceWithParts).unit?.unit_number ?? ''] as [string, string]),
+  ])
 
   const rows = units.map((unit) => {
     const u = unit as PropertyUnit & { floor?: PropertyFloor & { block?: PropertyBlock }; residents?: Resident[] }
@@ -574,20 +582,17 @@ export async function getBillingUnits(
         : null
 
     const mine = invoices.filter((i) => i.unitId === unit.id)
-    const forMonth = mine.filter((i) => String(i.startDate) <= monthEnd && String(i.endDate) >= monthStart)
     const isOpen = (i: Invoice) => (OPEN_INVOICE_STATUSES as readonly InvoiceStatus[]).includes(i.status)
     const residentIds = residents.map((r) => r.id)
-    // Own unpaid invoices, less those that went with a household that moved out; plus the unpaid
-    // invoices of the flats this household moved here from.
-    const openAll = [
-      ...mine.filter((i) => isOpen(i) && !windows.some((w) => w.fromUnitId === unit.id && inWindow(i, w))),
-      ...[...invoices, ...oldFlatOpen].filter(
-        (i) =>
-          i.unitId !== unit.id &&
-          isOpen(i) &&
-          windows.some((w) => residentIds.includes(w.residentId) && inWindow(i, w)),
-      ),
-    ]
+    // This flat's own invoices, less those that went with a household that moved out; plus the
+    // invoices of the flats this household moved here from (they are owed here).
+    const own = mine.filter((i) => !windows.some((w) => w.fromUnitId === unit.id && inWindow(i, w)))
+    const broughtIn = [...invoices, ...oldFlatInvoices].filter(
+      (i) => i.unitId !== unit.id && windows.some((w) => residentIds.includes(w.residentId) && inWindow(i, w)),
+    )
+    const household = [...own, ...broughtIn]
+    const forMonth = household.filter((i) => String(i.startDate) <= monthEnd && String(i.endDate) >= monthStart)
+    const openAll = household.filter(isOpen)
 
     let monthStatus: MonthBillingStatus
     if (forMonth.length) monthStatus = invoicesStatus(forMonth)
@@ -632,8 +637,11 @@ export async function getBillingUnits(
         invoices: forMonth.map((i) => ({
           id: i.id,
           invoiceNumber: i.invoiceNumber,
+          /** Set when the invoice was raised on a flat the household moved here from. */
+          fromUnitNumber: i.unitId === unit.id ? null : (unitNumberOf.get(i.unitId) ?? null),
           startDate: String(i.startDate),
           endDate: String(i.endDate),
+          dueDate: i.dueDate ? String(i.dueDate) : null,
           status: effectiveStatus(i),
         })),
         billed,
@@ -649,8 +657,9 @@ export async function getBillingUnits(
           (coveredFrom > (movedInDate && movedInDate > monthStart ? movedInDate : monthStart) ||
             (coveredTo ?? monthEnd) < (movedOutDate && movedOutDate < monthEnd ? movedOutDate : monthEnd)),
       },
-      lastBilledUntil: mine.length
-        ? mine
+      // Last day billed for this household here, counting invoices brought from a flat it moved from.
+      lastBilledUntil: household.length
+        ? household
             .map((i) => String(i.endDate))
             .sort()
             .at(-1)!
