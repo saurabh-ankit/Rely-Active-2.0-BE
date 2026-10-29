@@ -1,3 +1,5 @@
+import { businessClock } from './roster.util.js'
+
 const MINUTES_PER_DAY = 24 * 60
 
 export const SLOT_STATUSES = {
@@ -62,11 +64,11 @@ export const classifySlotPeriod = (startMinutes: number): 'MORNING' | 'AFTERNOON
   return 'EVENING'
 }
 
+/** Whether the slot has started, by the property's (IST) clock rather than the server's. */
 export const isPastSlot = (dateYmd: string, startMinutes: number, now = new Date()): boolean => {
-  const today = toYmdLocal(now)
+  const { ymd: today, minutes: nowMinutes } = businessClock(now)
   if (dateYmd < today) return true
   if (dateYmd > today) return false
-  const nowMinutes = now.getHours() * 60 + now.getMinutes()
   return startMinutes <= nowMinutes
 }
 

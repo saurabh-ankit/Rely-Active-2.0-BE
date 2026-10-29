@@ -1,11 +1,17 @@
 import { Op, type Transaction } from 'sequelize'
 import sequelize from '../config/db/index.js'
-import { Amenity, PropertyAmenity } from '../models/index.js'
+import { Amenity, AmenitySlotBooking, AmenitySlotConfig, PropertyAmenity } from '../models/index.js'
 import { HttpError } from '../middlewares/error/http-error.js'
+import { AmenityBookingStatus } from '../models/amenitySlotBooking.model.js'
+import { generateSlotStartMinutes } from '../utils/amenitySlot.util.js'
+import { businessClock } from '../utils/roster.util.js'
+import { slotSetupFromSettings, unitOf } from './amenityBooking.service.js'
 
 export interface PropertyAmenitySelectionInput {
   amenityId: string
   slotBookable?: boolean
+  isPayable?: boolean
+  price?: number | null
   settings?: Record<string, unknown> | null
 }
 
@@ -15,11 +21,25 @@ export interface PropertyAmenityView {
   name: string
   description: string | null
   slotBookable: boolean
+  isPayable: boolean
+  /** Price per booked slot; null when the amenity is free. */
+  price: number | null
   settings: Record<string, unknown> | null
+  /** The saved slot setup, so the property form can show amenities set up before booking units. */
+  slotSetup: {
+    bookingUnit: string
+    openMinutes: number
+    closeMinutes: number
+    durationMin: number
+    checkOutMinutes: number | null
+  } | null
   isActive: boolean
 }
 
-type PropertyAmenityWithAmenity = PropertyAmenity & { amenity?: Amenity | null }
+type PropertyAmenityWithAmenity = PropertyAmenity & {
+  amenity?: Amenity | null
+  slotConfig?: AmenitySlotConfig | null
+}
 
 const byName = (a: { name: string }, b: { name: string }) => a.name.localeCompare(b.name)
 
@@ -32,7 +52,18 @@ function toView(row: PropertyAmenityWithAmenity): PropertyAmenityView | null {
     name: amenity.name,
     description: amenity.description ?? null,
     slotBookable: Boolean(row.slotBookable),
+    isPayable: Boolean(row.isPayable),
+    price: row.isPayable && row.price != null ? Number(row.price) : null,
     settings: (row.settings as Record<string, unknown> | null) ?? null,
+    slotSetup: row.slotConfig
+      ? {
+          bookingUnit: unitOf(row.slotConfig),
+          openMinutes: row.slotConfig.openMinutes,
+          closeMinutes: row.slotConfig.closeMinutes,
+          durationMin: row.slotConfig.durationMin,
+          checkOutMinutes: row.slotConfig.checkOutMinutes ?? null,
+        }
+      : null,
     isActive: Boolean(row.isActive),
   }
 }
@@ -44,6 +75,12 @@ async function loadRows(propertyId: string, transaction?: Transaction): Promise<
       {
         model: Amenity,
         as: 'amenity',
+        required: false,
+      },
+      {
+        model: AmenitySlotConfig,
+        as: 'slotConfig',
+        where: { isDeleted: false },
         required: false,
       },
     ],
@@ -65,6 +102,69 @@ export async function getPropertyAmenities(
 
 export function toLegacyAmenityNames(propertyAmenities: PropertyAmenityView[]): string[] {
   return Array.from(new Set(propertyAmenities.map((item) => item.name.trim()).filter(Boolean)))
+}
+
+/**
+ * Writes the booking unit and times chosen on the property to the amenity's slot setup (creating it
+ * with one booking per slot and every day open). Refuses a change that upcoming bookings no longer fit.
+ */
+async function applySlotSetup(
+  propertyAmenityId: string,
+  amenityName: string,
+  settings: Record<string, unknown> | null | undefined,
+  operatingUserId: string | null,
+  transaction: Transaction,
+): Promise<void> {
+  const setup = slotSetupFromSettings(settings)
+  if (!setup) return
+
+  const config = await AmenitySlotConfig.findOne({ where: { propertyAmenityId, isDeleted: false }, transaction })
+  if (!config) {
+    await AmenitySlotConfig.create(
+      {
+        propertyAmenityId,
+        ...setup,
+        capacity: 1,
+        isActive: true,
+        isDeleted: false,
+        createdBy: operatingUserId,
+        updatedBy: operatingUserId,
+      },
+      { transaction },
+    )
+    return
+  }
+
+  const unchanged =
+    unitOf(config) === setup.bookingUnit &&
+    config.openMinutes === setup.openMinutes &&
+    config.closeMinutes === setup.closeMinutes &&
+    config.durationMin === setup.durationMin &&
+    (config.checkOutMinutes ?? null) === setup.checkOutMinutes
+  if (unchanged) return
+
+  const upcoming = await AmenitySlotBooking.findAll({
+    where: {
+      slotConfigId: config.id,
+      status: AmenityBookingStatus.BOOKED,
+      isDeleted: false,
+      date: { [Op.gte]: businessClock().ymd },
+    },
+    attributes: ['id', 'startMinutes'],
+    transaction,
+  })
+  const starts = generateSlotStartMinutes(setup.openMinutes, setup.closeMinutes, setup.durationMin)
+  const impacted =
+    unitOf(config) === setup.bookingUnit ? upcoming.filter((b) => !starts.includes(b.startMinutes)) : upcoming
+  if (impacted.length) {
+    throw new HttpError(
+      409,
+      `${amenityName} has ${impacted.length} upcoming booking${impacted.length === 1 ? '' : 's'} that ${
+        impacted.length === 1 ? "doesn't" : "don't"
+      } fit the new booking setup. Cancel ${impacted.length === 1 ? 'it' : 'them'} first, or keep the current setup.`,
+    )
+  }
+  await config.update({ ...setup, updatedBy: operatingUserId }, { transaction })
 }
 
 export async function syncPropertyAmenities(
@@ -112,11 +212,17 @@ export async function syncPropertyAmenities(
       if (!amenity) continue
       const existing = existingByAmenityId.get(input.amenityId)
       const slotBookable = input.slotBookable ?? false
+      const isPayable = slotBookable && !!input.isPayable
+      const price = isPayable ? (input.price ?? null) : null
 
+      let propertyAmenityId: string
       if (existing) {
+        propertyAmenityId = existing.id
         await existing.update(
           {
             slotBookable,
+            isPayable,
+            price,
             settings: input.settings ?? null,
             isDeleted: false,
             isActive: true,
@@ -125,11 +231,13 @@ export async function syncPropertyAmenities(
           { transaction },
         )
       } else {
-        await PropertyAmenity.create(
+        const created = await PropertyAmenity.create(
           {
             propertyId,
             amenityId: input.amenityId,
             slotBookable,
+            isPayable,
+            price,
             settings: input.settings ?? null,
             isDeleted: false,
             isActive: true,
@@ -138,6 +246,11 @@ export async function syncPropertyAmenities(
           },
           { transaction },
         )
+        propertyAmenityId = created.id
+      }
+
+      if (slotBookable) {
+        await applySlotSetup(propertyAmenityId, amenity.name, input.settings, operatingUserId, transaction)
       }
     }
 

@@ -30,6 +30,7 @@ const SECTION_LABEL: Record<ServiceType, string> = {
   [ServiceType.INVENTORY_ITEM]: 'Medicines & Consumables',
   [ServiceType.EVENT_FEE]: 'Events',
   [ServiceType.VENUE_BOOKING]: 'Venue Bookings',
+  [ServiceType.AMENITY_BOOKING]: 'Amenity Bookings',
   [ServiceType.MAINTENANCE]: 'Maintenance',
   [ServiceType.MISCELLANEOUS_AS_SERVICE]: 'Miscellaneous',
   [ServiceType.MISCELLANEOUS_AT_BILLING]: 'Miscellaneous',

@@ -12,9 +12,18 @@ export type AmenityBookingStatusType = (typeof AmenityBookingStatus)[keyof typeo
 export interface AmenitySlotBookingAttributes extends BaseAttributes {
   slotConfigId: string
   date: string
+  /** Last date occupied (inclusive) for a multi-day or overnight booking; null = `date` only. */
+  endDate?: string | null
   startMinutes: number
+  /** Slot end, or check-out time for a stay. */
+  endMinutes?: number | null
+  /** Slots, days or nights booked, and the price of each when booked. */
+  unitCount?: number | null
+  unitPrice?: number | null
   residentId: string
   status: AmenityBookingStatusType
+  /** The amenity's price when booked (null or 0 when free); billed on the flat's invoice. */
+  chargeAmount?: number | null
   notes?: string | null
   isActive: boolean
   isDeleted: boolean
@@ -22,7 +31,20 @@ export interface AmenitySlotBookingAttributes extends BaseAttributes {
 
 export type AmenitySlotBookingCreationAttributes = Optional<
   AmenitySlotBookingAttributes,
-  'id' | 'status' | 'notes' | 'isActive' | 'isDeleted' | 'createdBy' | 'updatedBy' | 'createdAt' | 'updatedAt'
+  | 'id'
+  | 'endDate'
+  | 'endMinutes'
+  | 'unitCount'
+  | 'unitPrice'
+  | 'status'
+  | 'chargeAmount'
+  | 'notes'
+  | 'isActive'
+  | 'isDeleted'
+  | 'createdBy'
+  | 'updatedBy'
+  | 'createdAt'
+  | 'updatedAt'
 >
 
 export class AmenitySlotBooking
@@ -31,9 +53,14 @@ export class AmenitySlotBooking
 {
   declare slotConfigId: string
   declare date: string
+  declare endDate: string | null
   declare startMinutes: number
+  declare endMinutes: number | null
+  declare unitCount: number | null
+  declare unitPrice: number | null
   declare residentId: string
   declare status: AmenityBookingStatusType
+  declare chargeAmount: number | null
   declare notes: string | null
   declare isActive: boolean
   declare isDeleted: boolean
@@ -50,9 +77,25 @@ AmenitySlotBooking.init(
       type: DataTypes.DATEONLY,
       allowNull: false,
     },
+    endDate: {
+      type: DataTypes.DATEONLY,
+      allowNull: true,
+    },
     startMinutes: {
       type: DataTypes.INTEGER,
       allowNull: false,
+    },
+    endMinutes: {
+      type: DataTypes.INTEGER,
+      allowNull: true,
+    },
+    unitCount: {
+      type: DataTypes.INTEGER,
+      allowNull: true,
+    },
+    unitPrice: {
+      type: DataTypes.DECIMAL(10, 2),
+      allowNull: true,
     },
     residentId: {
       type: DataTypes.UUID,
@@ -62,6 +105,10 @@ AmenitySlotBooking.init(
       type: DataTypes.ENUM(...Object.values(AmenityBookingStatus)),
       allowNull: false,
       defaultValue: AmenityBookingStatus.BOOKED,
+    },
+    chargeAmount: {
+      type: DataTypes.DECIMAL(10, 2),
+      allowNull: true,
     },
     notes: {
       type: DataTypes.STRING(500),

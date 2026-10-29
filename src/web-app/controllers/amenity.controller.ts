@@ -236,6 +236,8 @@ export async function setPropertyAmenitiesForProperty(req: AuthenticatedRequest,
     const mapped = amenities.map((item) => ({
       amenityId: item.amenityId,
       slotBookable: item.slotBookable,
+      isPayable: item.isPayable,
+      price: item.price,
       settings: item.settings,
     })) as PropertyAmenitySelectionInput[]
 
