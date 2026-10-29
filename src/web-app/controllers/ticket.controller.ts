@@ -29,6 +29,7 @@ import { NotificationRecipientType } from '../../enums/notification.enum.js'
 import { TicketActivityType, TicketPriority, TicketStatus } from '../../enums/ticket.enum.js'
 import { uploadFileToS3 } from '../../middlewares/s3/index.js'
 import { resolveNotificationActor } from '../../services/notifications/notificationAudience.service.js'
+import { businessClock } from '../../utils/roster.util.js'
 import { buildTatUpdatedNotificationContent } from '../../services/notifications/ticketNotificationContent.service.js'
 import {
   publishTicketNotificationSafe,
@@ -136,8 +137,6 @@ interface EmployeeShiftInfo {
   endDate: string | null
 }
 
-const WEEK_DAY_NAMES = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday']
-
 /** `HH:mm` (or `HH:mm:ss`) to minutes since midnight. */
 function timeToMinutes(value?: string | null): number | null {
   if (!value) return null
@@ -158,10 +157,8 @@ async function getShiftInfoForEmployees(
 ): Promise<Record<string, EmployeeShiftInfo>> {
   if (employeeIds.length === 0) return {}
 
-  const now = new Date()
-  const today = now.toISOString().split('T')[0] as string
-  const todayName = WEEK_DAY_NAMES[now.getDay()] as string
-  const nowMinutes = now.getHours() * 60 + now.getMinutes()
+  // Shift days and hours are in Indian time; the server's own clock may be UTC.
+  const { ymd: today, weekday: todayName, minutes: nowMinutes } = businessClock()
 
   const assignments = (await ShiftAssignment.findAll({
     where: {

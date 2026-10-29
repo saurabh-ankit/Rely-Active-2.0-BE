@@ -123,12 +123,34 @@ export function generateShiftCode(name: string): string {
   return `${initials}-${digits}`
 }
 
-export const todayYmdLocal = (now = new Date()): string => {
-  const y = now.getFullYear()
-  const m = String(now.getMonth() + 1).padStart(2, '0')
-  const d = String(now.getDate()).padStart(2, '0')
-  return `${y}-${m}-${d}`
+/** Properties run on Indian time; servers may not (dev/prod run in UTC). */
+const BUSINESS_TIME_ZONE = 'Asia/Kolkata'
+const businessClockFormat = new Intl.DateTimeFormat('en-GB', {
+  timeZone: BUSINESS_TIME_ZONE,
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit',
+  hour: '2-digit',
+  minute: '2-digit',
+  weekday: 'long',
+  hourCycle: 'h23',
+})
+
+/**
+ * The wall clock in India at `now` — calendar day, minutes since midnight and weekday —
+ * whatever time zone the server runs in. Use it for "today" and "is it within the shift".
+ */
+export function businessClock(now = new Date()): { ymd: string; minutes: number; weekday: string } {
+  const p = Object.fromEntries(businessClockFormat.formatToParts(now).map((x) => [x.type, x.value]))
+  return {
+    ymd: `${p.year}-${p.month}-${p.day}`,
+    minutes: Number(p.hour) * 60 + Number(p.minute),
+    weekday: String(p.weekday).toLowerCase(),
+  }
 }
+
+/** Today's date (YYYY-MM-DD) in Indian time. */
+export const todayYmdLocal = (now = new Date()): string => businessClock(now).ymd
 
 /** Whether slot "HH:mm - HH:mm" sits inside shift start/end (overnight-aware). */
 export function isSlotWithinShift(slotTimeRange: string, shiftStart: string, shiftEnd: string): boolean {
@@ -157,8 +179,7 @@ export function hasWindowStartPassedOnDate(dateYmd: string, startHHmm: string, n
   if (dateYmd > today) return false
   const startMin = parseTimeToMinutes(startHHmm)
   if (startMin === null) return false
-  const nowMin = now.getHours() * 60 + now.getMinutes()
-  return nowMin >= startMin
+  return businessClock(now).minutes >= startMin
 }
 
 /** Add (or subtract) whole days from a YYYY-MM-DD local calendar date. */
@@ -168,15 +189,13 @@ export function addDaysYmd(dateYmd: string, days: number): string {
   const m = parts[1]
   const d = parts[2]
   if (y === undefined || m === undefined || d === undefined) return dateYmd
-  const dt = new Date(y, m - 1, d)
-  dt.setDate(dt.getDate() + days)
-  return todayYmdLocal(dt)
+  return new Date(Date.UTC(y, m - 1, d + days)).toISOString().slice(0, 10)
 }
 
 export type TimeBasedShiftStatus = 'upcoming' | 'on_duty' | 'completed'
 
 /**
- * Derive upcoming / on_duty / completed from roster date + duty window (local time).
+ * Derive upcoming / on_duty / completed from roster date + duty window (Indian time).
  * Overnight windows (end <= start) spill into the next calendar day.
  */
 export function resolveTimeBasedShiftStatus(
@@ -196,7 +215,7 @@ export function resolveTimeBasedShiftStatus(
 
   const overnight = endMin <= startMin
   const endDateYmd = overnight ? addDaysYmd(dateYmd, 1) : dateYmd
-  const nowMin = now.getHours() * 60 + now.getMinutes()
+  const nowMin = businessClock(now).minutes
 
   if (today < dateYmd) return 'upcoming'
   if (today > endDateYmd) return 'completed'
