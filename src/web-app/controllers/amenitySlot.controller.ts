@@ -12,6 +12,18 @@ import {
   PropertyUnit,
   Resident,
 } from '../../models/index.js'
+import { bookingCancelBlockedReason } from '../../services/amenityBookingCharge.js'
+import {
+  bookedMessage,
+  bookingRangeView,
+  createAmenityBooking,
+  occupyingWhere,
+  slotEndLabel,
+  slotEndMinutes,
+  unitOf,
+} from '../../services/amenityBooking.service.js'
+import { HttpError } from '../../middlewares/error/http-error.js'
+import { AmenityBookingUnit } from '../../models/amenitySlotConfig.model.js'
 import { resolveNotificationActor } from '../../services/notifications/notificationAudience.service.js'
 import { publishAmenitySlotBookedNotificationSafe } from '../../services/notifications/amenitySlotNotification.service.js'
 import { AmenityBookingStatus, type AmenitySlotBookingAttributes } from '../../models/amenitySlotBooking.model.js'
@@ -92,7 +104,8 @@ const bookingResidentInclude = [
 
 const formatBooking = (
   booking: AmenitySlotBooking,
-): {
+  config?: AmenitySlotConfig | null,
+): ReturnType<typeof bookingRangeView> & {
   id: string
   date: string
   startMinutes: number
@@ -121,6 +134,7 @@ const formatBooking = (
     floorNumber,
     unitNumber,
     status: raw.status,
+    ...bookingRangeView(raw, config),
   }
   if (raw.createdAt) {
     return { ...formatted, createdAt: raw.createdAt }
@@ -183,6 +197,8 @@ export const getAmenitySlotConfig = async (req: AuthenticatedRequest, res: Respo
       durationMin: config.durationMin,
       capacity: config.capacity,
       daysOfWeek: normalizeDaysOfWeek(config.daysOfWeek),
+      bookingUnit: unitOf(config),
+      checkOutMinutes: config.checkOutMinutes ?? null,
     }
 
     return res.status(200).json({
@@ -205,10 +221,9 @@ export const updateAmenitySlotConfig = async (req: AuthenticatedRequest, res: Re
     const locationId = req.params.locationId as string
     const amenityId = req.params.amenityId as string
     const userId = req.user?.id || null
+    let { openMinutes, closeMinutes, durationMin }: { openMinutes: number; closeMinutes: number; durationMin: number } =
+      req.body
     const {
-      openMinutes,
-      closeMinutes,
-      durationMin,
       capacity,
       daysOfWeek,
       force,
@@ -237,6 +252,12 @@ export const updateAmenitySlotConfig = async (req: AuthenticatedRequest, res: Re
       where: { propertyAmenityId: context.id, isDeleted: false },
       transaction,
     })
+    // Day and overnight setups take their times from the property's amenity settings.
+    if (slotConfig && unitOf(slotConfig) !== AmenityBookingUnit.SLOT) {
+      openMinutes = slotConfig.openMinutes
+      closeMinutes = slotConfig.closeMinutes
+      durationMin = slotConfig.durationMin
+    }
 
     if (!slotConfig) {
       slotConfig = await AmenitySlotConfig.create(
@@ -395,12 +416,13 @@ export const getAmenitySlotsForDate = async (req: AuthenticatedRequest, res: Res
       ? []
       : generateSlotStartMinutes(config.openMinutes, config.closeMinutes, config.durationMin)
 
+    // A multi-day or overnight booking occupies each of its dates.
     const bookings = (await AmenitySlotBooking.findAll({
       where: {
         slotConfigId: config.id,
-        date,
         status: AmenityBookingStatus.BOOKED,
         isDeleted: false,
+        ...occupyingWhere(date, date),
       },
       include: bookingResidentInclude,
       order: [['createdAt', 'ASC']],
@@ -442,8 +464,8 @@ export const getAmenitySlotsForDate = async (req: AuthenticatedRequest, res: Res
       return {
         startMinutes,
         startLabel: formatMinutesToAmPm(startMinutes),
-        endMinutes: startMinutes + config.durationMin,
-        endLabel: formatMinutesToAmPm(startMinutes + config.durationMin),
+        endMinutes: slotEndMinutes(config, startMinutes),
+        endLabel: slotEndLabel(config, startMinutes),
         period: classifySlotPeriod(startMinutes),
         status,
         capacity: config.capacity,
@@ -452,7 +474,7 @@ export const getAmenitySlotsForDate = async (req: AuthenticatedRequest, res: Res
         isPast: past,
         isBlocked: Boolean(blocked),
         blockId: blocked?.id || null,
-        bookings: slotBookings.map(formatBooking),
+        bookings: slotBookings.map((booking) => formatBooking(booking, config)),
       }
     })
 
@@ -461,8 +483,8 @@ export const getAmenitySlotsForDate = async (req: AuthenticatedRequest, res: Res
     const legacySlots = legacyBookings.map((booking) => ({
       startMinutes: booking.startMinutes,
       startLabel: formatMinutesToAmPm(booking.startMinutes),
-      endMinutes: booking.startMinutes + config.durationMin,
-      endLabel: formatMinutesToAmPm(booking.startMinutes + config.durationMin),
+      endMinutes: slotEndMinutes(config, booking.startMinutes),
+      endLabel: slotEndLabel(config, booking.startMinutes),
       period: classifySlotPeriod(booking.startMinutes),
       status: SLOT_STATUSES.LEGACY_BOOKED,
       capacity: config.capacity,
@@ -471,7 +493,7 @@ export const getAmenitySlotsForDate = async (req: AuthenticatedRequest, res: Res
       isPast: isPastSlot(date, booking.startMinutes),
       isBlocked: false,
       blockId: null,
-      bookings: [formatBooking(booking)],
+      bookings: [formatBooking(booking, config)],
       isLegacy: true,
     }))
 
@@ -488,6 +510,8 @@ export const getAmenitySlotsForDate = async (req: AuthenticatedRequest, res: Res
           durationMin: config.durationMin,
           capacity: config.capacity,
           daysOfWeek: days,
+          bookingUnit: unitOf(config),
+          checkOutMinutes: config.checkOutMinutes ?? null,
         },
         slots: [...slots, ...legacySlots].sort((a, b) => a.startMinutes - b.startMinutes),
       },
@@ -503,9 +527,11 @@ export const createAmenitySlotBooking = async (req: AuthenticatedRequest, res: R
   try {
     const locationId = req.params.locationId as string
     const amenityId = req.params.amenityId as string
-    const { date, startMinutes, residentId, notes } = req.body as {
+    const { date, startMinutes, endDate, checkOutDate, residentId, notes } = req.body as {
       date: string
-      startMinutes: number
+      startMinutes?: number
+      endDate?: string
+      checkOutDate?: string
       residentId: string
       notes?: string
     }
@@ -526,24 +552,6 @@ export const createAmenitySlotBooking = async (req: AuthenticatedRequest, res: R
       return sendError(res, 'Slot setup not found for this amenity', 400)
     }
 
-    const day = ymdToDayOfWeekMon0(date)
-    const days = normalizeDaysOfWeek(config.daysOfWeek)
-    if (day === null || !days.includes(day)) {
-      await transaction.rollback()
-      return sendError(res, 'This amenity is closed on the selected day', 400)
-    }
-
-    const starts = generateSlotStartMinutes(config.openMinutes, config.closeMinutes, config.durationMin)
-    if (!starts.includes(startMinutes)) {
-      await transaction.rollback()
-      return sendError(res, 'Invalid slot for this setup', 400)
-    }
-
-    if (isPastSlot(date, startMinutes)) {
-      await transaction.rollback()
-      return sendError(res, 'Cannot book a past slot', 400)
-    }
-
     const resident = await Resident.findOne({
       where: {
         id: residentId,
@@ -557,64 +565,15 @@ export const createAmenitySlotBooking = async (req: AuthenticatedRequest, res: R
       return sendError(res, 'Resident not found for this property', 404)
     }
 
-    const blocked = await AmenitySlotBlock.findOne({
-      where: {
-        slotConfigId: config.id,
-        date,
-        startMinutes,
-        isDeleted: false,
-      },
+    const booking = await createAmenityBooking({
+      propertyAmenity: context,
+      config,
+      residentId,
+      input: { date, startMinutes, endDate, checkOutDate },
+      notes,
+      userId: req.user?.id || null,
       transaction,
     })
-    if (blocked) {
-      await transaction.rollback()
-      return sendError(res, 'This slot is blocked', 409)
-    }
-
-    const existingResidentBooking = await AmenitySlotBooking.findOne({
-      where: {
-        slotConfigId: config.id,
-        date,
-        startMinutes,
-        residentId,
-        status: AmenityBookingStatus.BOOKED,
-        isDeleted: false,
-      },
-      transaction,
-    })
-    if (existingResidentBooking) {
-      await transaction.rollback()
-      return sendError(res, 'Resident already has this slot', 409)
-    }
-
-    const slotBookingCount = await AmenitySlotBooking.count({
-      where: {
-        slotConfigId: config.id,
-        date,
-        startMinutes,
-        status: AmenityBookingStatus.BOOKED,
-        isDeleted: false,
-      },
-      transaction,
-    })
-    if (slotBookingCount >= config.capacity) {
-      await transaction.rollback()
-      return sendError(res, 'This slot is already full', 409)
-    }
-
-    const booking = await AmenitySlotBooking.create(
-      {
-        slotConfigId: config.id,
-        date,
-        startMinutes,
-        residentId,
-        status: AmenityBookingStatus.BOOKED,
-        notes: notes?.trim() || null,
-        createdBy: req.user?.id || null,
-        updatedBy: req.user?.id || null,
-      },
-      { transaction },
-    )
 
     await transaction.commit()
 
@@ -624,8 +583,8 @@ export const createAmenitySlotBooking = async (req: AuthenticatedRequest, res: R
       locationId,
       amenityId,
       amenityName,
-      date,
-      startMinutes,
+      date: booking.date,
+      startMinutes: booking.startMinutes,
       residentId: resident.id,
       residentName,
       adminUserId: req.user?.id || null,
@@ -634,7 +593,7 @@ export const createAmenitySlotBooking = async (req: AuthenticatedRequest, res: R
 
     return res.status(201).json({
       success: true,
-      message: `Booked ${formatMinutesToAmPm(startMinutes)} successfully`,
+      message: bookedMessage(booking, config),
       data: {
         booking: {
           id: booking.id,
@@ -642,11 +601,13 @@ export const createAmenitySlotBooking = async (req: AuthenticatedRequest, res: R
           startMinutes: booking.startMinutes,
           residentId: booking.residentId,
           status: booking.status,
+          ...bookingRangeView(booking, config),
         },
       },
     })
   } catch (error) {
     await transaction.rollback()
+    if (error instanceof HttpError) return sendError(res, error.message, error.status)
     console.error('Create Amenity Slot Booking Error:', error)
     return sendError(res, 'Failed to create booking', 500)
   }
@@ -681,6 +642,12 @@ export const cancelAmenitySlotBooking = async (req: AuthenticatedRequest, res: R
     if (!booking || booking.status !== AmenityBookingStatus.BOOKED) {
       await transaction.rollback()
       return sendError(res, 'Booking not found', 404)
+    }
+
+    const blockedReason = await bookingCancelBlockedReason(booking)
+    if (blockedReason) {
+      await transaction.rollback()
+      return sendError(res, blockedReason, 409)
     }
 
     await booking.update(
@@ -739,10 +706,10 @@ export const blockAmenitySlot = async (req: AuthenticatedRequest, res: Response)
     const activeBookings = await AmenitySlotBooking.count({
       where: {
         slotConfigId: config.id,
-        date,
         startMinutes,
         status: AmenityBookingStatus.BOOKED,
         isDeleted: false,
+        ...occupyingWhere(date, date),
       },
       transaction,
     })

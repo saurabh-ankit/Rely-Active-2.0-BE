@@ -6,6 +6,9 @@ import { FnbOrderStatus } from '../../../enums/fnb.enum.js'
 import { TicketStatus } from '../../../enums/ticket.enum.js'
 import {
   AdditionalTaskCharge,
+  Amenity,
+  AmenitySlotBooking,
+  AmenitySlotConfig,
   CareTaskAssignment,
   DoctorAppointment,
   Event,
@@ -16,6 +19,7 @@ import {
   FnbResidentOrder,
   FnbResidentOrderDetail,
   LabTestSetting,
+  PropertyAmenity,
   ResidentLabReport,
   Ticket,
   UnitMiscellaneousItem,
@@ -27,6 +31,10 @@ import {
   InventoryStockTransaction,
   InventoryStockTransactionLine,
 } from '../../../models/inventoryStock.model.js'
+import { AmenityBookingStatus } from '../../../models/amenitySlotBooking.model.js'
+import { AmenityBookingUnit } from '../../../models/amenitySlotConfig.model.js'
+import { formatTimeLabel, unitNoun } from '../../amenityBooking.service.js'
+import { addDaysYmd } from '../../../utils/roster.util.js'
 import { localDay, localDayBounds, roundMoney, toDay } from '../../../utils/billing/dates.js'
 import { chargeResidentId, flatFamilyMemberId, isMovedAway } from '../context.js'
 import { usageLine, type ServiceLine, type UsageSource, type UnitBillingContext } from '../types.js'
@@ -36,6 +44,10 @@ type AppointmentWithDoctor = DoctorAppointment & { doctor?: User | null }
 type IssueWithLines = InventoryStockTransaction & { lines?: InventoryStockTransactionLine[] }
 type RegistrationWithEvent = EventRegistration & { event?: Event | null }
 type RequestWithVenue = EventRequest & { venue?: EventVenue | null }
+type BookingWithAmenity = AmenitySlotBooking & {
+  slotConfig?:
+    (AmenitySlotConfig & { propertyAmenity?: (PropertyAmenity & { amenity?: Amenity | null }) | null }) | null
+}
 
 const residentOrFamily = (ctx: UnitBillingContext) => ({
   [Op.or]: [
@@ -335,6 +347,76 @@ export const venueBookingSource: UsageSource = {
 }
 
 /**
+ * Payable amenity bookings, at the price captured when booked: one line per booking, with the slots,
+ * days or nights as the quantity. Billed in the month the booking starts (a stay is billed whole on
+ * its check-in month), whether or not the resident turned up, unless it was cancelled before it started.
+ */
+export const amenityBookingSource: UsageSource = {
+  serviceType: ServiceType.AMENITY_BOOKING,
+  async load(ctx, from, to) {
+    if (!ctx.residentIds.length) return []
+    const bookings = (await AmenitySlotBooking.findAll({
+      where: {
+        residentId: ctx.residentIds,
+        isDeleted: false,
+        status: AmenityBookingStatus.BOOKED,
+        chargeAmount: { [Op.gt]: 0 },
+        date: { [Op.between]: [from, to] },
+      },
+      include: [
+        {
+          model: AmenitySlotConfig,
+          as: 'slotConfig',
+          attributes: ['id', 'durationMin', 'bookingUnit', 'checkOutMinutes'],
+          required: false,
+          include: [
+            {
+              model: PropertyAmenity,
+              as: 'propertyAmenity',
+              attributes: ['id'],
+              required: false,
+              include: [{ model: Amenity, as: 'amenity', attributes: ['name'], required: false }],
+            },
+          ],
+        },
+      ],
+    })) as BookingWithAmenity[]
+    return bookings.map((booking) => {
+      const total = roundMoney(Number(booking.chargeAmount))
+      const count = Number(booking.unitCount) || 1
+      const price = booking.unitPrice != null ? roundMoney(Number(booking.unitPrice)) : roundMoney(total / count)
+      const day = toDay(booking.date) as string
+      const lastDay = toDay(booking.endDate) ?? day
+      const unit = booking.slotConfig?.bookingUnit ?? AmenityBookingUnit.SLOT
+      const start = formatTimeLabel(booking.startMinutes)
+      let description: string
+      if (unit === AmenityBookingUnit.NIGHT) {
+        const checkOut = booking.endMinutes ?? booking.slotConfig?.checkOutMinutes
+        description = `${count} ${unitNoun(unit, count)} · check-in ${day} ${start} → check-out ${addDaysYmd(
+          lastDay,
+          1,
+        )}${checkOut != null ? ` ${formatTimeLabel(checkOut)}` : ''}`
+      } else if (unit === AmenityBookingUnit.FULL_DAY) {
+        description = `${count} ${unitNoun(unit, count)} · ${day === lastDay ? `on ${day}` : `${day} to ${lastDay}`}`
+      } else {
+        const end = booking.endMinutes ?? booking.startMinutes + (booking.slotConfig?.durationMin ?? 0)
+        description = `${start} – ${formatTimeLabel(end)} (on ${day})`
+      }
+      return usageLine(ServiceType.AMENITY_BOOKING, {
+        sourceId: booking.id,
+        residentId: booking.residentId,
+        name: `Amenity – ${booking.slotConfig?.propertyAmenity?.amenity?.name || 'Booking'}`,
+        description,
+        quantity: count,
+        price,
+        total,
+        serviceDate: day,
+      })
+    })
+  },
+}
+
+/**
  * Tickets are free unless staff recorded an invoice amount on them. A ticket raised by a resident
  * who has since moved to another flat is billed there, with the flat it was raised for.
  */
@@ -414,6 +496,7 @@ export const USAGE_SOURCES: UsageSource[] = [
   inventoryItemSource,
   eventFeeSource,
   venueBookingSource,
+  amenityBookingSource,
   maintenanceSource,
   miscellaneousItemSource,
 ]

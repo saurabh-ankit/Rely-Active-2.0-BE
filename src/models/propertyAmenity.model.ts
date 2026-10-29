@@ -6,6 +6,9 @@ export interface PropertyAmenityAttributes extends BaseAttributes {
   propertyId: string
   amenityId: string
   slotBookable: boolean
+  /** Payable amenities bill each booked slot at `price` to the resident's flat. */
+  isPayable: boolean
+  price?: number | null
   settings?: Record<string, unknown> | null
   isActive: boolean
   isDeleted: boolean
@@ -13,7 +16,16 @@ export interface PropertyAmenityAttributes extends BaseAttributes {
 
 export type PropertyAmenityCreationAttributes = Optional<
   PropertyAmenityAttributes,
-  'id' | 'settings' | 'isActive' | 'isDeleted' | 'createdBy' | 'updatedBy' | 'createdAt' | 'updatedAt'
+  | 'id'
+  | 'isPayable'
+  | 'price'
+  | 'settings'
+  | 'isActive'
+  | 'isDeleted'
+  | 'createdBy'
+  | 'updatedBy'
+  | 'createdAt'
+  | 'updatedAt'
 >
 
 export class PropertyAmenity
@@ -23,6 +35,8 @@ export class PropertyAmenity
   declare propertyId: string
   declare amenityId: string
   declare slotBookable: boolean
+  declare isPayable: boolean
+  declare price: number | null
   declare settings: Record<string, unknown> | null
   declare isActive: boolean
   declare isDeleted: boolean
@@ -43,6 +57,15 @@ PropertyAmenity.init(
       type: DataTypes.BOOLEAN,
       allowNull: false,
       defaultValue: false,
+    },
+    isPayable: {
+      type: DataTypes.BOOLEAN,
+      allowNull: false,
+      defaultValue: false,
+    },
+    price: {
+      type: DataTypes.DECIMAL(10, 2),
+      allowNull: true,
     },
     settings: {
       type: DataTypes.JSON,

@@ -2,6 +2,17 @@ import { DataTypes, Optional } from 'sequelize'
 import sequelize from '../config/db/index.js'
 import { BaseAttributes, BaseModel, baseModelColumns } from './base.model.js'
 
+export const AmenityBookingUnit = {
+  /** Timed slots of durationMin within the opening hours. */
+  SLOT: 'SLOT',
+  /** One booking per whole day (open → close); a booking can span several days. */
+  FULL_DAY: 'FULL_DAY',
+  /** Overnight stays: check-in at openMinutes, check-out at checkOutMinutes the next day. */
+  NIGHT: 'NIGHT',
+} as const
+
+export type AmenityBookingUnitType = (typeof AmenityBookingUnit)[keyof typeof AmenityBookingUnit]
+
 export interface AmenitySlotConfigAttributes extends BaseAttributes {
   propertyAmenityId: string
   openMinutes: number
@@ -9,13 +20,24 @@ export interface AmenitySlotConfigAttributes extends BaseAttributes {
   durationMin: number
   capacity: number
   daysOfWeek: number[]
+  bookingUnit: AmenityBookingUnitType
+  checkOutMinutes?: number | null
   isActive: boolean
   isDeleted: boolean
 }
 
 export type AmenitySlotConfigCreationAttributes = Optional<
   AmenitySlotConfigAttributes,
-  'id' | 'daysOfWeek' | 'isActive' | 'isDeleted' | 'createdBy' | 'updatedBy' | 'createdAt' | 'updatedAt'
+  | 'id'
+  | 'daysOfWeek'
+  | 'bookingUnit'
+  | 'checkOutMinutes'
+  | 'isActive'
+  | 'isDeleted'
+  | 'createdBy'
+  | 'updatedBy'
+  | 'createdAt'
+  | 'updatedAt'
 >
 
 export class AmenitySlotConfig
@@ -28,6 +50,8 @@ export class AmenitySlotConfig
   declare durationMin: number
   declare capacity: number
   declare daysOfWeek: number[]
+  declare bookingUnit: AmenityBookingUnitType
+  declare checkOutMinutes: number | null
   declare isActive: boolean
   declare isDeleted: boolean
 }
@@ -60,6 +84,15 @@ AmenitySlotConfig.init(
       type: DataTypes.JSON,
       allowNull: false,
       defaultValue: [0, 1, 2, 3, 4, 5, 6],
+    },
+    bookingUnit: {
+      type: DataTypes.ENUM(...Object.values(AmenityBookingUnit)),
+      allowNull: false,
+      defaultValue: AmenityBookingUnit.SLOT,
+    },
+    checkOutMinutes: {
+      type: DataTypes.INTEGER,
+      allowNull: true,
     },
     isActive: {
       type: DataTypes.BOOLEAN,

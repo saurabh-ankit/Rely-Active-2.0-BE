@@ -15,7 +15,8 @@ export const updateAmenitySlotConfigSchema = z
   .object({
     openMinutes: z.coerce.number().int().min(0).max(1439),
     closeMinutes: z.coerce.number().int().min(1).max(1440),
-    durationMin: z.coerce.number().int().min(5).max(240),
+    // Up to a whole day: full-day and overnight setups have one slot a day.
+    durationMin: z.coerce.number().int().min(5).max(1440),
     capacity: z.coerce.number().int().min(1).max(20),
     daysOfWeek: z.array(z.coerce.number().int().min(0).max(6)).min(1, 'Pick at least one open day'),
     force: z.coerce.boolean().optional(),
@@ -32,7 +33,12 @@ export const updateAmenitySlotConfigSchema = z
 
 export const createAmenitySlotBookingSchema = z.object({
   date: z.string().regex(YMD_REGEX, 'date must be in YYYY-MM-DD format'),
-  startMinutes: z.coerce.number().int().min(0).max(1439),
+  /** Timed slots only; day and overnight bookings start at the opening / check-in time. */
+  startMinutes: z.coerce.number().int().min(0).max(1439).optional(),
+  /** Full day: last day booked (inclusive). */
+  endDate: z.string().regex(YMD_REGEX, 'endDate must be in YYYY-MM-DD format').optional(),
+  /** Overnight stay: the check-out date. */
+  checkOutDate: z.string().regex(YMD_REGEX, 'checkOutDate must be in YYYY-MM-DD format').optional(),
   residentId: z.string().uuid('Valid residentId is required'),
   notes: z.string().trim().max(500).optional(),
 })

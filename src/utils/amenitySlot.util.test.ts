@@ -29,7 +29,7 @@ describe('amenitySlot.util', () => {
   })
 
   it('marks slots as past only when date/time has passed', () => {
-    const now = new Date('2026-10-17T10:30:00')
+    const now = new Date('2026-10-17T10:30:00+05:30') // IST, the property's clock
     expect(isPastSlot('2026-10-16', 600, now)).toBe(true)
     expect(isPastSlot('2026-10-18', 600, now)).toBe(false)
     expect(isPastSlot('2026-10-17', 10 * 60, now)).toBe(true)

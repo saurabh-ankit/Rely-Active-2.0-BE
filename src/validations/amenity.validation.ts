@@ -63,9 +63,51 @@ export const propertyAmenitySelectionSchema = z
   .object({
     amenityId: z.string().uuid('Valid amenityId is required'),
     slotBookable: z.coerce.boolean().optional(),
+    isPayable: z.coerce.boolean().optional(),
+    price: z.coerce.number().min(0, 'Price cannot be negative').max(1000000).optional().nullable(),
     settings: z.record(z.string(), z.unknown()).optional().nullable(),
   })
   .superRefine((item, ctx) => {
+    // Only a booked slot can be charged, so payable needs a slot-bookable amenity and a price.
+    if (item.isPayable) {
+      if (!item.slotBookable) {
+        ctx.addIssue({ code: 'custom', path: ['isPayable'], message: 'Only slot-bookable amenities can be payable' })
+      }
+      if (!item.price || item.price <= 0) {
+        ctx.addIssue({ code: 'custom', path: ['price'], message: 'Enter a price for a payable amenity' })
+      }
+    }
+
+    // The booking unit decides which times are needed: hours + slot length, hours, or check-in/out.
+    const unitSettings =
+      item.settings && typeof item.settings === 'object' && !Array.isArray(item.settings)
+        ? (item.settings as Record<string, unknown>)
+        : {}
+    const bookingUnit = unitSettings.bookingUnit
+    if (bookingUnit !== undefined && bookingUnit !== null) {
+      if (!['SLOT', 'FULL_DAY', 'NIGHT'].includes(String(bookingUnit))) {
+        ctx.addIssue({ code: 'custom', path: ['settings', 'bookingUnit'], message: 'Unknown booking unit' })
+      } else if (item.slotBookable && bookingUnit === 'NIGHT') {
+        for (const key of ['checkInTime', 'checkOutTime']) {
+          const value = readSettingString(unitSettings, key)
+          if (!value || !TIME_24_HOUR_REGEX.test(value)) {
+            ctx.addIssue({
+              code: 'custom',
+              path: ['settings', key],
+              message: `Set the ${key === 'checkInTime' ? 'check-in' : 'check-out'} time for an overnight stay`,
+            })
+          }
+        }
+      } else if (item.slotBookable && bookingUnit === 'SLOT') {
+        if (!readSettingString(unitSettings, 'availableFrom') || !readSettingString(unitSettings, 'availableTo')) {
+          ctx.addIssue({ code: 'custom', path: ['settings'], message: 'Set the opening hours for timed slots' })
+        }
+        if (unitSettings.slotDurationMinutes === undefined || unitSettings.slotDurationMinutes === null) {
+          ctx.addIssue({ code: 'custom', path: ['settings', 'slotDurationMinutes'], message: 'Choose a slot length' })
+        }
+      }
+    }
+
     if (!item.settings || typeof item.settings !== 'object' || Array.isArray(item.settings)) return
 
     const settings = item.settings as Record<string, unknown>
