@@ -25,6 +25,9 @@ import { uploadBase64ToS3 } from '../../../middlewares/s3/index.js'
 import { FnbSubscriptionStatus } from '../../../enums/fnb.enum.js'
 import sequelize from '../../../config/db/index.js'
 import { deliveryUnitInclude, showDeliveryUnit } from '../../../utils/fnbDeliveryUnit.util.js'
+import { todayDay } from '../../../utils/billing/dates.js'
+import { businessClock } from '../../../utils/roster.util.js'
+import { earliestMarkableDay, LATE_WINDOW_MESSAGE } from '../../../utils/attendanceWindow.util.js'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -863,7 +866,7 @@ export const markAttendanceAndCreateOrder = async (req: Request, res: Response):
       return
     }
 
-    const targetDate = typeof dateInput === 'string' && dateInput ? dateInput : new Date().toISOString().split('T')[0]!
+    const targetDate = typeof dateInput === 'string' && dateInput ? dateInput : todayDay()
     const slotKeyNormalized = resolvedSlotKey
 
     let attStatus: 'attended' | 'absent' | 'opted_out' = 'attended'
@@ -873,69 +876,62 @@ export const markAttendanceAndCreateOrder = async (req: Request, res: Response):
       attStatus = attended ? 'attended' : 'absent'
     }
 
-    // Prevent marking attendance if meal slot end time has crossed
-    const todayStr = new Date().toISOString().split('T')[0]!
-    if (attStatus === 'attended') {
-      let isCrossed = false
-      if (targetDate < todayStr) {
-        isCrossed = true
-      } else if (targetDate === todayStr) {
-        let endTimeStr: string | null =
-          (targetPSlot?.endTime as string) || (targetPSlot?.globalMealSlot?.endTime as string) || null
-        let startTimeStr: string | null =
-          (targetPSlot?.startTime as string) || (targetPSlot?.globalMealSlot?.startTime as string) || null
+    // Staff can mark up to LATE_MARK_DAYS back (not ahead); a mark after the slot ended is flagged late.
+    const todayStr = todayDay()
+    if (targetDate > todayStr) {
+      await transaction.rollback()
+      res.status(400).json({ success: false, message: "Attendance can't be marked for a future date." })
+      return
+    }
+    if (targetDate < earliestMarkableDay()) {
+      await transaction.rollback()
+      res.status(400).json({ success: false, message: LATE_WINDOW_MESSAGE })
+      return
+    }
+    let markedLate = targetDate < todayStr
+    if (!markedLate) {
+      let endTimeStr: string | null =
+        (targetPSlot?.endTime as string) || (targetPSlot?.globalMealSlot?.endTime as string) || null
+      let startTimeStr: string | null =
+        (targetPSlot?.startTime as string) || (targetPSlot?.globalMealSlot?.startTime as string) || null
 
-        if (!endTimeStr) {
-          if (
-            slotKeyNormalized.includes('mid') ||
-            slotKeyNormalized.includes('night') ||
-            slotKeyNormalized.includes('late')
-          ) {
-            endTimeStr = '23:59'
-            startTimeStr = '23:30'
-          } else if (slotKeyNormalized.includes('break') || slotKeyNormalized.includes('fast')) {
-            endTimeStr = '09:30'
-            startTimeStr = '07:30'
-          } else if (slotKeyNormalized.includes('lunch')) {
-            endTimeStr = '15:00'
-            startTimeStr = '12:30'
-          } else if (
-            slotKeyNormalized.includes('snack') ||
-            slotKeyNormalized.includes('even') ||
-            slotKeyNormalized.includes('tea')
-          ) {
-            endTimeStr = '18:00'
-            startTimeStr = '16:30'
-          } else if (slotKeyNormalized.includes('dinner')) {
-            endTimeStr = '22:00'
-            startTimeStr = '19:30'
-          } else {
-            endTimeStr = '23:59'
-            startTimeStr = '00:00'
-          }
-        }
-
-        const startMin = parseTimeToMinutes(startTimeStr || '00:00', false)
-        let endMin = parseTimeToMinutes(endTimeStr, true)
-        if (endMin <= startMin && startMin > 0) {
-          endMin += 1440
-        }
-
-        const now = new Date()
-        const curMin = now.getHours() * 60 + now.getMinutes()
-        if (curMin > endMin) {
-          isCrossed = true
+      if (!endTimeStr) {
+        if (
+          slotKeyNormalized.includes('mid') ||
+          slotKeyNormalized.includes('night') ||
+          slotKeyNormalized.includes('late')
+        ) {
+          endTimeStr = '23:59'
+          startTimeStr = '23:30'
+        } else if (slotKeyNormalized.includes('break') || slotKeyNormalized.includes('fast')) {
+          endTimeStr = '09:30'
+          startTimeStr = '07:30'
+        } else if (slotKeyNormalized.includes('lunch')) {
+          endTimeStr = '15:00'
+          startTimeStr = '12:30'
+        } else if (
+          slotKeyNormalized.includes('snack') ||
+          slotKeyNormalized.includes('even') ||
+          slotKeyNormalized.includes('tea')
+        ) {
+          endTimeStr = '18:00'
+          startTimeStr = '16:30'
+        } else if (slotKeyNormalized.includes('dinner')) {
+          endTimeStr = '22:00'
+          startTimeStr = '19:30'
+        } else {
+          endTimeStr = '23:59'
+          startTimeStr = '00:00'
         }
       }
 
-      if (isCrossed) {
-        await transaction.rollback()
-        res.status(400).json({
-          success: false,
-          message: 'Meal slot time has crossed. Attendance cannot be marked for this slot.',
-        })
-        return
+      const startMin = parseTimeToMinutes(startTimeStr || '00:00', false)
+      let endMin = parseTimeToMinutes(endTimeStr, true)
+      if (endMin <= startMin && startMin > 0) {
+        endMin += 1440
       }
+
+      markedLate = businessClock().minutes > endMin
     }
 
     // 1. Verify active package contains meal slot
@@ -1005,6 +1001,7 @@ export const markAttendanceAndCreateOrder = async (req: Request, res: Response):
             status: 'attended',
             remarks: remarks || null,
             unitId: unitId || attendance.unitId,
+            markedLate,
             updatedBy: loggedUserId,
           },
           { transaction },
@@ -1022,6 +1019,7 @@ export const markAttendanceAndCreateOrder = async (req: Request, res: Response):
             mealSlotId: resolvedMealSlotId,
             status: 'attended',
             remarks: remarks || null,
+            markedLate,
             createdBy: loggedUserId,
             updatedBy: loggedUserId,
           },
@@ -1072,7 +1070,17 @@ export const markGuestAttendance = async (req: Request, res: Response): Promise<
       return
     }
 
-    const targetDate = typeof dateInput === 'string' && dateInput ? dateInput : new Date().toISOString().split('T')[0]!
+    const targetDate = typeof dateInput === 'string' && dateInput ? dateInput : todayDay()
+    if (targetDate > todayDay()) {
+      await transaction.rollback()
+      res.status(400).json({ success: false, message: "Attendance can't be marked for a future date." })
+      return
+    }
+    if (targetDate < earliestMarkableDay()) {
+      await transaction.rollback()
+      res.status(400).json({ success: false, message: LATE_WINDOW_MESSAGE })
+      return
+    }
     const count = Number(guestCount || 1)
 
     // Resolve globalMealSlotId and mealSlotKey
@@ -1189,6 +1197,7 @@ export const markGuestAttendance = async (req: Request, res: Response): Promise<
         mealSlotId: resolvedGuestMealSlotId,
         status: 'attended',
         remarks: remarks || null,
+        markedLate: targetDate < todayDay(),
         createdBy: loggedUserId,
         updatedBy: loggedUserId,
       },

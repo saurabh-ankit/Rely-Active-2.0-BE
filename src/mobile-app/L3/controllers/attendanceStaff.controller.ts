@@ -18,6 +18,15 @@ import {
 } from '../../../models/index.js'
 import { AuthorizationService } from '../../../services/authorization.service.js'
 import { localDay, localDayBounds, todayDay } from '../../../utils/billing/dates.js'
+import {
+  BILLED_MESSAGE,
+  earliestMarkableDay,
+  isFlatBilledOn,
+  LATE_MARK_DAYS,
+  LATE_WINDOW_MESSAGE,
+} from '../../../utils/attendanceWindow.util.js'
+import { invoicedSourceIds } from '../../../services/billing/invoicedSources.js'
+import { ServiceType } from '../../../enums/billing.enum.js'
 
 /** Department whose staff mark residents' dine-in and event attendance. */
 export const ATTENDANCE_DEPARTMENT_CODE = 'ATT'
@@ -67,8 +76,12 @@ type RegistrationRow = EventRegistration & {
 
 const markerName = (u?: MarkerUser | null) => (u ? fullName(u.profile) || 'Staff' : null)
 
+/** Marked after the event had ended (allowed for LATE_MARK_DAYS days). */
+const markedAfter = (markedAt: Date | string | null | undefined, eventEnd: Date | string | null | undefined) =>
+  !!markedAt && !!eventEnd && new Date(markedAt).getTime() > new Date(eventEnd).getTime()
+
 /** People a reservation covers: the resident and their residing family members, with who came. */
-const reservationPeople = (r: RegistrationRow) => {
+const reservationPeople = (r: RegistrationRow, eventEnd?: Date | string | null) => {
   const attendees = r.attendees ?? []
   const person = (familyMemberId: string | null, name: string, relation: string | null) => {
     const a = attendees.find((x) => (x.familyMemberId ?? null) === familyMemberId)
@@ -79,6 +92,7 @@ const reservationPeople = (r: RegistrationRow) => {
       attended: !!a,
       markedAt: a?.markedAt ?? null,
       markedBy: markerName(a?.marker),
+      late: markedAfter(a?.markedAt, eventEnd),
     }
   }
   return [
@@ -87,15 +101,16 @@ const reservationPeople = (r: RegistrationRow) => {
   ]
 }
 
-const serializeRegistration = (r: RegistrationRow) => ({
+const serializeRegistration = (r: RegistrationRow, eventEnd?: Date | string | null) => ({
   id: r.id,
   status: r.status,
   seatCount: Number(r.seatCount) || 1,
   attendedAt: r.attendedAt,
   markedBy: markerName(r.attendanceMarker),
+  late: markedAfter(r.attendedAt, eventEnd),
   /** People marked as came; at most seatCount. */
   attendedCount: (r.attendees ?? []).length,
-  people: reservationPeople(r),
+  people: reservationPeople(r, eventEnd),
   resident: r.resident
     ? {
         id: r.resident.id,
@@ -118,7 +133,8 @@ async function residentRequestEventIds(eventIds: string[]): Promise<Set<string>>
 }
 
 /**
- * GET /attendance/events?locId= — today's regular and special events with registered residents.
+ * GET /attendance/events?locId=&date= — a day's regular and special events with registered residents.
+ * The day defaults to today and can be up to LATE_MARK_DAYS back, so ended events can be marked late.
  * Events raised by residents are not listed: their attendance is not marked.
  */
 export async function getTodayEvents(req: Request, res: Response): Promise<void> {
@@ -128,7 +144,15 @@ export async function getTodayEvents(req: Request, res: Response): Promise<void>
       res.status(400).json({ success: false, message: 'locId is required' })
       return
     }
-    const day = todayDay()
+    const day = req.query.date ? String(req.query.date) : todayDay()
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(day) || day > todayDay()) {
+      res.status(400).json({ success: false, message: 'date must be today or an earlier day (YYYY-MM-DD)' })
+      return
+    }
+    if (day < earliestMarkableDay()) {
+      res.status(400).json({ success: false, message: LATE_WINDOW_MESSAGE })
+      return
+    }
     const [dayStart, dayEnd] = localDayBounds(day, day)
     const events = await Event.findAll({
       where: {
@@ -186,8 +210,10 @@ export async function getTodayEvents(req: Request, res: Response): Promise<void>
             id: e.id,
             title: e.title,
             eventType: e.eventType ?? EventType.REGULAR,
-            /** Ended: attendance is read-only. */
+            /** Ended: attendance can still be marked (as late) until it is locked. */
             ended: hasEnded(e),
+            /** Ended more than LATE_MARK_DAYS days ago: attendance is read-only. */
+            locked: isLocked(e),
             startDate: e.startDate,
             endDate: e.endDate,
             poster: e.poster ?? null,
@@ -220,19 +246,39 @@ export async function getTodayEvents(req: Request, res: Response): Promise<void>
 
 type EventLookup = { event: Event; error?: undefined } | { event?: undefined; error: string; code: number }
 
-/** Once an event's end time has passed its attendance is final and can't be changed. */
 const hasEnded = (event: Event) => !!event.endDate && new Date(event.endDate).getTime() < Date.now()
 
-const ENDED_MESSAGE = 'This event has ended: attendance can no longer be changed.'
+/** An event's attendance can be marked late for LATE_MARK_DAYS days after it ends; then it is final. */
+const isLocked = (event: Event) => hasEnded(event) && localDay(event.endDate)! < earliestMarkableDay()
 
-/** Loads an event whose attendance is marked; `forChange` also refuses an event that has ended. */
+const LOCKED_MESSAGE = `This event ended more than ${LATE_MARK_DAYS} days ago: attendance can no longer be changed.`
+
+/** The day a walk-in is recorded (and billed) on: today, or the event's last day once it has ended. */
+const attendanceDay = (event: Event) => (hasEnded(event) ? localDay(event.endDate)! : todayDay())
+
+/**
+ * A late change to a paid event's attendance can change the flat's bill, so it is refused once the
+ * registration is invoiced or the flat's bill for that day exists. Returns the refusal, or null.
+ */
+async function lateBillingBlock(
+  event: Event,
+  unitId: string | null | undefined,
+  day: string,
+  registrationId?: string,
+): Promise<string | null> {
+  if (!hasEnded(event) || !(Number(event.entryFee) > 0)) return null
+  if (registrationId && (await invoicedSourceIds(ServiceType.EVENT_FEE, [registrationId])).size) return BILLED_MESSAGE
+  return (await isFlatBilledOn(unitId, day)) ? BILLED_MESSAGE : null
+}
+
+/** Loads an event whose attendance is marked; `forChange` also refuses an event that is locked. */
 async function findMarkableEvent(eventId: string, forChange = false): Promise<EventLookup> {
   const event = await Event.findOne({ where: { id: eventId, isDeleted: false } })
   if (!event) return { error: 'Event not found', code: 404 }
   if ((await residentRequestEventIds([event.id])).size) {
     return { error: 'Attendance is not marked for events requested by residents.', code: 400 }
   }
-  if (forChange && hasEnded(event)) return { error: ENDED_MESSAGE, code: 400 }
+  if (forChange && isLocked(event)) return { error: LOCKED_MESSAGE, code: 400 }
   return { event }
 }
 
@@ -296,10 +342,11 @@ export async function getEventRegistrations(req: Request, res: Response): Promis
           title: found.event.title,
           startDate: found.event.startDate,
           endDate: found.event.endDate,
-          /** Ended: attendance is read-only. */
           ended: hasEnded(found.event),
+          /** Ended more than LATE_MARK_DAYS days ago: attendance is read-only. */
+          locked: isLocked(found.event),
         },
-        registrations: rows.map(serializeRegistration),
+        registrations: rows.map((r) => serializeRegistration(r, found.event.endDate)),
       },
     })
   } catch (error) {
@@ -345,6 +392,17 @@ export async function markEventAttendance(req: Request, res: Response): Promise<
       res.status(400).json({ success: false, message: 'Only a mark made today can be undone.' })
       return
     }
+    const resident = await Resident.findByPk(registration.residentId, { attributes: ['unitId'] })
+    const blocked = await lateBillingBlock(
+      found.event,
+      resident?.unitId,
+      localDay(registration.registrationDate) ?? todayDay(),
+      registration.id,
+    )
+    if (blocked) {
+      res.status(400).json({ success: false, message: blocked })
+      return
+    }
     const marker = userId(req)
     await registration.update({
       status,
@@ -359,7 +417,11 @@ export async function markEventAttendance(req: Request, res: Response): Promise<
     const updated = (await EventRegistration.findByPk(registration.id, {
       include: registrationIncludes,
     })) as RegistrationRow
-    res.json({ success: true, message: 'Attendance updated', data: serializeRegistration(updated) })
+    res.json({
+      success: true,
+      message: 'Attendance updated',
+      data: serializeRegistration(updated, found.event.endDate),
+    })
   } catch (error) {
     res
       .status(500)
@@ -381,11 +443,21 @@ async function findReservation(req: Request) {
   if (localDay(found.event.startDate)! > todayDay()) {
     return { error: 'Attendance can be marked from the day of the event.', code: 400 }
   }
-  return { registration }
+  const blocked = await lateBillingBlock(
+    found.event,
+    registration.resident?.unitId,
+    localDay(registration.registrationDate) ?? todayDay(),
+    registration.id,
+  )
+  if (blocked) return { error: blocked, code: 400 }
+  return { registration, event: found.event }
 }
 
-const reloadReservation = async (id: string) =>
-  serializeRegistration((await EventRegistration.findByPk(id, { include: registrationIncludes })) as RegistrationRow)
+const reloadReservation = async (id: string, event: Event) =>
+  serializeRegistration(
+    (await EventRegistration.findByPk(id, { include: registrationIncludes })) as RegistrationRow,
+    event.endDate,
+  )
 
 /**
  * PUT /attendance/events/:eventId/registrations/:registrationId/people  { familyMemberId? }
@@ -410,7 +482,7 @@ export async function markReservationPerson(req: Request, res: Response): Promis
       res.json({
         success: true,
         message: `${person.name} is already marked`,
-        data: serializeRegistration(registration),
+        data: serializeRegistration(registration, found.event.endDate),
       })
       return
     }
@@ -443,7 +515,7 @@ export async function markReservationPerson(req: Request, res: Response): Promis
     res.json({
       success: true,
       message: `${person.name} marked as came`,
-      data: await reloadReservation(registration.id),
+      data: await reloadReservation(registration.id, found.event),
     })
   } catch (error) {
     res
@@ -483,7 +555,7 @@ export async function undoReservationPerson(req: Request, res: Response): Promis
         updatedBy: userId(req),
       })
     }
-    res.json({ success: true, message: 'Mark undone', data: await reloadReservation(registration.id) })
+    res.json({ success: true, message: 'Mark undone', data: await reloadReservation(registration.id, found.event) })
   } catch (error) {
     res
       .status(500)
@@ -548,6 +620,7 @@ export async function getEventWalkIns(req: Request, res: Response): Promise<void
         status: reg ? RegistrationStatus.ATTENDED : 'NOT_MARKED',
         attendedAt: reg?.attendedAt ?? null,
         markedBy: reg?.attendanceMarker ? fullName(reg.attendanceMarker.profile) || 'Staff' : null,
+        late: markedAfter(reg?.attendedAt, found.event.endDate),
       }
     }
     const households = residents
@@ -571,8 +644,9 @@ export async function getEventWalkIns(req: Request, res: Response): Promise<void
           title: found.event.title,
           startDate: found.event.startDate,
           endDate: found.event.endDate,
-          /** Ended: attendance is read-only. */
           ended: hasEnded(found.event),
+          /** Ended more than LATE_MARK_DAYS days ago: attendance is read-only. */
+          locked: isLocked(found.event),
           entryFee: Number(found.event.entryFee) || 0,
         },
         households,
@@ -626,10 +700,17 @@ export async function markWalkInAttendance(req: Request, res: Response): Promise
       res.status(404).json({ success: false, message: who.error })
       return
     }
+    const day = attendanceDay(event)
+    const resident = await Resident.findByPk(who.resident.id, { attributes: ['unitId'] })
+    const blocked = await lateBillingBlock(event, resident?.unitId, day)
+    if (blocked) {
+      res.status(400).json({ success: false, message: blocked })
+      return
+    }
     const marker = userId(req)
     // An undone mark is soft-deleted: reuse that row, as the person's key is unique per day.
     const existing = await EventRegistration.findOne({
-      where: { eventId: event.id, residentId: who.resident.id, familyMemberId, registrationDate: todayDay() },
+      where: { eventId: event.id, residentId: who.resident.id, familyMemberId, registrationDate: day },
     })
     const fields = {
       status: RegistrationStatus.ATTENDED,
@@ -647,7 +728,7 @@ export async function markWalkInAttendance(req: Request, res: Response): Promise
           residentId: who.resident.id,
           familyMemberId,
           registeredAt: new Date(),
-          registrationDate: todayDay(),
+          registrationDate: day,
           locationId: event.locationId,
           notes: 'Walk-in (marked by attendance staff)',
           createdBy: marker,
@@ -683,6 +764,17 @@ export async function undoWalkInAttendance(req: Request, res: Response): Promise
     }
     if (localDay(registration.attendedAt ?? registration.updatedAt) !== todayDay()) {
       res.status(400).json({ success: false, message: 'Only a mark made today can be undone.' })
+      return
+    }
+    const resident = await Resident.findByPk(registration.residentId, { attributes: ['unitId'] })
+    const blocked = await lateBillingBlock(
+      found.event,
+      resident?.unitId,
+      localDay(registration.registrationDate) ?? todayDay(),
+      registration.id,
+    )
+    if (blocked) {
+      res.status(400).json({ success: false, message: blocked })
       return
     }
     await registration.update({ isDeleted: true, updatedBy: userId(req) })
