@@ -11,6 +11,7 @@ import { resolveNotificationViewer } from '../../services/notifications/notifica
 import {
   deactivateDeviceToken,
   registerDeviceToken,
+  wasDeviceTokenRejected,
 } from '../../services/notifications/notificationDeviceToken.service.js'
 import type {
   MarkAllNotificationsReadInput,
@@ -203,6 +204,8 @@ export async function registerNotificationDevice(req: AuthenticatedRequest, res:
   }
 
   const body = req.body as RegisterNotificationDeviceInput
+  // Checked first: registering clears the rejection
+  const tokenWasRejected = await wasDeviceTokenRejected(body.fcmToken)
   const token = await registerDeviceToken({
     ...viewer,
     appSurface: body.appSurface,
@@ -228,6 +231,7 @@ export async function registerNotificationDevice(req: AuthenticatedRequest, res:
       platform: token.platform,
       lastRegisteredAt: token.lastRegisteredAt,
       lastSeenAt: token.lastSeenAt,
+      tokenWasRejected,
     },
   })
 }

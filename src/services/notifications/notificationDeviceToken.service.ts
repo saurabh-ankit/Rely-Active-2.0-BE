@@ -114,6 +114,17 @@ function normalizePlatform(
   return PLATFORM_BY_SURFACE[appSurface]
 }
 
+/** Whether Firebase rejected this token on an earlier send, so the device needs a fresh one. */
+export async function wasDeviceTokenRejected(fcmToken?: string | null): Promise<boolean> {
+  const token = normalizeString(fcmToken)
+  if (!token) return false
+  const row = await NotificationDeviceToken.findOne({
+    where: { fcmToken: token },
+    attributes: ['invalidationReason'],
+  })
+  return row?.invalidationReason === 'FCM_TOKEN_INVALID'
+}
+
 /**
  * Register one token for one logged-in user/device pair.
  * If the device rotates a token, we inactivate the previous one.

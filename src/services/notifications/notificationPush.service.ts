@@ -7,10 +7,13 @@ import {
 import { sendPushToTokens } from './firebaseAdmin.service.js'
 import { logger } from '../../config/logger.js'
 
+/**
+ * Errors that mean the token itself is dead. messaging/invalid-argument is deliberately not here:
+ * it can also mean a bad message, which must not switch off a working device.
+ */
 const INVALID_FCM_TOKEN_ERRORS = new Set([
   'messaging/invalid-registration-token',
   'messaging/registration-token-not-registered',
-  'messaging/invalid-argument',
 ])
 
 export interface DispatchNotificationPushInput {
@@ -45,6 +48,19 @@ function buildPushData(event: NotificationEvent): Record<string, string> {
     message: toDataValue(event.message),
     payload: payloadJson.length <= 2000 ? payloadJson : '',
   }
+}
+
+/** How many sends failed with each Firebase error, for the dispatch log. */
+function countFailureCodes(result: Awaited<ReturnType<typeof sendPushToTokens>>): Record<string, number> {
+  const counts: Record<string, number> = {}
+  for (const batch of result.batches) {
+    for (const response of batch.response.responses) {
+      if (response.success) continue
+      const code = response.error?.code || 'unknown'
+      counts[code] = (counts[code] || 0) + 1
+    }
+  }
+  return counts
 }
 
 function extractInvalidTokens(result: Awaited<ReturnType<typeof sendPushToTokens>>): string[] {
@@ -123,6 +139,7 @@ export async function dispatchNotificationPush(input: DispatchNotificationPushIn
       targetedTokens: tokens.length,
       successCount: result.successCount,
       failureCount: result.failureCount,
+      failureCodes: countFailureCodes(result),
       invalidTokenCount: invalidTokens.length,
     },
     'Notification push dispatch completed',
