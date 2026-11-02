@@ -19,6 +19,8 @@ export interface FnbFoodAttendanceAttributes extends BaseAttributes {
   mealSlotId: string
   status: 'attended' | 'absent' | 'opted_out'
   remarks?: string | null
+  /** Marked after the meal slot had ended. */
+  markedLate: boolean
 }
 
 export type FnbFoodAttendanceCreationAttributes = Optional<
@@ -32,6 +34,7 @@ export type FnbFoodAttendanceCreationAttributes = Optional<
   | 'guestCount'
   | 'status'
   | 'remarks'
+  | 'markedLate'
   | 'createdBy'
   | 'updatedBy'
   | 'createdAt'
@@ -53,6 +56,7 @@ export class FnbFoodAttendance
   declare mealSlotId: string
   declare status: 'attended' | 'absent' | 'opted_out'
   declare remarks: string | null
+  declare markedLate: boolean
 
   declare resident?: Resident
   declare familyMember?: ResidentFamilyMember
@@ -122,6 +126,12 @@ FnbFoodAttendance.init(
     remarks: {
       type: DataTypes.TEXT,
       allowNull: true,
+    },
+    markedLate: {
+      type: DataTypes.BOOLEAN,
+      allowNull: false,
+      defaultValue: false,
+      field: 'marked_late',
     },
     createdBy: {
       type: DataTypes.CHAR(36),
