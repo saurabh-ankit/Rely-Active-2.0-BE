@@ -97,6 +97,7 @@ import { ShiftSetting, RosterSetting } from './shiftSetting.model.js'
 import { ShiftRolePolicy, RosterRolePolicy } from './shiftRolePolicy.model.js'
 import { ShiftArea, RosterArea } from './shiftArea.model.js'
 import { FnbFoodAttendance } from './fnbFoodAttendance.model.js'
+import { CompanyDashboardSetting } from './companyDashboardSetting.model.js'
 import {
   CareTask,
   type CareTaskAttributes,
@@ -277,6 +278,8 @@ CompanyCustomField.belongsTo(Company, { foreignKey: 'companyId', as: 'company' }
 
 Company.hasMany(Property, { foreignKey: 'companyId', as: 'properties' })
 Property.belongsTo(Company, { foreignKey: 'companyId', as: 'company' })
+Company.hasOne(CompanyDashboardSetting, { foreignKey: 'companyId', as: 'dashboardSetting' })
+CompanyDashboardSetting.belongsTo(Company, { foreignKey: 'companyId', as: 'company' })
 
 // ── Property amenities ───────────────────────────────────────────────────────
 Property.hasMany(PropertyAmenity, { foreignKey: 'propertyId', as: 'propertyAmenities' })
@@ -1191,6 +1194,7 @@ export {
   ShiftResidentPool,
   ShiftSetting,
   RosterSetting,
+  CompanyDashboardSetting,
   ShiftRolePolicy,
   RosterRolePolicy,
   ShiftArea,

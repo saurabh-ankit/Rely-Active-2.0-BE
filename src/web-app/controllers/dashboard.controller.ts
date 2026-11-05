@@ -1,46 +1,29 @@
 import type { Request, Response } from 'express'
-import { Op, QueryTypes } from 'sequelize'
-import sequelize from '../../config/db/index.js'
+import { Op } from 'sequelize'
 import { PropertyUnit, Resident } from '../../models/index.js'
 import { CareLevel, ResidentStatus } from '../../enums/resident.enum.js'
 import { listCriticalResidentIds } from '../../services/residentCondition.service.js'
+import {
+  TREND_DAYS,
+  TREND_MONTHS,
+  dayKey,
+  dayMap,
+  lastDays,
+  lastMonths,
+  localDaySql,
+  localMonthSql,
+  localNow,
+  monthMap,
+  num,
+  pct,
+  round1,
+  scopedQuery,
+} from '../../services/dashboardQuery.service.js'
 
 /**
  * Dashboard statistics for one property (or every property when no location / 'ALL' is given).
  * Every number comes from the database; nothing is filled in. Series are in local (IST) time.
  */
-
-/** Local time offset: DATETIME columns are stored in UTC. */
-const OFFSET_MIN = Number(process.env.BILLING_TZ_OFFSET_MINUTES ?? 330)
-const TREND_DAYS = 14
-const TREND_MONTHS = 6
-
-type Row = Record<string, unknown>
-
-const num = (v: unknown) => {
-  const n = Number(v)
-  return Number.isFinite(n) ? n : 0
-}
-const round1 = (v: number) => Math.round(v * 10) / 10
-const pct = (part: number, whole: number) => (whole > 0 ? round1((part / whole) * 100) : 0)
-
-/** Local calendar day / month keys. */
-const localNow = () => new Date(Date.now() + OFFSET_MIN * 60_000)
-const dayKey = (d: Date) => d.toISOString().slice(0, 10)
-const lastDays = (n: number) => {
-  const today = localNow()
-  return Array.from({ length: n }, (_, i) => dayKey(new Date(today.getTime() - (n - 1 - i) * 86_400_000)))
-}
-const lastMonths = (n: number) => {
-  const now = localNow()
-  return Array.from({ length: n }, (_, i) => {
-    const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - (n - 1 - i), 1))
-    return d.toISOString().slice(0, 7)
-  })
-}
-/** SQL for a DATETIME column as a local day / month. */
-const localDaySql = (col: string) => `DATE(${col} + INTERVAL ${OFFSET_MIN} MINUTE)`
-const localMonthSql = (col: string) => `DATE_FORMAT(${col} + INTERVAL ${OFFSET_MIN} MINUTE, '%Y-%m')`
 
 export async function getDashboardStats(req: Request, res: Response): Promise<void> {
   try {
@@ -50,9 +33,7 @@ export async function getDashboardStats(req: Request, res: Response): Promise<vo
     const limit = Math.max(1, parseInt(req.query.limit as string, 10) || 6)
 
     /** `col = :loc`, or no filter for all properties. */
-    const at = (col: string) => (loc ? `${col} = :loc` : '1=1')
-    const q = <T extends Row = Row>(sql: string, extra: Record<string, unknown> = {}) =>
-      sequelize.query<T>(sql, { replacements: { loc, ...extra }, type: QueryTypes.SELECT })
+    const { at, q } = scopedQuery(loc)
 
     const days = lastDays(TREND_DAYS)
     const months = lastMonths(TREND_MONTHS)
@@ -134,7 +115,6 @@ export async function getDashboardStats(req: Request, res: Response): Promise<vo
     const ticketTotal = Object.values(tickets).reduce((a, b) => a + b, 0)
     const ticketDone = tickets.resolved + tickets.closed
     const ticketCounted = ticketTotal - tickets.cancelled
-    const dayMap = (rows: { d: string; n: number }[]) => new Map(rows.map((r) => [String(r.d).slice(0, 10), num(r.n)]))
     const createdByDay = dayMap(ticketsCreated)
     const resolvedByDay = dayMap(ticketsResolved)
 
@@ -282,7 +262,6 @@ export async function getDashboardStats(req: Request, res: Response): Promise<vo
       WHERE isDeleted = 0 AND ${at('locId')} AND moveOutDate >= :fromMonth GROUP BY m`,
       { fromMonth },
     )
-    const monthMap = (rows: { m: string; n: number }[]) => new Map(rows.map((r) => [String(r.m), num(r.n)]))
     const moveInByMonth = monthMap(moveIns)
     const moveOutByMonth = monthMap(moveOuts)
     const totalUnits = num(units?.total)
