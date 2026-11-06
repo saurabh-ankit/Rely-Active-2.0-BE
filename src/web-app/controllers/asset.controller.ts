@@ -42,6 +42,7 @@ import {
 } from '../../services/itemRequestDecision.service.js'
 import { getAssetTimeline } from '../../services/assetTimeline.service.js'
 import type { AssetTimelineQuery } from '../../validations/assetTimeline.validation.js'
+import { AssetStatus, ItemRequestStatus } from '../../enums/asset.enum.js'
 
 // ─── From asset.controller.ts ───────────────────────────────────────────
 export const createAsset = async (req: AuthenticatedRequest, res: Response) => {
@@ -457,7 +458,7 @@ export const makeAssetAvailable = async (req: AuthenticatedRequest, res: Respons
     const actorId = req.user?.id || null
 
     await asset.update({
-      status: 'available',
+      status: AssetStatus.AVAILABLE,
       updatedBy: actorId,
     })
 
@@ -2879,7 +2880,7 @@ export const createServiceLog = async (req: AuthenticatedRequest, res: Response)
     const locksAssetStatus = serviceType === 'scrap' || serviceType === 'repair'
     if (locksAssetStatus) {
       await asset.update({
-        status: serviceType as 'scrap' | 'repair',
+        status: serviceType === 'scrap' ? AssetStatus.SCRAP : AssetStatus.REPAIR,
         updatedBy: req.user?.id || null,
       })
     }
@@ -3080,7 +3081,7 @@ export const completeServiceLog = async (req: AuthenticatedRequest, res: Respons
       const asset = await Asset.findByPk(serviceLog.assetId)
       if (asset) {
         await asset.update({
-          status: 'available',
+          status: AssetStatus.AVAILABLE,
           updatedBy: req.user?.id || null,
         })
       }
@@ -4094,7 +4095,7 @@ const resolveItemRequestImage = async (rawImage: unknown): Promise<string | null
 export const createItemRequest = async (req: AuthenticatedRequest, res: Response) => {
   try {
     const { name, phone, assetIds, reason, problem, requestImage, image, expectedReturnDate } = req.body
-    const locationId = req.params.locationId
+    const locationId = req.params.locationId as string
 
     const trimmedName = name ? String(name).trim() : ''
     const trimmedPhone = phone ? String(phone).trim() : ''
@@ -4166,14 +4167,14 @@ export const createItemRequest = async (req: AuthenticatedRequest, res: Response
       qrCodeImage,
       requestImage: uploadedRequestImage,
       expectedReturnDate: parsedExpectedReturnDate,
-      status: 'pending',
+      status: ItemRequestStatus.PENDING,
       createdBy: req.user?.id || null,
     })
 
     if (reason === 'external_use') {
       await Asset.update(
         {
-          status: 'external_use',
+          status: AssetStatus.EXTERNAL_USE,
           updatedBy: req.user?.id || null,
         },
         {
@@ -4239,7 +4240,7 @@ export const getItemRequests = async (req: AuthenticatedRequest, res: Response) 
 
 export const getItemRequestById = async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const { id } = req.params
+    const id = req.params.id as string
 
     const itemRequest = await AssetItemRequest.findByPk(id)
     if (!itemRequest) {
@@ -4257,7 +4258,7 @@ export const getItemRequestById = async (req: AuthenticatedRequest, res: Respons
 
 export const updateItemRequest = async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const { id } = req.params
+    const id = req.params.id as string
     const { name, phone, assetIds, reason, problem, requestImage, image, expectedReturnDate } = req.body
 
     const itemRequest = await AssetItemRequest.findByPk(id)
@@ -4318,7 +4319,7 @@ export const updateItemRequest = async (req: AuthenticatedRequest, res: Response
 
 export const deleteItemRequest = async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const { id } = req.params
+    const id = req.params.id as string
 
     const itemRequest = await AssetItemRequest.findByPk(id)
     if (!itemRequest) {
@@ -4337,7 +4338,7 @@ export const deleteItemRequest = async (req: AuthenticatedRequest, res: Response
 export const scanItemRequest = async (req: AuthenticatedRequest, res: Response) => {
   try {
     const { qrCode } = req.body
-    const locationId = req.params.locationId
+    const locationId = req.params.locationId as string
 
     if (!qrCode || !String(qrCode).trim()) {
       return res.status(400).json(errorResponse('QR code is required'))
@@ -4359,7 +4360,7 @@ export const scanItemRequest = async (req: AuthenticatedRequest, res: Response) 
 
 export const approveItemRequest = async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const { id } = req.params
+    const id = req.params.id as string
     const result = await approveItemRequestById(id, req.user?.id || null)
 
     if ('error' in result && result.error) {
@@ -4375,7 +4376,7 @@ export const approveItemRequest = async (req: AuthenticatedRequest, res: Respons
 
 export const declineItemRequest = async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const { id } = req.params
+    const id = req.params.id as string
     const { comment, image } = req.body
     const result = await declineItemRequestById(id, comment, image, req.user?.id || null)
 
