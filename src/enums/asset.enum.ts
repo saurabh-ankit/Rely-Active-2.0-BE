@@ -4,6 +4,9 @@ export enum AssetStatus {
   MAINTENANCE = 'maintenance',
   RETIRED = 'retired',
   DISPOSED = 'disposed',
+  SCRAP = 'scrap',
+  REPAIR = 'repair',
+  EXTERNAL_USE = 'external_use',
 }
 
 export enum AssetCondition {
@@ -25,6 +28,7 @@ export enum ServiceType {
   INSPECTION = 'inspection',
   CLEANING = 'cleaning',
   UPGRADE = 'upgrade',
+  SCRAP = 'scrap',
 }
 
 export enum WarrantyType {
@@ -57,4 +61,16 @@ export enum ComplianceStatus {
   EXPIRED = 'expired',
   EXPIRING_SOON = 'expiring_soon',
   PENDING_RENEWAL = 'pending_renewal',
+}
+
+export enum ItemRequestReason {
+  SCRAP = 'scrap',
+  REPAIR = 'repair',
+  EXTERNAL_USE = 'external_use',
+}
+
+export enum ItemRequestStatus {
+  PENDING = 'pending',
+  APPROVED = 'approved',
+  DECLINED = 'declined',
 }

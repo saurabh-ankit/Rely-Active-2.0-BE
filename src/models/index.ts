@@ -47,6 +47,8 @@ import { AssetCalibration } from './assetCalibration.model.js'
 import { AssetComplianceInspection } from './assetComplianceInspection.model.js'
 import { AssetComplianceCertification } from './assetComplianceCertification.model.js'
 import { AssetComplianceTraining } from './assetComplianceTraining.model.js'
+import { AssetItemRequest } from './assetItemRequest.model.js'
+import { AssetStatusLog } from './assetStatusLog.model.js'
 import { FnbGlobalPackage } from './fnbGlobalPackage.model.js'
 import { FnbPropertyPackage } from './fnbPropertyPackage.model.js'
 import { FnbResidentPackage } from './fnbResidentPackage.model.js'
@@ -567,6 +569,9 @@ Asset.hasMany(AssetServiceLog, { foreignKey: 'assetId', as: 'serviceLogs' })
 AssetServiceLog.belongsTo(Asset, { foreignKey: 'assetId', as: 'asset' })
 AssetServiceLog.belongsTo(AssetVendor, { foreignKey: 'vendorId', as: 'vendor' })
 // Note: performedByUserId column does not exist in DB; performedBy is a plain text field
+
+Asset.hasMany(AssetStatusLog, { foreignKey: 'assetId', as: 'statusLogs' })
+AssetStatusLog.belongsTo(Asset, { foreignKey: 'assetId', as: 'asset' })
 
 Asset.hasMany(AssetWarranty, { foreignKey: 'assetId', as: 'warranties' })
 AssetWarranty.belongsTo(Asset, { foreignKey: 'assetId', as: 'asset' })
@@ -1142,6 +1147,8 @@ export {
   AssetComplianceInspection,
   AssetComplianceCertification,
   AssetComplianceTraining,
+  AssetItemRequest,
+  AssetStatusLog,
   FnbGlobalPackage,
   FnbPropertyPackage,
   FnbResidentPackage,

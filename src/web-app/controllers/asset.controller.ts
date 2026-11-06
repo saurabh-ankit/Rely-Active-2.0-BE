@@ -25,12 +25,23 @@ import {
   AssetServiceLog,
   AssetVendorCustomField,
   AssetVendorLocation,
+  AssetItemRequest,
+  AssetStatusLog,
 } from '../../models/index.js'
 import { AppError } from '../../utils/appError.js'
 import { errorResponse, successResponse } from '../../utils/response/index.js'
 import XLSX from 'xlsx'
 import sequelize from '../../config/db/index.js'
 import { uploadFileToS3, uploadBase64ToS3 } from '../../middlewares/s3/index.js'
+import QRCode from 'qrcode'
+import {
+  approveItemRequestById,
+  declineItemRequestById,
+  enrichItemRequest,
+  findItemRequestByQr,
+} from '../../services/itemRequestDecision.service.js'
+import { getAssetTimeline } from '../../services/assetTimeline.service.js'
+import type { AssetTimelineQuery } from '../../validations/assetTimeline.validation.js'
 
 // ─── From asset.controller.ts ───────────────────────────────────────────
 export const createAsset = async (req: AuthenticatedRequest, res: Response) => {
@@ -429,6 +440,96 @@ export const updateAsset = async (req: AuthenticatedRequest, res: Response) => {
   }
 }
 
+export const makeAssetAvailable = async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const id = req.params.id as string
+
+    const asset = await Asset.findByPk(id)
+    if (!asset) {
+      throw new AppError('Asset not found', 404)
+    }
+
+    if (asset.status !== 'external_use') {
+      throw new AppError(`Only external_use assets can be made available. Current status: ${asset.status}`, 400)
+    }
+
+    const fromStatus = asset.status
+    const actorId = req.user?.id || null
+
+    await asset.update({
+      status: 'available',
+      updatedBy: actorId,
+    })
+
+    await AssetStatusLog.create({
+      assetId: asset.id,
+      fromStatus,
+      toStatus: 'available',
+      note: 'Marked available after external use',
+      createdBy: actorId,
+      updatedBy: actorId,
+    })
+
+    const updatedAsset = await Asset.findByPk(id, {
+      include: [
+        {
+          model: AssetItem,
+          as: 'item',
+          attributes: ['id', 'name', 'model', 'manufacturer'],
+          include: [
+            {
+              model: AssetCategory,
+              as: 'category',
+              attributes: ['id', 'name'],
+            },
+          ],
+        },
+        {
+          model: Property,
+          as: 'location',
+          attributes: ['id', 'property_name'],
+        },
+        {
+          model: AssetVendor,
+          as: 'vendor',
+          attributes: ['id', 'name', 'contactPerson', 'email', 'phone'],
+        },
+      ],
+    })
+
+    return res.status(200).json(successResponse('Asset marked as available', updatedAsset))
+  } catch (error) {
+    if (error instanceof AppError) {
+      return res.status(error.statusCode).json(errorResponse(error.message))
+    }
+    console.error('Error making asset available:', error)
+    return res.status(500).json(errorResponse('Failed to make asset available'))
+  }
+}
+
+/**
+ * GET /location/:locationId/assets/:id/timeline?page&limit&type&types
+ * Lifecycle events for one asset (created, assigned, repair, scrap, QR, made available, etc.).
+ */
+export const getAssetTimelineData = async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const id = String(req.params.id || '').trim()
+    const locationId = req.params.locationId ? String(req.params.locationId) : null
+    const data = await getAssetTimeline(id, req.query as unknown as AssetTimelineQuery, locationId)
+    return res.status(200).json(successResponse('Asset timeline fetched successfully', data))
+  } catch (error) {
+    const statusCode =
+      error && typeof error === 'object' && 'statusCode' in error
+        ? Number((error as { statusCode?: number }).statusCode) || 500
+        : 500
+    if (statusCode === 404) {
+      return res.status(404).json(errorResponse(error instanceof Error ? error.message : 'Asset not found'))
+    }
+    console.error('Error fetching asset timeline:', error)
+    return res.status(500).json(errorResponse('Failed to fetch asset timeline'))
+  }
+}
+
 export const deleteAsset = async (req: AuthenticatedRequest, res: Response) => {
   try {
     const id = req.params.id as string
@@ -488,6 +589,18 @@ export const getAssetStats = async (req: AuthenticatedRequest, res: Response) =>
       where: { ...whereClause, status: 'disposed' },
     })
 
+    const scrapAssets = await Asset.count({
+      where: { ...whereClause, status: 'scrap' },
+    })
+
+    const repairAssets = await Asset.count({
+      where: { ...whereClause, status: 'repair' },
+    })
+
+    const externalUseAssets = await Asset.count({
+      where: { ...whereClause, status: 'external_use' },
+    })
+
     const assets = await Asset.findAll({
       where: whereClause,
       attributes: ['currentValue', 'createdAt'],
@@ -544,6 +657,9 @@ export const getAssetStats = async (req: AuthenticatedRequest, res: Response) =>
         maintenanceAssets,
         retiredAssets,
         disposedAssets,
+        scrapAssets,
+        repairAssets,
+        externalUseAssets,
         totalValue,
         underWarranty,
         recentAdditions,
@@ -1161,7 +1277,7 @@ export const generateBulkAssetTemplate = async (req: AuthenticatedRequest, res: 
         'Current Value': 1000,
         'Warranty End Date (YYYY-MM-DD)': new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
         'Condition (excellent/good/fair/poor)': 'good',
-        'Status (available/assigned/maintenance/retired/disposed)': 'available',
+        'Status (available/assigned/maintenance/retired/disposed/scrap/repair/external_use)': 'available',
         Notes: `Bulk imported asset #${i}`,
       })
     }
@@ -1287,9 +1403,11 @@ export const processBulkAssetUpload = async (req: AuthenticatedRequest, res: Res
         const condition = row['Condition (excellent/good/fair/poor)']
           ? String(row['Condition (excellent/good/fair/poor)']).trim().toLowerCase()
           : 'good'
-        const status = row['Status (available/assigned/maintenance/retired/disposed)']
-          ? String(row['Status (available/assigned/maintenance/retired/disposed)']).trim().toLowerCase()
-          : 'available'
+        const statusRaw =
+          row['Status (available/assigned/maintenance/retired/disposed/scrap/repair/external_use)'] ??
+          row['Status (available/assigned/maintenance/retired/disposed/scrap/repair)'] ??
+          row['Status (available/assigned/maintenance/retired/disposed)']
+        const status = statusRaw ? String(statusRaw).trim().toLowerCase() : 'available'
         const notes = row['Notes'] ? String(row['Notes']).trim() : null
 
         const validConditions = ['excellent', 'good', 'fair', 'poor']
@@ -1301,7 +1419,16 @@ export const processBulkAssetUpload = async (req: AuthenticatedRequest, res: Res
           continue
         }
 
-        const validStatuses = ['available', 'assigned', 'maintenance', 'retired', 'disposed']
+        const validStatuses = [
+          'available',
+          'assigned',
+          'maintenance',
+          'retired',
+          'disposed',
+          'scrap',
+          'repair',
+          'external_use',
+        ]
         if (!validStatuses.includes(status)) {
           errors.push({
             row: rowNum,
@@ -2708,6 +2835,27 @@ export const createServiceLog = async (req: AuthenticatedRequest, res: Response)
       throw new AppError('Asset not found', 404)
     }
 
+    if (asset.status !== 'available') {
+      throw new AppError(
+        `Cannot create a service log while asset status is '${asset.status}'. Asset must be available.`,
+        400,
+      )
+    }
+
+    const pendingServiceLog = await AssetServiceLog.findOne({
+      where: {
+        assetId,
+        completionStatus: 'pending',
+      },
+      attributes: ['id', 'serviceType'],
+    })
+    if (pendingServiceLog) {
+      throw new AppError(
+        `Asset already has a pending ${pendingServiceLog.serviceType} service log. Complete it before creating a new one.`,
+        400,
+      )
+    }
+
     if (vendorId) {
       const vendor = await AssetVendor.findByPk(vendorId)
       if (!vendor) {
@@ -2727,6 +2875,14 @@ export const createServiceLog = async (req: AuthenticatedRequest, res: Response)
       completionStatus: 'pending',
       createdBy: req.user?.id || null,
     })
+
+    const locksAssetStatus = serviceType === 'scrap' || serviceType === 'repair'
+    if (locksAssetStatus) {
+      await asset.update({
+        status: serviceType as 'scrap' | 'repair',
+        updatedBy: req.user?.id || null,
+      })
+    }
 
     const createdLog = await AssetServiceLog.findByPk(serviceLog.id, {
       include: [
@@ -2918,6 +3074,17 @@ export const completeServiceLog = async (req: AuthenticatedRequest, res: Respons
       completionRemarks,
       updatedBy: req.user?.id || null,
     })
+
+    // Repair service logs release the asset back to available; scrap stays scrap.
+    if (serviceLog.serviceType === 'repair') {
+      const asset = await Asset.findByPk(serviceLog.assetId)
+      if (asset) {
+        await asset.update({
+          status: 'available',
+          updatedBy: req.user?.id || null,
+        })
+      }
+    }
 
     return res.status(200).json(successResponse('Service log completed successfully', serviceLog))
   } catch (error) {
@@ -3905,5 +4072,320 @@ export const getVendorsDropdown = async (req: AuthenticatedRequest, res: Respons
   } catch (error) {
     console.error('Error retrieving vendors dropdown:', error)
     return res.status(500).json(errorResponse('Failed to retrieve vendors'))
+  }
+}
+
+// ==================== ITEM REQUEST HANDLERS ====================
+
+const resolveItemRequestImage = async (rawImage: unknown): Promise<string | null> => {
+  if (!rawImage || typeof rawImage !== 'string') return null
+  const raw = rawImage.trim()
+  if (!raw) return null
+  if (raw.startsWith('data:image')) {
+    try {
+      return (await uploadBase64ToS3(raw, 'assets/item-request-images')) || raw
+    } catch {
+      return raw
+    }
+  }
+  return raw
+}
+
+export const createItemRequest = async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const { name, phone, assetIds, reason, problem, requestImage, image, expectedReturnDate } = req.body
+    const locationId = req.params.locationId
+
+    const trimmedName = name ? String(name).trim() : ''
+    const trimmedPhone = phone ? String(phone).trim() : ''
+
+    if (!trimmedName) {
+      return res.status(400).json(errorResponse('Name is required'))
+    }
+    if (!/^[a-zA-Z\s]+$/.test(trimmedName)) {
+      return res.status(400).json(errorResponse('Name can only contain alphabets'))
+    }
+    if (trimmedPhone && !/^\d{10}$/.test(trimmedPhone)) {
+      return res.status(400).json(errorResponse('Phone must be exactly 10 digits'))
+    }
+    if (!assetIds || !Array.isArray(assetIds) || assetIds.length === 0) {
+      return res.status(400).json(errorResponse('At least one asset must be selected'))
+    }
+    if (!reason) {
+      return res.status(400).json(errorResponse('Reason is required'))
+    }
+
+    if (reason === 'external_use') {
+      const assets = await Asset.findAll({ where: { id: assetIds } })
+      if (assets.length !== assetIds.length) {
+        return res.status(400).json(errorResponse('One or more selected assets were not found'))
+      }
+      const invalid = assets.find((a) => a.status !== 'available' && a.status !== 'external_use')
+      if (invalid) {
+        return res
+          .status(400)
+          .json(
+            errorResponse(
+              `Asset is not eligible for external use. Current status: ${invalid.status}. Only available or external_use assets are allowed.`,
+            ),
+          )
+      }
+    }
+
+    // Generate QR code (same pattern as gns.controller.ts)
+    const qrHash = Math.floor(100000 + Math.random() * 900000).toString() + Date.now().toString().slice(-4)
+
+    let qrCodeImage = await QRCode.toDataURL(qrHash, {
+      width: 400,
+      margin: 4,
+      color: { dark: '#000000', light: '#ffffff' },
+    })
+
+    try {
+      const uploadedQr = await uploadBase64ToS3(qrCodeImage, 'assets/item-request-qrcodes')
+      if (uploadedQr) {
+        qrCodeImage = uploadedQr
+      }
+    } catch (s3Err) {
+      console.warn('QR upload to S3 failed, using base64 fallback:', s3Err)
+    }
+
+    const uploadedRequestImage = await resolveItemRequestImage(requestImage ?? image)
+
+    const parsedExpectedReturnDate =
+      expectedReturnDate && String(expectedReturnDate).trim() ? new Date(String(expectedReturnDate).trim()) : null
+
+    const itemRequest = await AssetItemRequest.create({
+      locId: locationId,
+      name: trimmedName,
+      phone: trimmedPhone,
+      assetIds,
+      reason,
+      problem: problem ? String(problem).trim() : null,
+      qrCode: qrHash,
+      qrCodeImage,
+      requestImage: uploadedRequestImage,
+      expectedReturnDate: parsedExpectedReturnDate,
+      status: 'pending',
+      createdBy: req.user?.id || null,
+    })
+
+    if (reason === 'external_use') {
+      await Asset.update(
+        {
+          status: 'external_use',
+          updatedBy: req.user?.id || null,
+        },
+        {
+          where: {
+            id: assetIds,
+            status: 'available',
+          },
+        },
+      )
+    }
+
+    return res
+      .status(201)
+      .json(successResponse('Item request created successfully', await enrichItemRequest(itemRequest)))
+  } catch (error) {
+    console.error('Error creating item request:', error)
+    return res.status(500).json(errorResponse('Failed to create item request'))
+  }
+}
+
+export const getItemRequests = async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const locationId = req.params.locationId
+    const page = parseInt(req.query.page as string) || 1
+    const limit = parseInt(req.query.limit as string) || 20
+    const offset = (page - 1) * limit
+    const search = typeof req.query.search === 'string' ? req.query.search.trim() : ''
+
+    const where: Record<string, unknown> = { locId: locationId }
+    if (search) {
+      where[Op.or as unknown as string] = [
+        { name: { [Op.like]: `%${search}%` } },
+        { phone: { [Op.like]: `%${search}%` } },
+        { problem: { [Op.like]: `%${search}%` } },
+      ]
+    }
+
+    const { count, rows } = await AssetItemRequest.findAndCountAll({
+      where,
+      order: [['createdAt', 'DESC']],
+      limit,
+      offset,
+    })
+
+    const enriched = await Promise.all(rows.map((row) => enrichItemRequest(row)))
+
+    return res.status(200).json(
+      successResponse('Item requests retrieved successfully', {
+        itemRequests: enriched,
+        pagination: {
+          total: count,
+          page,
+          limit,
+          totalPages: Math.ceil(count / limit),
+        },
+      }),
+    )
+  } catch (error) {
+    console.error('Error retrieving item requests:', error)
+    return res.status(500).json(errorResponse('Failed to retrieve item requests'))
+  }
+}
+
+export const getItemRequestById = async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const { id } = req.params
+
+    const itemRequest = await AssetItemRequest.findByPk(id)
+    if (!itemRequest) {
+      return res.status(404).json(errorResponse('Item request not found'))
+    }
+
+    return res
+      .status(200)
+      .json(successResponse('Item request retrieved successfully', await enrichItemRequest(itemRequest)))
+  } catch (error) {
+    console.error('Error retrieving item request:', error)
+    return res.status(500).json(errorResponse('Failed to retrieve item request'))
+  }
+}
+
+export const updateItemRequest = async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const { id } = req.params
+    const { name, phone, assetIds, reason, problem, requestImage, image, expectedReturnDate } = req.body
+
+    const itemRequest = await AssetItemRequest.findByPk(id)
+    if (!itemRequest) {
+      return res.status(404).json(errorResponse('Item request not found'))
+    }
+
+    const trimmedName = name ? String(name).trim() : ''
+    const trimmedPhone = phone ? String(phone).trim() : ''
+
+    if (!trimmedName) {
+      return res.status(400).json(errorResponse('Name is required'))
+    }
+    if (!/^[a-zA-Z\s]+$/.test(trimmedName)) {
+      return res.status(400).json(errorResponse('Name can only contain alphabets'))
+    }
+    if (trimmedPhone && !/^\d{10}$/.test(trimmedPhone)) {
+      return res.status(400).json(errorResponse('Phone must be exactly 10 digits'))
+    }
+    if (!assetIds || !Array.isArray(assetIds) || assetIds.length === 0) {
+      return res.status(400).json(errorResponse('At least one asset must be selected'))
+    }
+    if (!reason) {
+      return res.status(400).json(errorResponse('Reason is required'))
+    }
+
+    const updates: Record<string, unknown> = {
+      name: trimmedName,
+      phone: trimmedPhone,
+      assetIds,
+      reason,
+      problem: problem ? String(problem).trim() : null,
+      expectedReturnDate:
+        expectedReturnDate === undefined
+          ? itemRequest.expectedReturnDate
+          : expectedReturnDate && String(expectedReturnDate).trim()
+            ? new Date(String(expectedReturnDate).trim())
+            : null,
+      updatedBy: req.user?.id || null,
+    }
+
+    // Only replace image when a new value is provided (null clears; omit keeps existing)
+    if (requestImage !== undefined || image !== undefined) {
+      const nextImage = requestImage !== undefined ? requestImage : image
+      updates.requestImage = nextImage === null || nextImage === '' ? null : await resolveItemRequestImage(nextImage)
+    }
+
+    await itemRequest.update(updates)
+
+    return res
+      .status(200)
+      .json(successResponse('Item request updated successfully', await enrichItemRequest(itemRequest)))
+  } catch (error) {
+    console.error('Error updating item request:', error)
+    return res.status(500).json(errorResponse('Failed to update item request'))
+  }
+}
+
+export const deleteItemRequest = async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const { id } = req.params
+
+    const itemRequest = await AssetItemRequest.findByPk(id)
+    if (!itemRequest) {
+      return res.status(404).json(errorResponse('Item request not found'))
+    }
+
+    await itemRequest.destroy()
+    return res.status(200).json(successResponse('Item request deleted successfully', null))
+  } catch (error) {
+    console.error('Error deleting item request:', error)
+    return res.status(500).json(errorResponse('Failed to delete item request'))
+  }
+}
+
+/** Scan an item-request QR and return full details (mirrors L3 gate scanQr). Does not change status. */
+export const scanItemRequest = async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const { qrCode } = req.body
+    const locationId = req.params.locationId
+
+    if (!qrCode || !String(qrCode).trim()) {
+      return res.status(400).json(errorResponse('QR code is required'))
+    }
+
+    const itemRequest = await findItemRequestByQr(String(qrCode).trim(), locationId)
+    if (!itemRequest) {
+      return res.status(404).json(errorResponse('Invalid or unknown QR code'))
+    }
+
+    return res
+      .status(200)
+      .json(successResponse('Item request retrieved successfully', await enrichItemRequest(itemRequest)))
+  } catch (error) {
+    console.error('Error scanning item request:', error)
+    return res.status(500).json(errorResponse('Failed to scan item request'))
+  }
+}
+
+export const approveItemRequest = async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const { id } = req.params
+    const result = await approveItemRequestById(id, req.user?.id || null)
+
+    if ('error' in result && result.error) {
+      return res.status(result.status).json(errorResponse(result.error))
+    }
+
+    return res.status(200).json(successResponse('Item request approved successfully', result.data))
+  } catch (error) {
+    console.error('Error approving item request:', error)
+    return res.status(500).json(errorResponse('Failed to approve item request'))
+  }
+}
+
+export const declineItemRequest = async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const { id } = req.params
+    const { comment, image } = req.body
+    const result = await declineItemRequestById(id, comment, image, req.user?.id || null)
+
+    if ('error' in result && result.error) {
+      return res.status(result.status).json(errorResponse(result.error))
+    }
+
+    return res.status(200).json(successResponse('Item request declined successfully', result.data))
+  } catch (error) {
+    console.error('Error declining item request:', error)
+    return res.status(500).json(errorResponse('Failed to decline item request'))
   }
 }

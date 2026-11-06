@@ -125,3 +125,13 @@ export const getExpiringCertificationsValidation = [passThrough]
 
 // Bulk Validations
 export const generateTemplateValidation = [passThrough]
+
+// Item Request Validations
+export const createItemRequestValidation = [passThrough]
+export const getItemRequestsValidation = [passThrough]
+export const getItemRequestByIdValidation = [passThrough]
+export const updateItemRequestValidation = [passThrough]
+export const deleteItemRequestValidation = [passThrough]
+export const scanItemRequestValidation = [passThrough]
+export const approveItemRequestValidation = [passThrough]
+export const declineItemRequestValidation = [passThrough]
