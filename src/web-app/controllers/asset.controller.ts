@@ -44,6 +44,31 @@ import { getAssetTimeline } from '../../services/assetTimeline.service.js'
 import type { AssetTimelineQuery } from '../../validations/assetTimeline.validation.js'
 import { AssetStatus, ItemRequestStatus } from '../../enums/asset.enum.js'
 
+const SERIAL_NUMBER_EXISTS_MESSAGE = 'An asset with this serial number already exists'
+
+/** Case-insensitive serial number uniqueness check. Empty values are allowed (not unique). */
+async function assertSerialNumberIsUnique(serialNumber: string | null | undefined, excludeAssetId?: string) {
+  const cleaned = typeof serialNumber === 'string' ? serialNumber.trim() : ''
+  if (!cleaned) return
+
+  const existing = await Asset.findOne({
+    where: {
+      [Op.and]: [
+        Sequelize.where(
+          Sequelize.fn('LOWER', Sequelize.fn('TRIM', Sequelize.col('serialNumber'))),
+          cleaned.toLowerCase(),
+        ),
+        ...(excludeAssetId ? [{ id: { [Op.ne]: excludeAssetId } }] : []),
+      ],
+    },
+    attributes: ['id'],
+  })
+
+  if (existing) {
+    throw new AppError(SERIAL_NUMBER_EXISTS_MESSAGE, 400)
+  }
+}
+
 // ─── From asset.controller.ts ───────────────────────────────────────────
 export const createAsset = async (req: AuthenticatedRequest, res: Response) => {
   try {
@@ -81,6 +106,8 @@ export const createAsset = async (req: AuthenticatedRequest, res: Response) => {
       }
     }
 
+    await assertSerialNumberIsUnique(serialNumber)
+
     // The form posts the warranty document as multipart; keep any URL sent directly.
     let warrantyDocumentUrl: string | null = warrantyDocumentUrlInput || null
     if (req.file) {
@@ -92,7 +119,7 @@ export const createAsset = async (req: AuthenticatedRequest, res: Response) => {
       itemId,
       locationId,
       vendorId: vendorId || null,
-      serialNumber,
+      serialNumber: typeof serialNumber === 'string' ? serialNumber.trim() || null : serialNumber,
       assetTag,
       qrCode,
       purchaseDate,
@@ -380,17 +407,28 @@ export const updateAsset = async (req: AuthenticatedRequest, res: Response) => {
       }
     }
 
+    if (serialNumber !== undefined) {
+      await assertSerialNumberIsUnique(serialNumber, id)
+    }
+
     let warrantyDocumentUrl: string | undefined = warrantyDocumentUrlInput
     if (req.file) {
       const s3Res = await uploadFileToS3(req.file, 'assets/warranty-documents')
       warrantyDocumentUrl = s3Res.location
     }
 
+    const normalizedSerialNumber =
+      serialNumber !== undefined
+        ? typeof serialNumber === 'string'
+          ? serialNumber.trim() || null
+          : serialNumber
+        : undefined
+
     await asset.update({
       ...(itemId && { itemId }),
       ...(locationId && { locationId }),
       ...(vendorId !== undefined && { vendorId: vendorId || null }),
-      ...(serialNumber !== undefined && { serialNumber }),
+      ...(normalizedSerialNumber !== undefined && { serialNumber: normalizedSerialNumber }),
       ...(assetTag !== undefined && { assetTag }),
       ...(qrCode !== undefined && { qrCode }),
       ...(purchaseDate !== undefined && { purchaseDate }),
@@ -571,35 +609,43 @@ export const getAssetStats = async (req: AuthenticatedRequest, res: Response) =>
     const totalAssets = await Asset.count({ where: whereClause })
 
     const availableAssets = await Asset.count({
-      where: { ...whereClause, status: 'available' },
+      where: { ...whereClause, status: AssetStatus.AVAILABLE },
     })
 
     const assignedAssets = await Asset.count({
-      where: { ...whereClause, status: 'assigned' },
+      where: { ...whereClause, status: AssetStatus.ASSIGNED },
     })
 
+    // "In Maintenance" card covers assets under repair/service workflows.
     const maintenanceAssets = await Asset.count({
-      where: { ...whereClause, status: 'maintenance' },
+      where: {
+        ...whereClause,
+        status: { [Op.in]: [AssetStatus.MAINTENANCE, AssetStatus.REPAIR] },
+      },
     })
 
     const retiredAssets = await Asset.count({
-      where: { ...whereClause, status: 'retired' },
+      where: { ...whereClause, status: AssetStatus.RETIRED },
     })
 
+    // "Disposed" card covers permanently out-of-service assets (disposed + scrap).
     const disposedAssets = await Asset.count({
-      where: { ...whereClause, status: 'disposed' },
+      where: {
+        ...whereClause,
+        status: { [Op.in]: [AssetStatus.DISPOSED, AssetStatus.SCRAP] },
+      },
     })
 
     const scrapAssets = await Asset.count({
-      where: { ...whereClause, status: 'scrap' },
+      where: { ...whereClause, status: AssetStatus.SCRAP },
     })
 
     const repairAssets = await Asset.count({
-      where: { ...whereClause, status: 'repair' },
+      where: { ...whereClause, status: AssetStatus.REPAIR },
     })
 
     const externalUseAssets = await Asset.count({
-      where: { ...whereClause, status: 'external_use' },
+      where: { ...whereClause, status: AssetStatus.EXTERNAL_USE },
     })
 
     const assets = await Asset.findAll({
@@ -1459,6 +1505,18 @@ export const processBulkAssetUpload = async (req: AuthenticatedRequest, res: Res
               error: `Invalid warranty end date format '${warrantyEndDateStr}'`,
             })
             continue
+          }
+        }
+
+        if (serialNumber) {
+          try {
+            await assertSerialNumberIsUnique(serialNumber)
+          } catch (dupError) {
+            if (dupError instanceof AppError) {
+              errors.push({ row: rowNum, error: dupError.message })
+              continue
+            }
+            throw dupError
           }
         }
 
@@ -2831,6 +2889,10 @@ export const createServiceLog = async (req: AuthenticatedRequest, res: Response)
   try {
     const { assetId, serviceDate, serviceType, performedBy, vendorId, cost, description, nextServiceDate } = req.body
 
+    if (!performedBy || !String(performedBy).trim()) {
+      throw new AppError('Performed By is required', 400)
+    }
+
     const asset = await Asset.findByPk(assetId)
     if (!asset) {
       throw new AppError('Asset not found', 404)
@@ -2868,7 +2930,7 @@ export const createServiceLog = async (req: AuthenticatedRequest, res: Response)
       assetId,
       serviceDate,
       serviceType,
-      performedBy,
+      performedBy: String(performedBy).trim(),
       vendorId: vendorId || null,
       cost,
       description,

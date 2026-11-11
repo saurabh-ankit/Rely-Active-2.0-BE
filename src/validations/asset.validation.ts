@@ -92,7 +92,18 @@ export const assignAssetValidation = [passThrough]
 export const getAssigneesValidation = [passThrough]
 
 // Maintenance Validations
-export const createServiceLogValidation = [passThrough]
+const validateCreateServiceLog = (req: Request, res: Response, next: NextFunction) => {
+  const { performedBy } = req.body
+
+  if (!performedBy || !String(performedBy).trim()) {
+    return res.status(400).json(errorResponse('Performed By is required'))
+  }
+
+  req.body.performedBy = String(performedBy).trim()
+  return next()
+}
+
+export const createServiceLogValidation = [validateCreateServiceLog]
 export const getServiceLogsValidation = [passThrough]
 export const updateServiceLogValidation = [passThrough]
 export const deleteServiceLogValidation = [passThrough]
