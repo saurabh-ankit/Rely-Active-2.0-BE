@@ -4,6 +4,12 @@ import { Op } from 'sequelize'
 import { uploadBase64ToS3 } from '../../../middlewares/s3/index.js'
 import { approverFromRequest, residentApprover } from '../../../services/gateApproval.service.js'
 import { publishGateApprovalRequestSafe } from '../../../services/notifications/gateNotification.service.js'
+import {
+  approveItemRequestById,
+  declineItemRequestById,
+  enrichItemRequest,
+  findItemRequestByQr,
+} from '../../../services/itemRequestDecision.service.js'
 
 export const createWalkin = async (req: Request, res: Response) => {
   try {
@@ -489,5 +495,82 @@ export const getPropertyUnits = async (req: Request, res: Response) => {
     return res.status(200).json({ success: true, data: blocks })
   } catch (error) {
     return res.status(500).json({ success: false, message: 'Error fetching property units', error })
+  }
+}
+
+/** Scan an asset item-request QR (gate security). Does not change status. */
+export const scanItemRequestQr = async (req: Request, res: Response) => {
+  try {
+    const { qrCode, locId } = req.body
+    if (!qrCode || !String(qrCode).trim()) {
+      return res.status(400).json({ success: false, message: 'QR code is required' })
+    }
+
+    const resolvedLocId =
+      locId || (req as Request & { user?: { defaultLocationId?: string } }).user?.defaultLocationId || null
+
+    const itemRequest = await findItemRequestByQr(String(qrCode).trim(), resolvedLocId)
+    if (!itemRequest) {
+      return res.status(404).json({ success: false, message: 'Invalid or unknown item request QR code' })
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: 'Item request retrieved successfully',
+      data: await enrichItemRequest(itemRequest),
+    })
+  } catch (error) {
+    console.error('Error scanning item request QR:', error)
+    return res.status(500).json({ success: false, message: 'Error scanning item request QR', error })
+  }
+}
+
+export const approveItemRequestScan = async (req: Request, res: Response) => {
+  try {
+    const { itemRequestId } = req.body
+    if (!itemRequestId) {
+      return res.status(400).json({ success: false, message: 'Provide itemRequestId' })
+    }
+
+    const userId = (req as Request & { user?: { id?: string } }).user?.id || null
+    const result = await approveItemRequestById(itemRequestId, userId)
+
+    if ('error' in result && result.error) {
+      return res.status(result.status).json({ success: false, message: result.error })
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: 'Item request approved successfully',
+      data: result.data,
+    })
+  } catch (error) {
+    console.error('Error approving item request:', error)
+    return res.status(500).json({ success: false, message: 'Error approving item request', error })
+  }
+}
+
+export const declineItemRequestScan = async (req: Request, res: Response) => {
+  try {
+    const { itemRequestId, comment, image } = req.body
+    if (!itemRequestId) {
+      return res.status(400).json({ success: false, message: 'Provide itemRequestId' })
+    }
+
+    const userId = (req as Request & { user?: { id?: string } }).user?.id || null
+    const result = await declineItemRequestById(itemRequestId, comment, image, userId)
+
+    if ('error' in result && result.error) {
+      return res.status(result.status).json({ success: false, message: result.error })
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: 'Item request declined successfully',
+      data: result.data,
+    })
+  } catch (error) {
+    console.error('Error declining item request:', error)
+    return res.status(500).json({ success: false, message: 'Error declining item request', error })
   }
 }

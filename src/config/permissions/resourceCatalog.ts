@@ -101,6 +101,7 @@ export const RESOURCE_CATALOG = [
       { key: 'ASSET.ASSIGNMENTS', name: 'Assignments', description: 'Assigning and returning assets' },
       { key: 'ASSET.MAINTENANCE', name: 'Maintenance', description: 'Service logs, warranties, calibrations' },
       { key: 'ASSET.COMPLIANCE', name: 'Compliance', description: 'Certifications, inspections, training' },
+      { key: 'ASSET.ITEM_REQUESTS', name: 'Item Requests', description: 'Asset item requests with QR code' },
     ],
   },
   {

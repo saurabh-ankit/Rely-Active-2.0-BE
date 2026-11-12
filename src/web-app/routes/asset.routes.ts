@@ -3,6 +3,8 @@ import multer from 'multer'
 import { authenticate } from '../../middlewares/authenticate.js'
 import { resourceGuard } from '../../middlewares/authorizeResource.js'
 import { validateRequest } from '../../middlewares/validateRequest.js'
+import { validateQuery } from '../../middlewares/validate/index.js'
+import { assetTimelineQuerySchema } from '../../validations/assetTimeline.validation.js'
 import {
   completeServiceLogValidation,
   createAssetValidation,
@@ -57,6 +59,14 @@ import {
   updateTrainingValidation,
   updateVendorValidation,
   updateWarrantyValidation,
+  createItemRequestValidation,
+  getItemRequestsValidation,
+  getItemRequestByIdValidation,
+  updateItemRequestValidation,
+  deleteItemRequestValidation,
+  scanItemRequestValidation,
+  approveItemRequestValidation,
+  declineItemRequestValidation,
 } from '../../validations/asset.validation.js'
 import {
   completeServiceLog,
@@ -113,6 +123,8 @@ import {
   processBulkAssetUpload,
   returnAsset,
   updateAsset,
+  makeAssetAvailable,
+  getAssetTimelineData,
   updateCalibration,
   updateCategory,
   updateCertification,
@@ -122,6 +134,14 @@ import {
   updateTraining,
   updateVendor,
   updateWarranty,
+  createItemRequest,
+  getItemRequests,
+  getItemRequestById,
+  updateItemRequest,
+  deleteItemRequest,
+  scanItemRequest,
+  approveItemRequest,
+  declineItemRequest,
 } from '../controllers/asset.controller.js'
 
 const router = express.Router({ mergeParams: true })
@@ -146,6 +166,7 @@ router.use(
       { match: '/assignees', keys: 'ASSET.ASSIGNMENTS' },
       { match: '/maintenance', keys: 'ASSET.MAINTENANCE' },
       { match: '/compliance', keys: 'ASSET.COMPLIANCE' },
+      { match: '/item-requests', keys: 'ASSET.ITEM_REQUESTS', readKeys: 'ASSET' },
       { match: '/stats', keys: 'ASSET' },
       { match: '/bulk', keys: 'ASSET.ASSETS', action: 'create' },
       // The asset register itself ('/' and '/:id'); the other tabs read it too.
@@ -375,6 +396,37 @@ router.get(
   getExpiringCertifications,
 )
 
+// ==================== ITEM REQUEST ROUTES ====================
+// Must be registered before GET /:id so "item-requests" is not treated as an asset id
+router.post('/item-requests', authenticate, createItemRequestValidation, validateRequest, createItemRequest)
+
+router.get('/item-requests', authenticate, getItemRequestsValidation, validateRequest, getItemRequests)
+
+// scan / approve / decline must be registered before /item-requests/:id so path segments are not treated as ids
+router.post('/item-requests/scan', authenticate, scanItemRequestValidation, validateRequest, scanItemRequest)
+
+router.post(
+  '/item-requests/:id/approve',
+  authenticate,
+  approveItemRequestValidation,
+  validateRequest,
+  approveItemRequest,
+)
+
+router.post(
+  '/item-requests/:id/decline',
+  authenticate,
+  declineItemRequestValidation,
+  validateRequest,
+  declineItemRequest,
+)
+
+router.get('/item-requests/:id', authenticate, getItemRequestByIdValidation, validateRequest, getItemRequestById)
+
+router.put('/item-requests/:id', authenticate, updateItemRequestValidation, validateRequest, updateItemRequest)
+
+router.delete('/item-requests/:id', authenticate, deleteItemRequestValidation, validateRequest, deleteItemRequest)
+
 // ==================== ASSET ROUTES ====================
 router.get('/stats', authenticate, getAssetStats)
 
@@ -383,6 +435,10 @@ router.post('/', authenticate, upload.single('warrantyDocument'), createAssetVal
 router.get('/', authenticate, getAssetsValidation, validateRequest, getAssets)
 
 router.get('/:id', authenticate, getAssetByIdValidation, validateRequest, getAssetById)
+
+router.get('/:id/timeline', authenticate, validateQuery(assetTimelineQuerySchema), getAssetTimelineData)
+
+router.put('/:id/make-available', authenticate, makeAssetAvailable)
 
 router.put('/:id', authenticate, upload.single('warrantyDocument'), updateAssetValidation, validateRequest, updateAsset)
 
