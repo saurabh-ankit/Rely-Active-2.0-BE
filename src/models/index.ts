@@ -68,6 +68,7 @@ import { FeedbackQuestion } from './feedbackQuestion.model.js'
 import { FeedbackFormRecipient } from './feedbackFormRecipient.model.js'
 import { FeedbackAnswer } from './feedbackAnswer.model.js'
 import { TicketTatHistory } from './ticketTatHistory.model.js'
+import { TicketAutoAssignAttempt, TicketAutoAssignSetting } from './ticketAutoAssign.model.js'
 import { NotificationEvent } from './notificationEvent.model.js'
 import { NotificationInbox } from './notificationInbox.model.js'
 import { NotificationDeviceToken } from './notificationDeviceToken.model.js'
@@ -708,6 +709,14 @@ Ticket.hasMany(TicketTatHistory, { foreignKey: 'ticketId', as: 'tatHistories' })
 TicketTatHistory.belongsTo(Ticket, { foreignKey: 'ticketId', as: 'ticket' })
 TicketTatHistory.belongsTo(User, { foreignKey: 'changedByUserId', as: 'changedByUser' })
 
+// Ticket auto-assign: the toggle per property + department, and the log of offers.
+TicketAutoAssignSetting.belongsTo(Property, { foreignKey: 'locationId', as: 'property' })
+TicketAutoAssignSetting.belongsTo(Department, { foreignKey: 'departmentId', as: 'department' })
+Ticket.hasMany(TicketAutoAssignAttempt, { foreignKey: 'ticketId', as: 'autoAssignAttempts' })
+TicketAutoAssignAttempt.belongsTo(Ticket, { foreignKey: 'ticketId', as: 'ticket' })
+TicketAutoAssignAttempt.belongsTo(User, { foreignKey: 'userId', as: 'user' })
+Ticket.belongsTo(User, { foreignKey: 'offeredToUserId', as: 'offeredToUser' })
+
 Ticket.belongsTo(User, { foreignKey: 'workStartedByUserId', as: 'workStartedByUser' })
 Ticket.belongsTo(User, { foreignKey: 'completedByUserId', as: 'completedByUser' })
 Ticket.belongsTo(User, { foreignKey: 'verifiedByUserId', as: 'verifiedByUser' })
@@ -1166,6 +1175,8 @@ export {
   TicketActivityLog,
   TicketFeedback,
   TicketTatHistory,
+  TicketAutoAssignSetting,
+  TicketAutoAssignAttempt,
   NotificationEvent,
   NotificationInbox,
   NotificationDeviceToken,

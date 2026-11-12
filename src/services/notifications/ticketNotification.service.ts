@@ -1,4 +1,9 @@
-import { NotificationActionType, NotificationModule, NotificationRecipientType } from '../../enums/notification.enum.js'
+import {
+  NotificationActionType,
+  NotificationModule,
+  NotificationRecipientType,
+  type NotificationSeverity,
+} from '../../enums/notification.enum.js'
 import { TicketFeedback, UserLocation, type Ticket } from '../../models/index.js'
 import type { NotificationActorInput } from './notificationAudience.service.js'
 import { createNotificationEvent, type NotificationRecipientInput } from './notification.service.js'
@@ -15,6 +20,9 @@ export interface PublishTicketNotificationInput {
   extraRecipients?: NotificationRecipientInput[]
   /** Only the resident and family member on the ticket (not the staff). */
   householdOnly?: boolean
+  /** Only `extraRecipients`, e.g. an auto-assign offer goes to the one staff member holding it. */
+  recipientsOnly?: boolean
+  severity?: NotificationSeverity
 }
 
 /** Staff mapped to the ticket's property (web app admins and L3), e.g. for a new or escalated ticket. */
@@ -78,7 +86,8 @@ function collectTicketRecipients(ticket: Ticket): NotificationRecipientInput[] {
  */
 export async function publishTicketNotification(input: PublishTicketNotificationInput): Promise<void> {
   const ticket = input.ticket
-  const recipients = [...collectTicketRecipients(ticket), ...(input.extraRecipients || [])].filter(
+  const baseRecipients = input.recipientsOnly ? [] : collectTicketRecipients(ticket)
+  const recipients = [...baseRecipients, ...(input.extraRecipients || [])].filter(
     (recipient) => !input.householdOnly || recipient.recipientType !== NotificationRecipientType.USER,
   )
   if (recipients.length === 0) {
@@ -99,6 +108,7 @@ export async function publishTicketNotification(input: PublishTicketNotification
     actionValue: input.actionValue || `/admin/tickets?ticketId=${ticket.id}`,
     payload: input.payload || null,
     dedupeKey: input.dedupeKey || null,
+    ...(input.severity ? { severity: input.severity } : {}),
     recipients,
     createdBy: input.actor?.actorUserId || null,
   })

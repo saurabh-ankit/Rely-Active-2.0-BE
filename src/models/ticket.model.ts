@@ -3,6 +3,9 @@ import sequelize from '../config/db/index.js'
 import { BaseAttributes, BaseModel, baseModelColumns } from './base.model.js'
 import { TicketCategory, TicketPriority, TicketStatus } from '../enums/ticket.enum.js'
 
+/** Where auto-assign stands for a ticket (null = assigned manually). */
+export type TicketAutoAssignStatus = 'WAITING' | 'OFFERED' | 'ASSIGNED' | 'ESCALATED'
+
 export interface TicketAttributes extends BaseAttributes {
   ticketNumber: string
   title: string
@@ -43,6 +46,8 @@ export interface TicketAttributes extends BaseAttributes {
   escalatedByUserId?: string | null
   escalatedByName?: string | null
   escalationReason?: string | null
+  autoAssignStatus?: TicketAutoAssignStatus | null
+  offeredToUserId?: string | null
 }
 
 export type TicketCreationAttributes = Optional<
@@ -81,6 +86,8 @@ export type TicketCreationAttributes = Optional<
   | 'escalatedByUserId'
   | 'escalatedByName'
   | 'escalationReason'
+  | 'autoAssignStatus'
+  | 'offeredToUserId'
   | 'createdBy'
   | 'updatedBy'
   | 'createdAt'
@@ -128,6 +135,8 @@ export class Ticket extends BaseModel<TicketAttributes, TicketCreationAttributes
   declare escalatedByUserId: string | null
   declare escalatedByName: string | null
   declare escalationReason: string | null
+  declare autoAssignStatus: TicketAutoAssignStatus | null
+  declare offeredToUserId: string | null
 }
 
 Ticket.init(
@@ -292,6 +301,14 @@ Ticket.init(
     },
     escalationReason: {
       type: DataTypes.TEXT,
+      allowNull: true,
+    },
+    autoAssignStatus: {
+      type: DataTypes.ENUM('WAITING', 'OFFERED', 'ASSIGNED', 'ESCALATED'),
+      allowNull: true,
+    },
+    offeredToUserId: {
+      type: DataTypes.UUID,
       allowNull: true,
     },
   },
