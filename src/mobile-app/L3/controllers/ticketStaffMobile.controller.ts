@@ -22,7 +22,10 @@ import { AuthorizationService } from '../../../services/authorization.service.js
 import { resolveNotificationActor } from '../../../services/notifications/notificationAudience.service.js'
 import { buildTatUpdatedNotificationContent } from '../../../services/notifications/ticketNotificationContent.service.js'
 import { publishTicketNotificationSafe } from '../../../services/notifications/ticketNotification.service.js'
+import { acceptOffer, listOffersForStaff, rejectOffer } from '../../../services/ticketAutoAssign.service.js'
 import {
+  type AcceptTicketOfferInput,
+  type RejectTicketOfferInput,
   isCustomTatOption,
   staffTicketListQuerySchema,
   type AddTicketWorkDetailsInput,
@@ -345,6 +348,9 @@ function formatStaffTicket(t: any) {
       option: t.tatOption || null,
       deadline: t.customTatDeadline || null,
     },
+    // Accepted from an auto-assign offer (shown with an "Auto" tag)
+    isAutoAssigned: t.autoAssignStatus === 'ASSIGNED',
+    autoAssignStatus: t.autoAssignStatus || null,
     workStartedAt: t.workStartedAt || null,
     workStartedBy: t.workStartedByUserId
       ? { userId: t.workStartedByUserId, name: getDisplayName(t.workStartedByUser, 'Staff') }
@@ -989,5 +995,67 @@ export async function completeTicket(req: AuthenticatedRequest, res: Response): 
     })
   } catch (err: unknown) {
     sendError(res, err, 'Error completing ticket:')
+  }
+}
+
+// ── Auto-assign offers ──────────────────────────────────────────────────────
+
+/** Any signed-in staff member (offers are only ever made to staff of the ticket's department). */
+function requireStaffUserId(req: AuthenticatedRequest): string {
+  const userId = req.user?.id
+  if (!userId || req.user?.residentId) throw new HttpError(401, 'Staff authentication required')
+  return userId
+}
+
+/**
+ * GET /api/v1/mobile/l3/tickets/offers
+ * Tickets offered to me by auto-assign that are waiting for my answer.
+ */
+export async function getMyTicketOffers(req: AuthenticatedRequest, res: Response): Promise<void> {
+  try {
+    const userId = requireStaffUserId(req)
+    const offers = await listOffersForStaff(userId)
+    res.status(200).json({ success: true, data: offers, serverTime: new Date().toISOString() })
+  } catch (err: unknown) {
+    sendError(res, err, 'Error fetching ticket offers:')
+  }
+}
+
+/**
+ * POST /api/v1/mobile/l3/tickets/:id/offer/accept
+ * Body: { tatOption, customTatDeadline? }. Assigns the ticket to me with that TAT.
+ */
+export async function acceptTicketOffer(req: AuthenticatedRequest, res: Response): Promise<void> {
+  try {
+    const userId = requireStaffUserId(req)
+    const input = req.body as AcceptTicketOfferInput
+    const ticket = await acceptOffer(req.params.id as string, userId, input)
+    res.status(200).json({
+      success: true,
+      message: 'Ticket accepted and assigned to you',
+      data: {
+        id: ticket.id,
+        ticketNumber: ticket.ticketNumber,
+        tatOption: ticket.tatOption,
+        customTatDeadline: ticket.customTatDeadline,
+      },
+    })
+  } catch (err: unknown) {
+    sendError(res, err, 'Error accepting ticket offer:')
+  }
+}
+
+/**
+ * POST /api/v1/mobile/l3/tickets/:id/offer/reject
+ * Body: { reason } (required). The ticket moves to the next staff member.
+ */
+export async function rejectTicketOffer(req: AuthenticatedRequest, res: Response): Promise<void> {
+  try {
+    const userId = requireStaffUserId(req)
+    const { reason } = req.body as RejectTicketOfferInput
+    await rejectOffer(req.params.id as string, userId, reason)
+    res.status(200).json({ success: true, message: 'Ticket rejected' })
+  } catch (err: unknown) {
+    sendError(res, err, 'Error rejecting ticket offer:')
   }
 }

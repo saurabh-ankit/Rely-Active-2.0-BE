@@ -85,3 +85,40 @@ export type StaffTicketListQuery = z.infer<typeof staffTicketListQuerySchema>
 export type UpdateTicketTatInput = z.infer<typeof updateTicketTatSchema>
 export type AddTicketWorkDetailsInput = z.infer<typeof addTicketWorkDetailsSchema>
 export type CompleteTicketInput = z.infer<typeof completeTicketSchema>
+
+/** Accepting an auto-assigned ticket: the staff member sets the TAT. */
+export const acceptTicketOfferSchema = z
+  .object({
+    tatOption: z.preprocess(
+      (value) => (typeof value === 'string' ? value.trim() : value),
+      z
+        .string({ message: 'Choose a TAT' })
+        .refine((value) => ['30 mins', '1-2 hour', '2-5 hours', 'custom'].includes(value.toLowerCase()), {
+          message: 'TAT must be one of: 30 mins, 1-2 hour, 2-5 hours, Custom',
+        }),
+    ),
+    customTatDeadline: z.preprocess(
+      blankToUndefined,
+      z.coerce.date({ message: 'customTatDeadline must be a valid date' }).optional(),
+    ),
+  })
+  .refine((data) => !isCustomTatOption(data.tatOption) || data.customTatDeadline !== undefined, {
+    message: 'customTatDeadline is required when tatOption is "Custom"',
+    path: ['customTatDeadline'],
+  })
+  .refine((data) => !data.customTatDeadline || data.customTatDeadline.getTime() > Date.now(), {
+    message: 'customTatDeadline must be in the future',
+    path: ['customTatDeadline'],
+  })
+
+/** Rejecting an auto-assigned ticket: the reason is required. */
+export const rejectTicketOfferSchema = z.object({
+  reason: z
+    .string({ message: 'A reason is required' })
+    .trim()
+    .min(3, 'Please enter a reason of at least 3 characters')
+    .max(500, 'Reason must be 500 characters or fewer'),
+})
+
+export type AcceptTicketOfferInput = z.infer<typeof acceptTicketOfferSchema>
+export type RejectTicketOfferInput = z.infer<typeof rejectTicketOfferSchema>

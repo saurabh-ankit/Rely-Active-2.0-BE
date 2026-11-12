@@ -4,13 +4,18 @@ import { authenticate } from '../../../middlewares/authenticate.js'
 import { upload } from '../../../middlewares/upload.js'
 import { validateBody, validateParams } from '../../../middlewares/validate/index.js'
 import {
+  acceptTicketOfferSchema,
   addTicketWorkDetailsSchema,
+  rejectTicketOfferSchema,
   completeTicketSchema,
   staffTicketIdParamSchema,
   updateTicketTatSchema,
 } from '../../../validations/ticketStaff.validation.js'
 import {
+  acceptTicketOffer,
   addTicketWorkDetails,
+  getMyTicketOffers,
+  rejectTicketOffer,
   completeTicket,
   getStaffTicketById,
   getStaffTickets,
@@ -52,6 +57,10 @@ const validateTicketId = validateParams(staffTicketIdParamSchema)
 router.use(authenticate)
 
 router.get('/', getStaffTickets)
+// Auto-assign offers (before `/:id`)
+router.get('/offers', getMyTicketOffers)
+router.post('/:id/offer/accept', validateTicketId, validateBody(acceptTicketOfferSchema), acceptTicketOffer)
+router.post('/:id/offer/reject', validateTicketId, validateBody(rejectTicketOfferSchema), rejectTicketOffer)
 router.get('/:id', validateTicketId, getStaffTicketById)
 router.post('/:id/start-work', validateTicketId, startWork)
 router.patch('/:id/tat', validateTicketId, validateBody(updateTicketTatSchema), updateTicketTat)

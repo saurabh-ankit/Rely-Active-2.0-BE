@@ -9,9 +9,12 @@ import {
   getAssignableEmployees,
   getCategoriesAndSubCategories,
   getPropertyUnitsForLocation,
+  getTicketAutoAssignLog,
+  getTicketAutoAssignSettings,
   getTicketById,
   getTickets,
   getTicketStats,
+  updateTicketAutoAssignSettings,
   updateTicketOptions,
   verifyTicket,
 } from '../controllers/ticket.controller.js'
@@ -24,6 +27,8 @@ ticketRouter.get('/categories', getCategoriesAndSubCategories)
 ticketRouter.get('/units', getPropertyUnitsForLocation)
 ticketRouter.get('/assignable-employees', getAssignableEmployees)
 ticketRouter.get('/stats', getTicketStats)
+ticketRouter.get('/auto-assign-settings', getTicketAutoAssignSettings)
+ticketRouter.put('/auto-assign-settings', updateTicketAutoAssignSettings)
 ticketRouter.get('/', getTickets)
 // A voice note (`audio`) plus up to 10 `photos`; `attachment` is the older single-file field.
 ticketRouter.post(
@@ -36,6 +41,7 @@ ticketRouter.post(
   createTicket,
 )
 ticketRouter.get('/:id', getTicketById)
+ticketRouter.get('/:id/auto-assign-log', getTicketAutoAssignLog)
 ticketRouter.patch('/:id/options', updateTicketOptions)
 ticketRouter.patch('/:id/assign', assignTicket)
 ticketRouter.patch('/:id/verify', verifyTicket)

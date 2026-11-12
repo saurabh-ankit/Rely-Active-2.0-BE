@@ -24,6 +24,7 @@ import {
   publishTicketNotificationSafe,
 } from '../../../services/notifications/ticketNotification.service.js'
 import { resolveHousehold } from '../../../utils/household.util.js'
+import { startAutoAssignSafe } from '../../../services/ticketAutoAssign.service.js'
 
 /**
  * Tickets have no `assignedAt` column, so the moment a ticket was handed to a
@@ -650,6 +651,10 @@ export async function createResidentTicket(req: AuthenticatedRequest, res: Respo
       },
       extraRecipients: locationUserRecipients,
     })
+
+    // Auto-assign (when on for this property + department): offer it to the best staff on shift.
+    // Only resident tickets; tickets raised from the dashboard are assigned manually.
+    await startAutoAssignSafe(newTicket.id)
 
     const uNum = resident.unit?.unit_number || 'A-101'
 

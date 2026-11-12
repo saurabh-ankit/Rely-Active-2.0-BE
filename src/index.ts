@@ -7,6 +7,7 @@ import sequelize from './config/db/index.js'
 import { logger } from './config/logger.js'
 import './models/index.js'
 import { startMonthlyPackageResetCron } from './services/cron/monthlyPackageReset.js'
+import { startTicketAutoAssignExpiryCron } from './services/cron/ticketAutoAssignExpiry.js'
 import { syncResourceCatalog } from './services/resourceCatalog.service.js'
 
 const port = Number(process.env.PORT) || 3002
@@ -36,6 +37,8 @@ async function startServer() {
 
     // Start monthly package subscription reset cron job (runs daily at midnight)
     startMonthlyPackageResetCron()
+    // Ticket auto-assign: move unanswered offers on (every minute)
+    startTicketAutoAssignExpiryCron()
   } catch (error) {
     console.error('⚠️ Database connection or sync failed:', error)
     logger.warn({ error }, 'Database connection or sync deferred/failed')

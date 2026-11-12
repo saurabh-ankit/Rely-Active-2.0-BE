@@ -21,15 +21,19 @@ import {
   UserLocation,
   AssetVendor,
   Asset,
-  Shift,
-  ShiftArea,
-  ShiftAssignment,
 } from '../../models/index.js'
 import { NotificationRecipientType } from '../../enums/notification.enum.js'
 import { TicketActivityType, TicketPriority, TicketStatus } from '../../enums/ticket.enum.js'
 import { uploadFileToS3 } from '../../middlewares/s3/index.js'
 import { resolveNotificationActor } from '../../services/notifications/notificationAudience.service.js'
-import { businessClock } from '../../utils/roster.util.js'
+import { getShiftInfoForEmployees } from '../../services/staffShift.service.js'
+import {
+  endAutoAssignOnManualAssignSafe,
+  getAutoAssignLog,
+  listAutoAssignSettings,
+  saveAutoAssignSettings,
+} from '../../services/ticketAutoAssign.service.js'
+import { HttpError } from '../../middlewares/error/http-error.js'
 import { buildTatUpdatedNotificationContent } from '../../services/notifications/ticketNotificationContent.service.js'
 import {
   publishTicketNotificationSafe,
@@ -122,103 +126,6 @@ export async function getPropertyUnitsForLocation(req: Request, res: Response): 
     console.error('Error fetching property units:', error)
     res.status(500).json({ success: false, message: 'Failed to fetch property units' })
   }
-}
-
-interface EmployeeShiftInfo {
-  isOnShift: boolean
-  isScheduledToday: boolean
-  shiftName: string | null
-  startTime: string | null
-  endTime: string | null
-  workingDays: string[]
-  areaName: string | null
-  slotTimeRange: string | null
-  startDate: string | null
-  endDate: string | null
-}
-
-/** `HH:mm` (or `HH:mm:ss`) to minutes since midnight. */
-function timeToMinutes(value?: string | null): number | null {
-  if (!value) return null
-  const [h, m] = value.split(':')
-  const hours = Number(h)
-  const minutes = Number(m || 0)
-  if (Number.isNaN(hours) || Number.isNaN(minutes)) return null
-  return hours * 60 + minutes
-}
-
-/**
- * Today's shift for each employee, so the assign dialog can show who is on duty.
- * Returns a map of employeeId -> shift info (only employees with a shift today).
- */
-async function getShiftInfoForEmployees(
-  employeeIds: string[],
-  locId?: string,
-): Promise<Record<string, EmployeeShiftInfo>> {
-  if (employeeIds.length === 0) return {}
-
-  // Shift days and hours are in Indian time; the server's own clock may be UTC.
-  const { ymd: today, weekday: todayName, minutes: nowMinutes } = businessClock()
-
-  const assignments = (await ShiftAssignment.findAll({
-    where: {
-      employeeId: { [Op.in]: employeeIds },
-      isActive: true,
-      isDeleted: false,
-      startDate: { [Op.lte]: today },
-      endDate: { [Op.gte]: today },
-      ...(locId ? { locationId: locId } : {}),
-    },
-    include: [
-      { model: Shift, as: 'shift', required: false },
-      { model: ShiftArea, as: 'area', required: false, attributes: ['id', 'areaName', 'areaType'] },
-    ],
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  })) as any[]
-
-  const byEmployee: Record<string, EmployeeShiftInfo> = {}
-
-  for (const assignment of assignments) {
-    const workingDays: string[] = Array.isArray(assignment.workingDays) ? assignment.workingDays : []
-    // An empty working-days list means the shift runs every day.
-    const isScheduledToday =
-      workingDays.length === 0 || workingDays.some((day: string) => day.toLowerCase() === todayName)
-
-    const startTime = assignment.shift?.startTime || null
-    const endTime = assignment.shift?.endTime || null
-    const startMinutes = timeToMinutes(startTime)
-    const endMinutes = timeToMinutes(endTime)
-
-    let withinHours = false
-    if (startMinutes !== null && endMinutes !== null) {
-      withinHours =
-        endMinutes >= startMinutes
-          ? nowMinutes >= startMinutes && nowMinutes <= endMinutes
-          : // Overnight shift, e.g. 22:00 - 06:00
-            nowMinutes >= startMinutes || nowMinutes <= endMinutes
-    }
-
-    const info: EmployeeShiftInfo = {
-      isOnShift: isScheduledToday && withinHours,
-      isScheduledToday,
-      shiftName: assignment.shift?.name || null,
-      startTime,
-      endTime,
-      workingDays,
-      areaName: assignment.area?.areaName || assignment.area?.areaType || null,
-      slotTimeRange: assignment.slotTimeRange || null,
-      startDate: assignment.startDate || null,
-      endDate: assignment.endDate || null,
-    }
-
-    // Prefer the shift the employee is actually on right now.
-    const existing = byEmployee[assignment.employeeId]
-    if (!existing || (info.isOnShift && !existing.isOnShift)) {
-      byEmployee[assignment.employeeId] = info
-    }
-  }
-
-  return byEmployee
 }
 
 /**
@@ -486,6 +393,14 @@ export async function getTickets(req: Request, res: Response): Promise<void> {
           include: [{ model: UserDetail, as: 'profile', attributes: ['firstName', 'lastName'] }],
           required: false,
         },
+        // Auto-assign: who is being asked to accept it right now
+        {
+          model: User,
+          as: 'offeredToUser',
+          attributes: ['id', 'email', 'username'],
+          include: [{ model: UserDetail, as: 'profile', attributes: ['firstName', 'lastName'] }],
+          required: false,
+        },
         {
           model: User,
           as: 'raisedByUser',
@@ -608,6 +523,14 @@ export async function getTicketById(req: Request, res: Response): Promise<void> 
         {
           model: User,
           as: 'assignedToUser',
+          attributes: ['id', 'email', 'username'],
+          include: [{ model: UserDetail, as: 'profile', attributes: ['firstName', 'lastName'] }],
+          required: false,
+        },
+        // Auto-assign: who is being asked to accept it right now
+        {
+          model: User,
+          as: 'offeredToUser',
           attributes: ['id', 'email', 'username'],
           include: [{ model: UserDetail, as: 'profile', attributes: ['firstName', 'lastName'] }],
           required: false,
@@ -1041,6 +964,9 @@ export async function assignTicket(req: AuthenticatedRequest, res: Response): Pr
       updatedBy: userId,
     })
 
+    // A manual assign withdraws any open auto-assign offer
+    await endAutoAssignOnManualAssignSafe(ticket.id, userId)
+
     await TicketActivityLog.create({
       ticketId: ticket.id,
       performedByUserId: userId,
@@ -1183,5 +1109,90 @@ export async function deleteTicket(req: AuthenticatedRequest, res: Response): Pr
   } catch (error) {
     console.error('Error deleting ticket:', error)
     res.status(500).json({ success: false, message: 'Failed to delete ticket' })
+  }
+}
+
+// ── Auto-assign ─────────────────────────────────────────────────────────────
+
+function sendAutoAssignError(res: Response, error: unknown, label: string): void {
+  if (error instanceof HttpError) {
+    res.status(error.status).json({ success: false, message: error.message })
+    return
+  }
+  console.error(label, error)
+  res.status(500).json({ success: false, message: 'Something went wrong' })
+}
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+/** The property: the URL path, `?locationId=` / `?locId=`, the body, or the dashboard's `x-location-id` header. */
+function resolveAutoAssignLocationId(req: Request): string {
+  const header = req.headers['x-location-id'] || req.headers['x-property-id']
+  const candidates = [
+    req.params.locationId,
+    req.query.locationId,
+    req.query.locId,
+    req.body?.locationId,
+    Array.isArray(header) ? header[0] : header,
+  ]
+  const locationId = candidates.find((value): value is string => typeof value === 'string' && UUID_RE.test(value))
+  if (!locationId) throw new HttpError(400, 'locationId is required')
+  return locationId
+}
+
+/**
+ * GET /location/:locationId/tickets/auto-assign-settings
+ * The auto-assign toggle and response time for each department of the property.
+ */
+export async function getTicketAutoAssignSettings(req: Request, res: Response): Promise<void> {
+  try {
+    const locationId = resolveAutoAssignLocationId(req)
+    res.status(200).json({ success: true, data: await listAutoAssignSettings(locationId) })
+  } catch (error) {
+    sendAutoAssignError(res, error, 'Error fetching ticket auto-assign settings:')
+  }
+}
+
+/**
+ * PUT /location/:locationId/tickets/auto-assign-settings
+ * Body: { settings: [{ departmentId, isEnabled, responseTimeoutMinutes? }] }
+ */
+export async function updateTicketAutoAssignSettings(req: AuthenticatedRequest, res: Response): Promise<void> {
+  try {
+    const locationId = resolveAutoAssignLocationId(req)
+    const raw = Array.isArray(req.body?.settings) ? req.body.settings : [req.body]
+    const items = (raw as Array<Record<string, unknown>>).map((item) => {
+      const departmentId = String(item?.departmentId || '')
+      if (!UUID_RE.test(departmentId)) throw new HttpError(400, 'Each setting needs a valid departmentId')
+      if (typeof item.isEnabled !== 'boolean') throw new HttpError(400, 'isEnabled must be true or false')
+      let responseTimeoutMinutes: number | undefined
+      if (item.responseTimeoutMinutes !== undefined && item.responseTimeoutMinutes !== null) {
+        responseTimeoutMinutes = Number(item.responseTimeoutMinutes)
+        if (!Number.isInteger(responseTimeoutMinutes) || responseTimeoutMinutes < 1 || responseTimeoutMinutes > 60) {
+          throw new HttpError(400, 'Response time must be a whole number of minutes between 1 and 60')
+        }
+      }
+      return { departmentId, isEnabled: item.isEnabled, responseTimeoutMinutes }
+    })
+    if (items.length === 0) throw new HttpError(400, 'No settings to save')
+
+    const data = await saveAutoAssignSettings(locationId, items, req.user?.id || null)
+    res.status(200).json({ success: true, message: 'Auto-assign settings saved', data })
+  } catch (error) {
+    sendAutoAssignError(res, error, 'Error saving ticket auto-assign settings:')
+  }
+}
+
+/**
+ * GET /tickets/:id/auto-assign-log
+ * Who the ticket was offered to, in order, and what each staff member answered.
+ */
+export async function getTicketAutoAssignLog(req: Request, res: Response): Promise<void> {
+  try {
+    const id = req.params.id as string
+    if (!UUID_RE.test(id)) throw new HttpError(400, 'Valid ticket ID is required')
+    res.status(200).json({ success: true, data: await getAutoAssignLog(id) })
+  } catch (error) {
+    sendAutoAssignError(res, error, 'Error fetching ticket auto-assign log:')
   }
 }
