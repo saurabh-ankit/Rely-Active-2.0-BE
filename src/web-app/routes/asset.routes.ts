@@ -124,6 +124,7 @@ import {
   returnAsset,
   updateAsset,
   makeAssetAvailable,
+  regenerateAssetQr,
   getAssetTimelineData,
   updateCalibration,
   updateCategory,
@@ -250,18 +251,19 @@ router.delete(
   deleteServiceLog,
 )
 
-router.put(
-  '/maintenance/service-logs/:id/complete',
-  authenticate,
-  completeServiceLogValidation,
-  validateRequest,
-  completeServiceLog,
-)
-
 const uploadDoc = upload.fields([
   { name: 'document', maxCount: 1 },
   { name: 'file', maxCount: 1 },
 ])
+
+router.put(
+  '/maintenance/service-logs/:id/complete',
+  authenticate,
+  uploadDoc,
+  completeServiceLogValidation,
+  validateRequest,
+  completeServiceLog,
+)
 
 router.post(
   '/maintenance/warranties',
@@ -439,6 +441,8 @@ router.get('/:id', authenticate, getAssetByIdValidation, validateRequest, getAss
 router.get('/:id/timeline', authenticate, validateQuery(assetTimelineQuerySchema), getAssetTimelineData)
 
 router.put('/:id/make-available', authenticate, makeAssetAvailable)
+
+router.post('/:id/regenerate-qr', authenticate, regenerateAssetQr)
 
 router.put('/:id', authenticate, upload.single('warrantyDocument'), updateAssetValidation, validateRequest, updateAsset)
 

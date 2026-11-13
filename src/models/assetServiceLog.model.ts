@@ -15,6 +15,7 @@ export interface AssetServiceLogAttributes extends BaseAttributes {
   completionStatus: 'pending' | 'completed'
   completedDate?: Date | null
   completionRemarks?: string | null
+  documentUrl?: string | null
 }
 
 export type AssetServiceLogCreationAttributes = Optional<
@@ -27,6 +28,7 @@ export type AssetServiceLogCreationAttributes = Optional<
   | 'nextServiceDate'
   | 'completedDate'
   | 'completionRemarks'
+  | 'documentUrl'
   | 'createdBy'
   | 'updatedBy'
   | 'createdAt'
@@ -48,6 +50,7 @@ export class AssetServiceLog
   declare completionStatus: 'pending' | 'completed'
   declare completedDate: Date | null
   declare completionRemarks: string | null
+  declare documentUrl: string | null
 }
 
 AssetServiceLog.init(
@@ -96,6 +99,10 @@ AssetServiceLog.init(
     },
     completionRemarks: {
       type: DataTypes.TEXT,
+      allowNull: true,
+    },
+    documentUrl: {
+      type: DataTypes.STRING(1000),
       allowNull: true,
     },
   },

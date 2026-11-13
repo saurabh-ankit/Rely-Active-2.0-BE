@@ -186,17 +186,28 @@ async function loadServiceLogs(assetId: string): Promise<PendingEvent[]> {
   const events: PendingEvent[] = []
   for (const row of rows) {
     const type = row.serviceType === 'scrap' ? 'scrap' : 'repair'
-    const startedAt = toIso(row.serviceDate || row.createdAt)
+    // Use createdAt so "in repair / scrap" appears when status actually changed,
+    // not at midnight from the date-only serviceDate field.
+    const startedAt = toIso(row.createdAt || row.serviceDate)
+    const isPending = row.completionStatus !== 'completed'
     if (startedAt) {
       events.push({
         id: `${type}:${row.id}:started`,
         type,
-        title: type === 'scrap' ? 'Marked as scrap' : 'Sent for repair',
+        title:
+          type === 'scrap'
+            ? isPending
+              ? 'Asset marked as scrap'
+              : 'Marked as scrap'
+            : isPending
+              ? 'Asset in repair'
+              : 'Repair started',
         description: joinParts(
           row.performedBy ? `Performed by: ${row.performedBy}` : null,
           row.description || null,
           row.cost != null ? `Cost: ${row.cost}` : null,
-          `Status: ${row.completionStatus}`,
+          row.serviceDate ? `Service date: ${toIso(row.serviceDate).slice(0, 10)}` : null,
+          isPending ? 'Status: in progress' : 'Status: started',
         ),
         at: startedAt,
         createdAt: toIso(row.createdAt) || startedAt,
@@ -207,6 +218,7 @@ async function loadServiceLogs(assetId: string): Promise<PendingEvent[]> {
           completionStatus: row.completionStatus,
           performedBy: row.performedBy,
           cost: row.cost,
+          serviceDate: row.serviceDate,
           phase: 'started',
         },
       })

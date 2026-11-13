@@ -15,7 +15,6 @@ import {
   User,
   UserLocation,
   AssetAssignment,
-  PropertyBlock,
   AssetCategoryLocation,
   AssetComplianceCertification,
   AssetComplianceInspection,
@@ -41,6 +40,9 @@ import {
   findItemRequestByQr,
 } from '../../services/itemRequestDecision.service.js'
 import { getAssetTimeline } from '../../services/assetTimeline.service.js'
+import { generateAssetQrImage, buildAssetPublicUrl } from '../../services/assetQr.service.js'
+import { enrichPublicAssetContext } from '../../services/assetPublicDetails.service.js'
+import { enrichAssignmentsWithAssigneeDetails } from '../../services/assetAssignmentEnrichment.service.js'
 import type { AssetTimelineQuery } from '../../validations/assetTimeline.validation.js'
 import { AssetStatus, ItemRequestStatus } from '../../enums/asset.enum.js'
 
@@ -121,7 +123,7 @@ export const createAsset = async (req: AuthenticatedRequest, res: Response) => {
       vendorId: vendorId || null,
       serialNumber: typeof serialNumber === 'string' ? serialNumber.trim() || null : serialNumber,
       assetTag,
-      qrCode,
+      qrCode: qrCode || null,
       purchaseDate,
       purchasePrice,
       currentValue: currentValue || purchasePrice,
@@ -131,6 +133,12 @@ export const createAsset = async (req: AuthenticatedRequest, res: Response) => {
       status,
       notes,
       createdBy: req.user?.id || null,
+    })
+
+    const qrPayload = await generateAssetQrImage(asset.id)
+    await asset.update({
+      qrCode: qrCode || qrPayload.qrCode,
+      qrCodeImage: qrPayload.qrCodeImage,
     })
 
     const createdAsset = await Asset.findByPk(asset.id, {
@@ -167,6 +175,144 @@ export const createAsset = async (req: AuthenticatedRequest, res: Response) => {
     }
     console.error('Error creating asset:', error)
     return res.status(500).json(errorResponse('Failed to create asset'))
+  }
+}
+
+const assetPublicIncludes: Includeable[] = [
+  {
+    model: AssetItem,
+    as: 'item',
+    attributes: ['id', 'name', 'model', 'manufacturer'],
+    include: [
+      {
+        model: AssetCategory,
+        as: 'category',
+        attributes: ['id', 'name'],
+      },
+    ],
+  },
+  {
+    model: Property,
+    as: 'location',
+    attributes: ['id', 'property_name'],
+  },
+  {
+    model: AssetVendor,
+    as: 'vendor',
+    attributes: ['id', 'name', 'contactPerson', 'email', 'phone'],
+  },
+]
+
+type PublicAssetWithIncludes = Asset & {
+  item?: (AssetItem & { category?: AssetCategory | null }) | null
+  location?: Property | null
+  vendor?: AssetVendor | null
+}
+
+/** Sanitized asset payload for phone-camera / public QR scan page. */
+function toPublicAssetDetails(asset: Asset) {
+  const loaded = asset as PublicAssetWithIncludes
+  const item = loaded.item
+  const category = item?.category
+  const location = loaded.location
+  const vendor = loaded.vendor
+
+  return {
+    id: asset.id,
+    serialNumber: asset.serialNumber,
+    assetTag: asset.assetTag,
+    qrCodeImage: asset.qrCodeImage,
+    condition: asset.condition,
+    status: asset.status,
+    purchaseDate: asset.purchaseDate,
+    purchasePrice: asset.purchasePrice,
+    warrantyEndDate: asset.warrantyEndDate,
+    notes: asset.notes,
+    item: item
+      ? {
+          name: item.name,
+          model: item.model,
+          manufacturer: item.manufacturer,
+          category: category ? { name: category.name } : null,
+        }
+      : null,
+    location: location ? { name: location.property_name } : null,
+    vendor: vendor
+      ? {
+          name: vendor.name,
+          contactPerson: vendor.contactPerson,
+          email: vendor.email,
+          phone: vendor.phone,
+        }
+      : null,
+  }
+}
+
+/** Public (unauthenticated) asset details for QR scan pages. */
+export const getPublicAssetById = async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const assetId = req.params.assetId as string
+    if (!assetId) {
+      return res.status(400).json(errorResponse('Asset id is required'))
+    }
+
+    const asset = await Asset.findByPk(assetId, { include: assetPublicIncludes })
+    if (!asset) {
+      return res.status(404).json(errorResponse('Asset not found'))
+    }
+
+    const context = await enrichPublicAssetContext(asset.id, asset.status)
+
+    return res.status(200).json(
+      successResponse('Asset retrieved successfully', {
+        ...toPublicAssetDetails(asset),
+        ...(context.assignment ? { assignment: context.assignment } : {}),
+        ...(context.externalUse ? { externalUse: context.externalUse } : {}),
+      }),
+    )
+  } catch (error) {
+    console.error('Error fetching public asset:', error)
+    return res.status(500).json(errorResponse('Failed to fetch asset'))
+  }
+}
+
+/** Regenerate QR image for an asset (authenticated). */
+export const regenerateAssetQr = async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const id = req.params.id as string
+    const locationId = (req.params.locationId || req.body.locationId) as string | undefined
+
+    const asset = await Asset.findByPk(id)
+    if (!asset) {
+      return res.status(404).json(errorResponse('Asset not found'))
+    }
+
+    if (locationId && asset.locationId !== locationId) {
+      return res.status(404).json(errorResponse('Asset not found'))
+    }
+
+    const qrPayload = await generateAssetQrImage(asset.id)
+    if (!qrPayload.publicUrl) {
+      return res.status(500).json(errorResponse('PUBLIC_APP_URL is not configured; cannot generate scannable QR'))
+    }
+
+    await asset.update({
+      qrCode: qrPayload.qrCode,
+      qrCodeImage: qrPayload.qrCodeImage,
+      updatedBy: req.user?.id || null,
+    })
+
+    return res.status(200).json(
+      successResponse('Asset QR regenerated successfully', {
+        id: asset.id,
+        qrCode: asset.qrCode,
+        qrCodeImage: asset.qrCodeImage,
+        publicUrl: buildAssetPublicUrl(asset.id),
+      }),
+    )
+  } catch (error) {
+    console.error('Error regenerating asset QR:', error)
+    return res.status(500).json(errorResponse('Failed to regenerate asset QR'))
   }
 }
 
@@ -861,99 +1007,6 @@ export const getBedsForRoom = async (_req: AuthenticatedRequest, res: Response) 
 }
 
 // ─── From assignment.controller.ts ───────────────────────────────────────────
-const enrichAssignmentsWithAssigneeDetails = async (assignments: unknown[]) => {
-  const enrichedAssignments = await Promise.all(
-    assignments.map(async (assignment) => {
-      const itemObj = assignment as Record<string, unknown>
-      const assignmentData = (typeof itemObj?.toJSON === 'function' ? itemObj.toJSON() : itemObj) as Record<
-        string,
-        unknown
-      >
-      let assigneeDetails: Record<string, unknown> | null = null
-
-      if (assignmentData.assigneeType === 'employee') {
-        const user = await User.findOne({
-          where: { id: assignmentData.assigneeId as string },
-          attributes: ['id', 'username', 'email', 'phone'],
-        })
-
-        if (user) {
-          assigneeDetails = {
-            id: user.id,
-            name: user.username || user.email || 'Unknown Employee',
-            email: user.email || undefined,
-            phone: user.phone || undefined,
-          }
-        }
-      } else if (assignmentData.assigneeType === 'resident') {
-        const resident = await Resident.findByPk(assignmentData.assigneeId as string, {
-          include: [
-            {
-              model: PropertyUnit,
-              as: 'unit',
-              include: [{ model: PropertyFloor, as: 'floor' }],
-            },
-            { model: Property, as: 'property' },
-          ],
-        })
-
-        if (resident) {
-          const rData = resident.toJSON() as unknown as Record<string, unknown>
-          const name = `${rData.firstName || ''} ${rData.lastName || ''}`.trim()
-          const unit = rData.unit as Record<string, unknown> | undefined
-          const floor = unit?.floor as Record<string, unknown> | undefined
-          const unitNum = unit?.unit_number ? `Unit ${unit.unit_number}` : ''
-          const floorLabel = (floor?.floor_name as string) || (floor?.floor_number ? `Floor ${floor.floor_number}` : '')
-          const flatInfo = [floorLabel, unitNum].filter(Boolean).join(' — ')
-
-          assigneeDetails = {
-            id: resident.id,
-            name: name || 'Unknown Resident',
-            residentType: rData.residentType,
-            flatInfo,
-            email: rData.email || undefined,
-            phone: rData.phone || undefined,
-          }
-        }
-      } else if (assignmentData.assigneeType === 'flat') {
-        const unit = await PropertyUnit.findByPk(assignmentData.assigneeId as string, {
-          include: [
-            {
-              model: PropertyFloor,
-              as: 'floor',
-              include: [{ model: PropertyBlock, as: 'block' }],
-            },
-          ],
-        })
-
-        if (unit) {
-          const uData = unit.toJSON() as unknown as Record<string, unknown>
-          const floor = uData.floor as Record<string, unknown> | undefined
-          const block = floor?.block as Record<string, unknown> | undefined
-          const unitNum = uData.unit_number ? `Unit ${uData.unit_number}` : ''
-          const floorLabel = (floor?.floor_name as string) || (floor?.floor_number ? `Floor ${floor.floor_number}` : '')
-          const blockLabel = (block?.block_name as string) || ''
-          const flatName = [blockLabel, floorLabel, unitNum].filter(Boolean).join(' • ')
-
-          assigneeDetails = {
-            id: unit.id,
-            name: flatName || `Unit ${uData.unit_number}`,
-            unitNumber: uData.unit_number,
-            floorName: floorLabel,
-            blockName: blockLabel,
-          }
-        }
-      }
-
-      return {
-        ...assignmentData,
-        assigneeDetails,
-      }
-    }),
-  )
-
-  return enrichedAssignments
-}
 
 export const createAssignment = async (req: AuthenticatedRequest, res: Response) => {
   try {
@@ -2898,6 +2951,8 @@ export const createServiceLog = async (req: AuthenticatedRequest, res: Response)
       throw new AppError('Asset not found', 404)
     }
 
+    const statusBeforeService = asset.status
+
     if (asset.status !== 'available') {
       throw new AppError(
         `Cannot create a service log while asset status is '${asset.status}'. Asset must be available.`,
@@ -2941,10 +2996,26 @@ export const createServiceLog = async (req: AuthenticatedRequest, res: Response)
 
     const locksAssetStatus = serviceType === 'scrap' || serviceType === 'repair'
     if (locksAssetStatus) {
+      const fromStatus = statusBeforeService
+      const toStatus = serviceType === 'scrap' ? AssetStatus.SCRAP : AssetStatus.REPAIR
+      const actorId = req.user?.id || null
+
       await asset.update({
-        status: serviceType === 'scrap' ? AssetStatus.SCRAP : AssetStatus.REPAIR,
-        updatedBy: req.user?.id || null,
+        status: toStatus,
+        updatedBy: actorId,
       })
+
+      if (fromStatus !== toStatus) {
+        await AssetStatusLog.create({
+          assetId: asset.id,
+          fromStatus,
+          toStatus,
+          note:
+            serviceType === 'scrap' ? 'Asset marked as scrap via service log' : 'Asset sent for repair via service log',
+          createdBy: actorId,
+          updatedBy: actorId,
+        })
+      }
     }
 
     const createdLog = await AssetServiceLog.findByPk(serviceLog.id, {
@@ -3001,7 +3072,14 @@ export const getServiceLogs = async (req: AuthenticatedRequest, res: Response) =
         {
           model: AssetItem,
           as: 'item',
-          attributes: ['id', 'name', 'model'],
+          attributes: ['id', 'name', 'model', 'categoryId'],
+          include: [
+            {
+              model: AssetCategory,
+              as: 'category',
+              attributes: ['id', 'name'],
+            },
+          ],
         },
         {
           model: Property,
@@ -3023,6 +3101,11 @@ export const getServiceLogs = async (req: AuthenticatedRequest, res: Response) =
           model: AssetVendor,
           as: 'vendor',
           attributes: ['id', 'name'],
+        },
+        {
+          model: AssetItemRequest,
+          as: 'gatePass',
+          required: false,
         },
       ],
       limit: Number(limit),
@@ -3124,17 +3207,44 @@ export const deleteServiceLog = async (req: AuthenticatedRequest, res: Response)
 export const completeServiceLog = async (req: AuthenticatedRequest, res: Response) => {
   try {
     const id = req.params.id as string
-    const { completionRemarks } = req.body
+    const { completionRemarks, cost, nextServiceDate, documentUrl } = req.body
+
+    if (!completionRemarks || !String(completionRemarks).trim()) {
+      throw new AppError('Completion remarks are required', 400)
+    }
 
     const serviceLog = await AssetServiceLog.findByPk(id)
     if (!serviceLog) {
       throw new AppError('Service log not found', 404)
     }
 
+    const files = req.files as { [fieldname: string]: Express.Multer.File[] } | undefined
+    const uploadedFile = req.file || files?.document?.[0] || files?.file?.[0]
+
+    let finalDocUrl: string | null = documentUrl || null
+    if (uploadedFile) {
+      const s3Res = await uploadFileToS3(uploadedFile, 'assets/service-logs')
+      finalDocUrl = s3Res.location
+    } else if (finalDocUrl) {
+      finalDocUrl = await uploadBase64ToS3(finalDocUrl, 'assets/service-logs')
+    }
+
+    const hasCostField = cost !== undefined
+    const parsedCost = cost === null || cost === '' ? null : cost === undefined ? undefined : Number(cost)
+
+    if (parsedCost !== undefined && parsedCost !== null && Number.isNaN(parsedCost)) {
+      throw new AppError('Service cost must be a valid number', 400)
+    }
+
     await serviceLog.update({
       completionStatus: 'completed',
       completedDate: new Date(),
-      completionRemarks,
+      completionRemarks: String(completionRemarks).trim(),
+      ...(hasCostField && { cost: parsedCost as number | null }),
+      ...(nextServiceDate !== undefined && {
+        nextServiceDate: nextServiceDate || null,
+      }),
+      ...(finalDocUrl !== null && { documentUrl: finalDocUrl }),
       updatedBy: req.user?.id || null,
     })
 
@@ -3149,7 +3259,35 @@ export const completeServiceLog = async (req: AuthenticatedRequest, res: Respons
       }
     }
 
-    return res.status(200).json(successResponse('Service log completed successfully', serviceLog))
+    const completedLog = await AssetServiceLog.findByPk(id, {
+      include: [
+        {
+          model: Asset,
+          as: 'asset',
+          include: [
+            {
+              model: AssetItem,
+              as: 'item',
+              attributes: ['id', 'name', 'model', 'categoryId'],
+              include: [
+                {
+                  model: AssetCategory,
+                  as: 'category',
+                  attributes: ['id', 'name'],
+                },
+              ],
+            },
+          ],
+        },
+        {
+          model: AssetVendor,
+          as: 'vendor',
+          attributes: ['id', 'name'],
+        },
+      ],
+    })
+
+    return res.status(200).json(successResponse('Service log completed successfully', completedLog))
   } catch (error) {
     if (error instanceof AppError) {
       return res.status(error.statusCode).json(errorResponse(error.message))
@@ -4156,11 +4294,12 @@ const resolveItemRequestImage = async (rawImage: unknown): Promise<string | null
 
 export const createItemRequest = async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const { name, phone, assetIds, reason, problem, requestImage, image, expectedReturnDate } = req.body
+    const { name, phone, assetIds, reason, problem, requestImage, image, expectedReturnDate, serviceLogId } = req.body
     const locationId = req.params.locationId as string
 
     const trimmedName = name ? String(name).trim() : ''
     const trimmedPhone = phone ? String(phone).trim() : ''
+    const linkedServiceLogId = serviceLogId && String(serviceLogId).trim() ? String(serviceLogId).trim() : null
 
     if (!trimmedName) {
       return res.status(400).json(errorResponse('Name is required'))
@@ -4176,6 +4315,20 @@ export const createItemRequest = async (req: AuthenticatedRequest, res: Response
     }
     if (!reason) {
       return res.status(400).json(errorResponse('Reason is required'))
+    }
+
+    if (linkedServiceLogId) {
+      const serviceLog = await AssetServiceLog.findByPk(linkedServiceLogId)
+      if (!serviceLog) {
+        return res.status(404).json(errorResponse('Service log not found'))
+      }
+
+      const existingGatePass = await AssetItemRequest.findOne({
+        where: { serviceLogId: linkedServiceLogId },
+      })
+      if (existingGatePass) {
+        return res.status(400).json(errorResponse('A gate pass has already been generated for this service log'))
+      }
     }
 
     if (reason === 'external_use') {
@@ -4229,6 +4382,7 @@ export const createItemRequest = async (req: AuthenticatedRequest, res: Response
       qrCodeImage,
       requestImage: uploadedRequestImage,
       expectedReturnDate: parsedExpectedReturnDate,
+      serviceLogId: linkedServiceLogId,
       status: ItemRequestStatus.PENDING,
       createdBy: req.user?.id || null,
     })

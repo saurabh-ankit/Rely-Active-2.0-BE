@@ -17,6 +17,7 @@ export interface AssetItemRequestAttributes extends BaseAttributes {
   declineComment?: string | null
   declineImage?: string | null
   expectedReturnDate?: Date | string | null
+  serviceLogId?: string | null
 }
 
 export type AssetItemRequestCreationAttributes = Optional<
@@ -30,6 +31,7 @@ export type AssetItemRequestCreationAttributes = Optional<
   | 'declineComment'
   | 'declineImage'
   | 'expectedReturnDate'
+  | 'serviceLogId'
   | 'createdBy'
   | 'updatedBy'
   | 'createdAt'
@@ -53,6 +55,7 @@ export class AssetItemRequest
   declare declineComment: string | null
   declare declineImage: string | null
   declare expectedReturnDate: Date | null
+  declare serviceLogId: string | null
 }
 
 AssetItemRequest.init(
@@ -110,6 +113,10 @@ AssetItemRequest.init(
     },
     expectedReturnDate: {
       type: DataTypes.DATE,
+      allowNull: true,
+    },
+    serviceLogId: {
+      type: DataTypes.UUID,
       allowNull: true,
     },
   },

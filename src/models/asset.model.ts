@@ -10,6 +10,7 @@ export interface AssetAttributes extends BaseAttributes {
   serialNumber?: string | null
   assetTag?: string | null
   qrCode?: string | null
+  qrCodeImage?: string | null
   purchaseDate?: Date | null
   purchasePrice?: number | null
   currentValue?: number | null
@@ -27,6 +28,7 @@ export type AssetCreationAttributes = Optional<
   | 'serialNumber'
   | 'assetTag'
   | 'qrCode'
+  | 'qrCodeImage'
   | 'purchaseDate'
   | 'purchasePrice'
   | 'currentValue'
@@ -46,6 +48,7 @@ export class Asset extends BaseModel<AssetAttributes, AssetCreationAttributes> i
   declare serialNumber: string | null
   declare assetTag: string | null
   declare qrCode: string | null
+  declare qrCodeImage: string | null
   declare purchaseDate: Date | null
   declare purchasePrice: number | null
   declare currentValue: number | null
@@ -81,6 +84,10 @@ Asset.init(
     },
     qrCode: {
       type: DataTypes.STRING(255),
+      allowNull: true,
+    },
+    qrCodeImage: {
+      type: DataTypes.TEXT('long'),
       allowNull: true,
     },
     purchaseDate: {

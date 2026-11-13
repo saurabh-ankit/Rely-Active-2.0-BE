@@ -14,6 +14,7 @@ import labTestSettingRouter from './labTestSetting.routes.js'
 import resourceRouter from './resource.routes.js'
 import residentRouter from './resident.routes.js'
 import assetRouter from './asset.routes.js'
+import publicRouter from './public.routes.js'
 import fnbRouter from './fnb.routes.js'
 import ticketRouter from './ticket.routes.js'
 import gateRouter from './gate.routes.js'
@@ -59,6 +60,7 @@ apiRouter.use('/properties', propertyRouter)
 apiRouter.use('/residents', residentRouter)
 apiRouter.use('/inventory', inventoryRouter)
 apiRouter.use('/center-inventory', centerInventoryRouter)
+apiRouter.use('/public', publicRouter)
 apiRouter.use('/assets', assetRouter)
 apiRouter.use('/location/:locationId/assets', assetRouter)
 apiRouter.use('/tickets', ticketRouter)

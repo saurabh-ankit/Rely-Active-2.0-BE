@@ -573,6 +573,8 @@ Asset.hasMany(AssetServiceLog, { foreignKey: 'assetId', as: 'serviceLogs' })
 AssetServiceLog.belongsTo(Asset, { foreignKey: 'assetId', as: 'asset' })
 AssetServiceLog.belongsTo(AssetVendor, { foreignKey: 'vendorId', as: 'vendor' })
 // Note: performedByUserId column does not exist in DB; performedBy is a plain text field
+AssetServiceLog.hasOne(AssetItemRequest, { foreignKey: 'serviceLogId', as: 'gatePass' })
+AssetItemRequest.belongsTo(AssetServiceLog, { foreignKey: 'serviceLogId', as: 'serviceLog' })
 
 Asset.hasMany(AssetStatusLog, { foreignKey: 'assetId', as: 'statusLogs' })
 AssetStatusLog.belongsTo(Asset, { foreignKey: 'assetId', as: 'asset' })
