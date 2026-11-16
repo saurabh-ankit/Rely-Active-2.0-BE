@@ -782,6 +782,7 @@ export async function updateTicketOptions(req: AuthenticatedRequest, res: Respon
       departmentId,
       jobCategoryId,
       tatOption,
+      customTatDeadline,
       priority,
       status,
       invoiceAmount,
@@ -836,7 +837,26 @@ export async function updateTicketOptions(req: AuthenticatedRequest, res: Respon
 
     if (categoryId !== undefined) updatePayload.categoryId = categoryId
     if (subCategoryId !== undefined) updatePayload.subCategoryId = subCategoryId
-    if (tatOption !== undefined) updatePayload.tatOption = tatOption
+    const previousTatDeadline = ticket.customTatDeadline || null
+    if (tatOption !== undefined) {
+      updatePayload.tatOption = tatOption
+      if (String(tatOption).toLowerCase() === 'custom') {
+        // A custom TAT needs its own deadline, set in the future.
+        const deadline = customTatDeadline ? new Date(customTatDeadline) : null
+        if (!deadline || Number.isNaN(deadline.getTime())) {
+          res.status(400).json({ success: false, message: 'Pick a date and time for the custom TAT' })
+          return
+        }
+        if (deadline.getTime() <= Date.now()) {
+          res.status(400).json({ success: false, message: 'The custom TAT must be in the future' })
+          return
+        }
+        updatePayload.customTatDeadline = deadline
+      } else {
+        // A preset option clears any old custom deadline.
+        updatePayload.customTatDeadline = null
+      }
+    }
     if (priority !== undefined) updatePayload.priority = priority
     if (status !== undefined) updatePayload.status = status
     if (invoiceAmount !== undefined) updatePayload.invoiceAmount = Number(invoiceAmount) || null
@@ -855,7 +875,11 @@ export async function updateTicketOptions(req: AuthenticatedRequest, res: Respon
       createdBy: userId,
     })
 
-    const tatChanged = tatOption !== undefined && tatOption !== previousTatOption
+    const tatChanged =
+      tatOption !== undefined &&
+      (tatOption !== previousTatOption ||
+        (ticket.customTatDeadline?.getTime() ?? null) !==
+          (previousTatDeadline ? new Date(previousTatDeadline).getTime() : null))
     const statusChanged = status !== undefined && status !== previousStatus
 
     const tatNotification = tatChanged
@@ -863,8 +887,8 @@ export async function updateTicketOptions(req: AuthenticatedRequest, res: Respon
           ticketTitle: ticket.title,
           ticketNumber: ticket.ticketNumber,
           updatedByName: userName,
-          previousTat: { option: previousTatOption, deadline: null },
-          updatedTat: { option: ticket.tatOption, deadline: null },
+          previousTat: { option: previousTatOption, deadline: previousTatDeadline },
+          updatedTat: { option: ticket.tatOption, deadline: ticket.customTatDeadline || null },
         })
       : null
 
