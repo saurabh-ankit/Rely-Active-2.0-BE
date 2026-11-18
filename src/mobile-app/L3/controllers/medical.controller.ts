@@ -61,11 +61,8 @@ export function getTodayDateStr(): string {
 export async function isAdminOrSuperAdmin(authReq: AuthenticatedRequest): Promise<boolean> {
   if (!authReq.user?.id) return false
 
-  // 1. Check user email/username if available
-  const email = (authReq.user.email || '').toLowerCase()
-  if (email === 'superadmin@rely.com' || email.startsWith('superadmin') || email.startsWith('admin@')) {
-    return true
-  }
+  // Roles decide access, never the email: super admins can now be created with any email, and an
+  // email such as admin@... or superadmin2@... must not grant admin rights by itself.
 
   // 2. Check roles array from JWT token
   const tokenRoles = (authReq.user.roles || []).map((r) => String(r).toUpperCase().trim())

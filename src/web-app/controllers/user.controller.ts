@@ -23,6 +23,14 @@ import {
   syncDoctorSpecializations,
 } from '../../services/doctorSpecialization.service.js'
 import { HttpError } from '../../middlewares/error/http-error.js'
+import {
+  assertCallerIsSuperAdmin,
+  assertCanDemoteSuperAdmin,
+  isSeededSuperAdmin,
+  isSuperAdminRoleCode,
+  isUserSuperAdmin,
+  syncSuperAdminLocations,
+} from '../../services/superAdmin.service.js'
 import type { WeekDay } from '../../enums/roster.enum.js'
 
 function sanitizeUuid(id: string | null | undefined): string | null {
@@ -338,23 +346,28 @@ export async function getAllUsers(req: Request, res: Response): Promise<void> {
     })) as Array<User & { userLocations?: Array<UserLocation & { role?: Role }> }>
 
     const superAdminRole = await Role.findOne({ where: { code: 'SUPER_ADMIN' } })
+    const isSuperAdminUser = (u: (typeof users)[number]) =>
+      isSeededSuperAdmin(u) ||
+      !!u.userLocations?.some((ul) => ul.roleId === superAdminRole?.id || ul.role?.code === 'SUPER_ADMIN')
 
-    const nonSuperAdminUsers = users.filter((u) => {
-      if (u.username === 'superadmin') return false
-      const hasSuperAdminRole = u.userLocations?.some(
-        (ul) => ul.roleId === superAdminRole?.id || ul.role?.code === 'SUPER_ADMIN',
-      )
-      if (hasSuperAdminRole) return false
-      return true
-    })
+    // Super admins are listed only in the global settings employee list (global query asking for them),
+    // and only to other super admins. Every property-level list, roster and picker leaves them out.
+    const includeSuperAdmins =
+      isGlobalQuery &&
+      req.query.includeSuperAdmins === 'true' &&
+      (await isUserSuperAdmin((req as AuthenticatedRequest).user?.id))
 
-    const specializationsByUser = await getSpecializationsForUsers(nonSuperAdminUsers.map((u) => u.id))
+    const listedUsers = includeSuperAdmins ? users : users.filter((u) => !isSuperAdminUser(u))
+
+    const specializationsByUser = await getSpecializationsForUsers(listedUsers.map((u) => u.id))
 
     res.status(200).json({
       success: true,
-      data: nonSuperAdminUsers.map((u) => ({
+      data: listedUsers.map((u) => ({
         ...formatUserResponse(u),
         specializations: specializationsByUser[u.id] || [],
+        isSuperAdmin: isSuperAdminUser(u),
+        isSeededSuperAdmin: isSeededSuperAdmin(u),
       })),
     })
   } catch (err: unknown) {
@@ -434,6 +447,19 @@ export async function createUser(req: AuthenticatedRequest, res: Response): Prom
     const uName = username ? username.trim() : null
     const jCategoryId = jobCategoryId || job_category_id || null
     const mgrId = managerId || manager_id || null
+    const isSuperAdminTarget = isSuperAdminRoleCode(roleCode)
+    const operatingUserIdForGuard = (req as AuthenticatedRequest).user?.id || null
+
+    if (isSuperAdminTarget) {
+      await assertCallerIsSuperAdmin(operatingUserIdForGuard)
+      if (!password || (!uName && !email)) {
+        res.status(400).json({
+          success: false,
+          message: 'A Super Admin needs a username (or email) and a password to log in.',
+        })
+        return
+      }
+    }
 
     if (!fName || (!uName && !email && !phone)) {
       res.status(400).json({
@@ -560,6 +586,12 @@ export async function createUser(req: AuthenticatedRequest, res: Response): Prom
       pIdsToCreate = [defaultLocationId]
     }
 
+    if (isSuperAdminTarget) {
+      // Super admins get every property; syncSuperAdminLocations below writes the final rows.
+      const allProperties = await Property.findAll({ where: { isDeleted: false }, attributes: ['id'] })
+      pIdsToCreate = allProperties.map((p) => p.id)
+    }
+
     if (pIdsToCreate.length === 0) {
       res.status(400).json({ success: false, message: 'At least one property location is required' })
       return
@@ -618,6 +650,10 @@ export async function createUser(req: AuthenticatedRequest, res: Response): Prom
           updatedBy: operatingUserId,
         })
       }
+    }
+
+    if (isSuperAdminTarget) {
+      await syncSuperAdminLocations(user.id, operatingUserId)
     }
 
     // Doctors can carry specializations in the same request as the user.
@@ -758,6 +794,14 @@ export async function updateUserProperties(req: AuthenticatedRequest, res: Respo
     const { propertyIds, defaultLocationId, locIds } = req.body
     const operatingUserId = (req as AuthenticatedRequest).user?.id || null
 
+    // Super admins always hold every property; the list cannot be narrowed.
+    if (await isUserSuperAdmin(userId)) {
+      await assertCallerIsSuperAdmin(operatingUserId)
+      await syncSuperAdminLocations(userId, operatingUserId)
+      res.status(200).json({ success: true, message: 'Super Admins always have access to every property' })
+      return
+    }
+
     const rawPIds = propertyIds !== undefined ? propertyIds : locIds !== undefined ? locIds : undefined
     let pIdsArray: string[] = []
     if (Array.isArray(rawPIds)) {
@@ -827,6 +871,10 @@ export async function updateUserProperties(req: AuthenticatedRequest, res: Respo
       data: formatUserResponse(updatedUser),
     })
   } catch (err: unknown) {
+    if (err instanceof HttpError) {
+      res.status(err.status).json({ success: false, message: err.message })
+      return
+    }
     const message = err instanceof Error ? err.message : 'Unknown error'
     res.status(500).json({ success: false, message })
   }
@@ -845,6 +893,30 @@ export async function assignUserRole(req: Request, res: Response): Promise<void>
     if (!targetRole) {
       res.status(400).json({ success: false, message: 'Valid roleId or roleCode is required' })
       return
+    }
+
+    const targetUser = await User.findByPk(userId)
+    if (!targetUser) {
+      res.status(404).json({ success: false, message: 'User not found' })
+      return
+    }
+    const isCurrentlySuperAdmin = await isUserSuperAdmin(userId)
+    const becomesSuperAdmin = isSuperAdminRoleCode(targetRole.code)
+    if (isCurrentlySuperAdmin || becomesSuperAdmin) await assertCallerIsSuperAdmin(operatingUserId)
+    if (becomesSuperAdmin) {
+      await syncSuperAdminLocations(userId, operatingUserId)
+      res.status(200).json({ success: true, message: 'Role assigned to user successfully' })
+      return
+    }
+    if (isCurrentlySuperAdmin) {
+      await assertCanDemoteSuperAdmin(targetUser, operatingUserId)
+      if (!['ADMIN'].includes((targetRole.code || '').toUpperCase())) {
+        res.status(400).json({
+          success: false,
+          message: 'Edit the employee to choose the one property this role should keep.',
+        })
+        return
+      }
     }
 
     const jCategoryId = jobCategoryId || job_category_id || undefined
@@ -896,6 +968,10 @@ export async function assignUserRole(req: Request, res: Response): Promise<void>
       message: 'Role assigned to user successfully',
     })
   } catch (err: unknown) {
+    if (err instanceof HttpError) {
+      res.status(err.status).json({ success: false, message: err.message })
+      return
+    }
     const message = err instanceof Error ? err.message : 'Unknown error'
     res.status(500).json({ success: false, message })
   }
@@ -948,6 +1024,41 @@ export async function updateUser(req: Request, res: Response): Promise<void> {
     const jCategoryId = jobCategoryId || job_category_id || undefined
     const mgrId = managerId || manager_id || undefined
     void mgrId
+
+    // Super admin role changes: only super admins may make them, and the last / seeded / own
+    // super admin role cannot be removed.
+    let requestedRoleCode: string | null = roleCode ? String(roleCode).toUpperCase() : null
+    if (!requestedRoleCode && roleId) {
+      const requestedRole = await Role.findByPk(sanitizeUuid(roleId) || undefined)
+      requestedRoleCode = requestedRole?.code?.toUpperCase() || null
+    }
+    const isCurrentlySuperAdmin = await isUserSuperAdmin(user.id)
+    const becomesSuperAdmin = isSuperAdminRoleCode(requestedRoleCode)
+    const isSuperAdminDemotion = isCurrentlySuperAdmin && !!requestedRoleCode && !becomesSuperAdmin
+    const finalIsSuperAdmin = becomesSuperAdmin || (isCurrentlySuperAdmin && !isSuperAdminDemotion)
+    if (isCurrentlySuperAdmin || becomesSuperAdmin) await assertCallerIsSuperAdmin(operatingUserId)
+    if (isSuperAdminDemotion) {
+      await assertCanDemoteSuperAdmin(user, operatingUserId)
+      const propertyKeys = [
+        'propertyIds',
+        'property_ids',
+        'properties',
+        'locIds',
+        'loc_ids',
+        'locationIds',
+        'location_ids',
+        'locations',
+      ]
+      const sendsProperties = propertyKeys.some((k) => req.body[k] !== undefined)
+      if (requestedRoleCode !== 'ADMIN' && !sendsProperties) {
+        res.status(400).json({ success: false, message: 'Choose the property this employee should keep.' })
+        return
+      }
+    }
+    if (becomesSuperAdmin && !isCurrentlySuperAdmin && !password && !user.passwordHash) {
+      res.status(400).json({ success: false, message: 'A Super Admin needs a password to log in.' })
+      return
+    }
 
     if (uName && uName !== user.username) {
       const taken = await checkUsernameAvailability(uName, { excludeUserId: user.id })
@@ -1182,7 +1293,17 @@ export async function updateUser(req: Request, res: Response): Promise<void> {
       (hasManagerIdInBody && cleanMgrId !== null) ||
       companyId !== undefined
 
-    if (pIdsArray !== undefined) {
+    if (finalIsSuperAdmin) {
+      // Super admins hold every property, whatever list was sent.
+      const transaction = await sequelize.transaction()
+      try {
+        await syncSuperAdminLocations(user.id, operatingUserId, transaction)
+        await transaction.commit()
+      } catch (tErr) {
+        await transaction.rollback()
+        throw tErr
+      }
+    } else if (pIdsArray !== undefined) {
       const pIds = Array.from(new Set(pIdsArray))
       console.log('[BE updateUser] Full property array overwrite mode. Deduplicated pIds to save:', pIds)
       if (pIds.length === 0) {
