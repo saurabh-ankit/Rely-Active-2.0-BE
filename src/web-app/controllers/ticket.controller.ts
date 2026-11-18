@@ -755,8 +755,16 @@ export async function createTicket(req: AuthenticatedRequest, res: Response): Pr
   }
 }
 
+/** Ticket `category` value kept in step with the department a ticket is moved to. */
+const DEPARTMENT_CODE_TO_CATEGORY: Record<string, string> = {
+  RNM: 'REPAIR_MAINTENANCE',
+  CON: 'CONCIERGE',
+  HK: 'HOUSEKEEPING',
+  FNB: 'FOOD',
+}
+
 /**
- * Update Category, Sub Category, TAT SLA, and Priority options
+ * Update Department, Job Category, Category, Sub Category, TAT SLA, and Priority options
  */
 export async function updateTicketOptions(req: AuthenticatedRequest, res: Response): Promise<void> {
   try {
@@ -768,7 +776,18 @@ export async function updateTicketOptions(req: AuthenticatedRequest, res: Respon
       return
     }
 
-    const { categoryId, subCategoryId, tatOption, priority, status, invoiceAmount, resolutionNotes } = req.body
+    const {
+      categoryId,
+      subCategoryId,
+      departmentId,
+      jobCategoryId,
+      tatOption,
+      customTatDeadline,
+      priority,
+      status,
+      invoiceAmount,
+      resolutionNotes,
+    } = req.body
     const userId = req.user?.id || null
     const userName = req.user?.email || 'User'
     const previousStatus = ticket.status
@@ -776,10 +795,68 @@ export async function updateTicketOptions(req: AuthenticatedRequest, res: Respon
     const previousTatOption = ticket.tatOption
 
     const updatePayload: Partial<Ticket> = {}
+    const routingNotes: string[] = []
+
+    // Re-route a ticket raised under the wrong department / job category.
+    if (departmentId !== undefined || jobCategoryId !== undefined) {
+      const targetDepartmentId: string | null = departmentId !== undefined ? departmentId || null : ticket.departmentId
+      const department = targetDepartmentId ? await Department.findByPk(targetDepartmentId) : null
+      if (!department) {
+        res.status(400).json({ success: false, message: 'Select a valid department' })
+        return
+      }
+
+      let jobCategory: JobCategory | null = null
+      if (jobCategoryId) {
+        jobCategory = await JobCategory.findByPk(jobCategoryId)
+        if (!jobCategory || jobCategory.departmentId !== department.id) {
+          res.status(400).json({ success: false, message: 'That job category does not belong to the department' })
+          return
+        }
+      }
+
+      if (department.id !== ticket.departmentId) {
+        const previousDepartment = ticket.departmentId ? await Department.findByPk(ticket.departmentId) : null
+        updatePayload.departmentId = department.id
+        updatePayload.category = DEPARTMENT_CODE_TO_CATEGORY[(department.code || '').toUpperCase()] || 'OTHER'
+        // Titles start with the department name ("Repair & Maintenance - Flat ..."); keep it in step.
+        if (previousDepartment?.name && ticket.title?.startsWith(previousDepartment.name)) {
+          updatePayload.title = department.name + ticket.title.slice(previousDepartment.name.length)
+        }
+        routingNotes.push(`Department: ${previousDepartment?.name || 'None'} → ${department.name}`)
+        // A job category from the old department no longer applies.
+        if (jobCategoryId === undefined) updatePayload.jobCategoryId = null
+      }
+
+      if (jobCategoryId !== undefined && (jobCategory?.id || null) !== ticket.jobCategoryId) {
+        const previousJobCategory = ticket.jobCategoryId ? await JobCategory.findByPk(ticket.jobCategoryId) : null
+        updatePayload.jobCategoryId = jobCategory?.id || null
+        routingNotes.push(`Job category: ${previousJobCategory?.name || 'None'} → ${jobCategory?.name || 'None'}`)
+      }
+    }
 
     if (categoryId !== undefined) updatePayload.categoryId = categoryId
     if (subCategoryId !== undefined) updatePayload.subCategoryId = subCategoryId
-    if (tatOption !== undefined) updatePayload.tatOption = tatOption
+    const previousTatDeadline = ticket.customTatDeadline || null
+    if (tatOption !== undefined) {
+      updatePayload.tatOption = tatOption
+      if (String(tatOption).toLowerCase() === 'custom') {
+        // A custom TAT needs its own deadline, set in the future.
+        const deadline = customTatDeadline ? new Date(customTatDeadline) : null
+        if (!deadline || Number.isNaN(deadline.getTime())) {
+          res.status(400).json({ success: false, message: 'Pick a date and time for the custom TAT' })
+          return
+        }
+        if (deadline.getTime() <= Date.now()) {
+          res.status(400).json({ success: false, message: 'The custom TAT must be in the future' })
+          return
+        }
+        updatePayload.customTatDeadline = deadline
+      } else {
+        // A preset option clears any old custom deadline.
+        updatePayload.customTatDeadline = null
+      }
+    }
     if (priority !== undefined) updatePayload.priority = priority
     if (status !== undefined) updatePayload.status = status
     if (invoiceAmount !== undefined) updatePayload.invoiceAmount = Number(invoiceAmount) || null
@@ -792,11 +869,17 @@ export async function updateTicketOptions(req: AuthenticatedRequest, res: Respon
       performedByUserId: userId,
       performedByName: userName,
       activityType: TicketActivityType.UPDATED,
-      comment: `Updated options (TAT: ${tatOption || ticket.tatOption}, Priority: ${priority || ticket.priority})`,
+      comment: routingNotes.length
+        ? `Re-routed ticket (${routingNotes.join('; ')})`
+        : `Updated options (TAT: ${tatOption || ticket.tatOption}, Priority: ${priority || ticket.priority})`,
       createdBy: userId,
     })
 
-    const tatChanged = tatOption !== undefined && tatOption !== previousTatOption
+    const tatChanged =
+      tatOption !== undefined &&
+      (tatOption !== previousTatOption ||
+        (ticket.customTatDeadline?.getTime() ?? null) !==
+          (previousTatDeadline ? new Date(previousTatDeadline).getTime() : null))
     const statusChanged = status !== undefined && status !== previousStatus
 
     const tatNotification = tatChanged
@@ -804,8 +887,8 @@ export async function updateTicketOptions(req: AuthenticatedRequest, res: Respon
           ticketTitle: ticket.title,
           ticketNumber: ticket.ticketNumber,
           updatedByName: userName,
-          previousTat: { option: previousTatOption, deadline: null },
-          updatedTat: { option: ticket.tatOption, deadline: null },
+          previousTat: { option: previousTatOption, deadline: previousTatDeadline },
+          updatedTat: { option: ticket.tatOption, deadline: ticket.customTatDeadline || null },
         })
       : null
 
