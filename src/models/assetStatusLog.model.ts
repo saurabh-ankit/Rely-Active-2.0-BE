@@ -7,11 +7,12 @@ export interface AssetStatusLogAttributes extends BaseAttributes {
   fromStatus: string
   toStatus: string
   note?: string | null
+  documentUrl?: string | null
 }
 
 export type AssetStatusLogCreationAttributes = Optional<
   AssetStatusLogAttributes,
-  'id' | 'note' | 'createdBy' | 'updatedBy' | 'createdAt' | 'updatedAt'
+  'id' | 'note' | 'documentUrl' | 'createdBy' | 'updatedBy' | 'createdAt' | 'updatedAt'
 >
 
 export class AssetStatusLog
@@ -22,6 +23,7 @@ export class AssetStatusLog
   declare fromStatus: string
   declare toStatus: string
   declare note: string | null
+  declare documentUrl: string | null
 }
 
 AssetStatusLog.init(
@@ -40,6 +42,10 @@ AssetStatusLog.init(
       allowNull: false,
     },
     note: {
+      type: DataTypes.TEXT,
+      allowNull: true,
+    },
+    documentUrl: {
       type: DataTypes.TEXT,
       allowNull: true,
     },

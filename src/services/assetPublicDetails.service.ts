@@ -1,5 +1,5 @@
-import { Op, Sequelize } from 'sequelize'
-import { AssetAssignment, AssetItemRequest } from '../models/index.js'
+import { Op } from 'sequelize'
+import { AssetAssignment, AssetItemRequest, AssetItemRequestAsset } from '../models/index.js'
 import { AssetStatus, ItemRequestReason } from '../enums/asset.enum.js'
 import { resolveAssigneeDetails } from './assetAssignmentEnrichment.service.js'
 
@@ -61,8 +61,17 @@ export async function loadExternalUseDetails(assetId: string): Promise<PublicExt
   const row = await AssetItemRequest.findOne({
     where: {
       reason: ItemRequestReason.EXTERNAL_USE,
-      [Op.and]: Sequelize.where(Sequelize.fn('JSON_CONTAINS', Sequelize.col('assetIds'), JSON.stringify(assetId)), 1),
     },
+    subQuery: false,
+    include: [
+      {
+        model: AssetItemRequestAsset,
+        as: 'requestAssets',
+        attributes: [],
+        where: { assetId },
+        required: true,
+      },
+    ],
     order: [['createdAt', 'DESC']],
   })
 

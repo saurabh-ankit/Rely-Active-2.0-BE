@@ -19,6 +19,7 @@ export interface AssetAttributes extends BaseAttributes {
   condition: AssetCondition
   status: AssetStatus
   notes?: string | null
+  transferOriginLocationId?: string | null
 }
 
 export type AssetCreationAttributes = Optional<
@@ -35,6 +36,7 @@ export type AssetCreationAttributes = Optional<
   | 'warrantyEndDate'
   | 'warrantyDocumentUrl'
   | 'notes'
+  | 'transferOriginLocationId'
   | 'createdBy'
   | 'updatedBy'
   | 'createdAt'
@@ -57,6 +59,7 @@ export class Asset extends BaseModel<AssetAttributes, AssetCreationAttributes> i
   declare condition: AssetCondition
   declare status: AssetStatus
   declare notes: string | null
+  declare transferOriginLocationId: string | null
 }
 
 Asset.init(
@@ -120,6 +123,10 @@ Asset.init(
     },
     notes: {
       type: DataTypes.TEXT,
+      allowNull: true,
+    },
+    transferOriginLocationId: {
+      type: DataTypes.UUID,
       allowNull: true,
     },
   },

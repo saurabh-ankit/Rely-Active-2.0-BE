@@ -7,6 +7,11 @@ export enum AssetStatus {
   SCRAP = 'scrap',
   REPAIR = 'repair',
   EXTERNAL_USE = 'external_use',
+  PENDING_INSPECTION = 'pending_inspection',
+  INTER_CENTER_OUTBOUND_PENDING = 'inter_center_outbound_pending',
+  INTER_CENTER_INCOMING = 'inter_center_incoming',
+  PENDING_TRANSFER_ACCEPTANCE = 'pending_transfer_acceptance',
+  TRANSFER_REJECTED = 'transfer_rejected',
 }
 
 export enum AssetCondition {
@@ -67,9 +72,29 @@ export enum ItemRequestReason {
   SCRAP = 'scrap',
   REPAIR = 'repair',
   EXTERNAL_USE = 'external_use',
+  INTER_CENTER_TRANSFER = 'inter_center_transfer',
+}
+
+/** Condition reported when sending/receiving an inter-center transfer. */
+export enum TransferSendCondition {
+  NEW = 'new',
+  GOOD = 'good',
+  BAD = 'bad',
+  PARTIALLY_DAMAGE = 'partially_damage',
 }
 
 export enum ItemRequestStatus {
+  PENDING = 'pending',
+  APPROVED = 'approved',
+  DECLINED = 'declined',
+  RETURNED = 'returned',
+  RETURN_DECLINED = 'return_declined',
+  /** Gate pass closed before outbound (e.g. asset marked available without leaving). */
+  CANCELLED = 'cancelled',
+}
+
+/** Per-asset gate decision for outbound or return scan. */
+export enum ItemRequestAssetGateStatus {
   PENDING = 'pending',
   APPROVED = 'approved',
   DECLINED = 'declined',

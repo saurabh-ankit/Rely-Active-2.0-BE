@@ -39,6 +39,8 @@ import {
   getCertificationsValidation,
   getComplianceStatusValidation,
   getExpiringCertificationsValidation,
+  getExpiringWarrantiesValidation,
+  getTransferredAssetsValidation,
   getInspectionsValidation,
   getItemByIdValidation,
   getItemsValidation,
@@ -106,6 +108,8 @@ import {
   getComplianceStatus,
   getEmployeesForAssignment,
   getExpiringCertifications,
+  getExpiringWarranties,
+  getTransferredAssets,
   getInspections,
   getItemById,
   getItems,
@@ -143,6 +147,8 @@ import {
   scanItemRequest,
   approveItemRequest,
   declineItemRequest,
+  acceptInterCenterTransfer,
+  rejectInterCenterTransfer,
 } from '../controllers/asset.controller.js'
 
 const router = express.Router({ mergeParams: true })
@@ -432,9 +438,23 @@ router.delete('/item-requests/:id', authenticate, deleteItemRequestValidation, v
 // ==================== ASSET ROUTES ====================
 router.get('/stats', authenticate, getAssetStats)
 
+router.get(
+  '/stats/warranties-expiring',
+  authenticate,
+  getExpiringWarrantiesValidation,
+  validateRequest,
+  getExpiringWarranties,
+)
+
+router.get('/stats/transferred', authenticate, getTransferredAssetsValidation, validateRequest, getTransferredAssets)
+
 router.post('/', authenticate, upload.single('warrantyDocument'), createAssetValidation, validateRequest, createAsset)
 
 router.get('/', authenticate, getAssetsValidation, validateRequest, getAssets)
+
+router.post('/:id/transfer/accept', authenticate, acceptInterCenterTransfer)
+
+router.post('/:id/transfer/reject', authenticate, rejectInterCenterTransfer)
 
 router.get('/:id', authenticate, getAssetByIdValidation, validateRequest, getAssetById)
 

@@ -25,6 +25,8 @@ import {
   AssetVendorCustomField,
   AssetVendorLocation,
   AssetItemRequest,
+  AssetItemRequestAsset,
+  AssetServiceLogAsset,
   AssetStatusLog,
 } from '../../models/index.js'
 import { AppError } from '../../utils/appError.js'
@@ -35,6 +37,7 @@ import { uploadFileToS3, uploadBase64ToS3 } from '../../middlewares/s3/index.js'
 import QRCode from 'qrcode'
 import {
   approveItemRequestById,
+  cancelPendingOutboundGatePassesForAsset,
   declineItemRequestById,
   enrichItemRequest,
   findItemRequestByQr,
@@ -43,8 +46,23 @@ import { getAssetTimeline } from '../../services/assetTimeline.service.js'
 import { generateAssetQrImage, buildAssetPublicUrl } from '../../services/assetQr.service.js'
 import { enrichPublicAssetContext } from '../../services/assetPublicDetails.service.js'
 import { enrichAssignmentsWithAssigneeDetails } from '../../services/assetAssignmentEnrichment.service.js'
+import { enrichServiceLogs, resolveServiceLogAssetIds } from '../../services/serviceLogEnrichment.service.js'
 import type { AssetTimelineQuery } from '../../validations/assetTimeline.validation.js'
-import { AssetStatus, ItemRequestStatus } from '../../enums/asset.enum.js'
+import {
+  AssetCondition,
+  AssetStatus,
+  ItemRequestReason,
+  ItemRequestStatus,
+  TransferSendCondition,
+} from '../../enums/asset.enum.js'
+import {
+  acceptAssetTransfer,
+  ACTIVE_TRANSFER_FLOW_STATUSES,
+  buildOriginCenterAssetLocationOr,
+  buildTransferredOutAssetLocationOr,
+  enrichAssetsWithTransferFromName,
+  rejectAssetTransfer,
+} from '../../services/assetTransfer.service.js'
 
 const SERIAL_NUMBER_EXISTS_MESSAGE = 'An asset with this serial number already exists'
 
@@ -343,8 +361,12 @@ export const getAssets = async (req: AuthenticatedRequest, res: Response) => {
       whereClause.itemId = itemId
     }
 
-    if (status) {
-      whereClause.status = status
+    const statusFilter = typeof status === 'string' ? status.trim() : ''
+    const isTransferredRegistryFilter = statusFilter === 'transferred'
+    const isTransferFlowStatusFilter = ACTIVE_TRANSFER_FLOW_STATUSES.includes(statusFilter as AssetStatus)
+
+    if (statusFilter && !isTransferredRegistryFilter) {
+      whereClause.status = statusFilter
     }
 
     if (condition) {
@@ -377,7 +399,19 @@ export const getAssets = async (req: AuthenticatedRequest, res: Response) => {
     }
 
     if (locationId && locationId !== 'all') {
-      whereClause.locationId = locationId
+      let locationOr: Record<string, unknown>[]
+      if (isTransferredRegistryFilter) {
+        locationOr = await buildTransferredOutAssetLocationOr(locationId)
+      } else if (statusFilter && !isTransferFlowStatusFilter) {
+        // Operational statuses only include assets physically at this center
+        // (exclude origin transferred-out registry rows that still match destination status).
+        locationOr = [{ locationId }]
+      } else {
+        locationOr = await buildOriginCenterAssetLocationOr(locationId)
+      }
+      const andKey = Op.and as unknown as string
+      const currentAnd = (whereClause[andKey] as unknown[]) || []
+      whereClause[andKey] = [...currentAnd, { [Op.or]: locationOr }]
     }
 
     const itemInclude: unknown = {
@@ -423,7 +457,7 @@ export const getAssets = async (req: AuthenticatedRequest, res: Response) => {
       subQuery: false,
     })
 
-    const assetsWithWarranty = assets.map((asset) => {
+    const assetsWithWarrantyRaw = assets.map((asset) => {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const plain = (asset as any).get({ plain: true }) as Record<string, unknown> & {
         warranties?: Array<{ warrantyEndDate?: string }>
@@ -440,6 +474,8 @@ export const getAssets = async (req: AuthenticatedRequest, res: Response) => {
       delete plain.warranties
       return { ...plain, warrantyEndDate: latestWarrantyEndDate }
     })
+
+    const assetsWithWarranty = await enrichAssetsWithTransferFromName(assetsWithWarrantyRaw, locationId)
 
     return res.status(200).json(
       successResponse('Assets retrieved successfully', {
@@ -461,6 +497,7 @@ export const getAssets = async (req: AuthenticatedRequest, res: Response) => {
 export const getAssetById = async (req: AuthenticatedRequest, res: Response) => {
   try {
     const id = req.params.id as string
+    const locationId = req.params.locationId as string | undefined
 
     const asset = await Asset.findOne({
       where: { id },
@@ -494,7 +531,13 @@ export const getAssetById = async (req: AuthenticatedRequest, res: Response) => 
       throw new AppError('Asset not found', 404)
     }
 
-    return res.status(200).json(successResponse('Asset retrieved successfully', asset))
+    const plain = asset.get({ plain: true }) as unknown as Record<string, unknown>
+    const [enriched] = await enrichAssetsWithTransferFromName(
+      [plain],
+      locationId && locationId !== 'all' ? locationId : null,
+    )
+
+    return res.status(200).json(successResponse('Asset retrieved successfully', enriched || plain))
   } catch (error) {
     if (error instanceof AppError) {
       return res.status(error.statusCode).json(errorResponse(error.message))
@@ -628,31 +671,90 @@ export const updateAsset = async (req: AuthenticatedRequest, res: Response) => {
 export const makeAssetAvailable = async (req: AuthenticatedRequest, res: Response) => {
   try {
     const id = req.params.id as string
+    const { condition, description, document, documentUrl } = req.body || {}
 
     const asset = await Asset.findByPk(id)
     if (!asset) {
       throw new AppError('Asset not found', 404)
     }
 
-    if (asset.status !== 'external_use') {
-      throw new AppError(`Only external_use assets can be made available. Current status: ${asset.status}`, 400)
+    const allowedSources: AssetStatus[] = [AssetStatus.EXTERNAL_USE, AssetStatus.PENDING_INSPECTION]
+    if (!allowedSources.includes(asset.status as AssetStatus)) {
+      throw new AppError(
+        `Only external_use or pending_inspection assets can be made available. Current status: ${asset.status}`,
+        400,
+      )
+    }
+
+    const allowedConditions = [AssetCondition.GOOD, AssetCondition.POOR]
+    const nextCondition = condition && String(condition).trim() ? (String(condition).trim() as AssetCondition) : null
+    if (nextCondition && !allowedConditions.includes(nextCondition)) {
+      throw new AppError('Condition must be good or poor', 400)
+    }
+
+    const trimmedDescription = description ? String(description).trim() : ''
+    const rawDocument = document ?? documentUrl
+    const hasDocument = !!(rawDocument && String(rawDocument).trim())
+
+    if (nextCondition === AssetCondition.POOR) {
+      if (!trimmedDescription) {
+        throw new AppError('Description is required when condition is bad/poor', 400)
+      }
+      if (!hasDocument) {
+        throw new AppError('Upload is required when condition is bad/poor', 400)
+      }
+    }
+
+    let uploadedDocumentUrl: string | null = null
+    if (hasDocument) {
+      const raw = String(rawDocument).trim()
+      if (raw.startsWith('data:')) {
+        uploadedDocumentUrl = (await uploadBase64ToS3(raw, 'assets/make-available')) || raw
+      } else {
+        uploadedDocumentUrl = raw
+      }
     }
 
     const fromStatus = asset.status
     const actorId = req.user?.id || null
 
-    await asset.update({
-      status: AssetStatus.AVAILABLE,
-      updatedBy: actorId,
-    })
+    let cancelledGatePassCount = 0
+    await sequelize.transaction(async (transaction) => {
+      if (fromStatus === AssetStatus.EXTERNAL_USE) {
+        const { cancelledRequestIds } = await cancelPendingOutboundGatePassesForAsset(asset.id, actorId, transaction)
+        cancelledGatePassCount = cancelledRequestIds.length
+      }
 
-    await AssetStatusLog.create({
-      assetId: asset.id,
-      fromStatus,
-      toStatus: 'available',
-      note: 'Marked available after external use',
-      createdBy: actorId,
-      updatedBy: actorId,
+      const baseNote =
+        fromStatus === AssetStatus.PENDING_INSPECTION
+          ? 'Marked available after inspection'
+          : cancelledGatePassCount > 0
+            ? 'Marked available after external use (gate pass cancelled — asset did not leave)'
+            : 'Marked available after external use'
+      const note = trimmedDescription ? `${baseNote}: ${trimmedDescription}` : baseNote
+
+      const assetUpdates: Record<string, unknown> = {
+        status: AssetStatus.AVAILABLE,
+        updatedBy: actorId,
+      }
+      if (nextCondition) {
+        assetUpdates.condition = nextCondition
+      }
+
+      await asset.update(assetUpdates, { transaction })
+
+      await AssetStatusLog.create(
+        {
+          assetId: asset.id,
+          fromStatus,
+          toStatus: AssetStatus.AVAILABLE,
+          note,
+          documentUrl: uploadedDocumentUrl,
+          createdBy: actorId,
+          updatedBy: actorId,
+        },
+        { transaction },
+      )
     })
 
     const updatedAsset = await Asset.findByPk(id, {
@@ -700,7 +802,7 @@ export const getAssetTimelineData = async (req: AuthenticatedRequest, res: Respo
   try {
     const id = String(req.params.id || '').trim()
     const locationId = req.params.locationId ? String(req.params.locationId) : null
-    const data = await getAssetTimeline(id, req.query as unknown as AssetTimelineQuery, locationId)
+    const data = await getAssetTimeline(id, req.query as unknown as AssetTimelineQuery, locationId, req.user?.roles)
     return res.status(200).json(successResponse('Asset timeline fetched successfully', data))
   } catch (error) {
     const statusCode =
@@ -743,23 +845,53 @@ export const deleteAsset = async (req: AuthenticatedRequest, res: Response) => {
   }
 }
 
+const MS_PER_DAY = 1000 * 60 * 60 * 24
+
+/** Latest warranty end date from related warranties, else the asset field. */
+const getEffectiveWarrantyEndDate = (plain: {
+  warrantyEndDate?: string | Date | null
+  warranties?: { warrantyEndDate: string | Date }[]
+}): string | Date | null => {
+  const warranties = plain.warranties || []
+  if (warranties.length) {
+    return warranties.reduce<string | Date | null>(
+      (latest, w) => (!latest || new Date(w.warrantyEndDate) > new Date(latest) ? w.warrantyEndDate : latest),
+      null,
+    )
+  }
+  return plain.warrantyEndDate ?? null
+}
+
+const startOfDay = (value: Date) => new Date(value.getFullYear(), value.getMonth(), value.getDate())
+
+const daysBetween = (from: Date, to: Date) =>
+  Math.round((startOfDay(to).getTime() - startOfDay(from).getTime()) / MS_PER_DAY)
+
 export const getAssetStats = async (req: AuthenticatedRequest, res: Response) => {
   try {
     const locationId = req.params.locationId as string | undefined
     const whereClause: Record<string, unknown> = {}
+    const atCenterWhere: Record<string, unknown> = {}
 
     if (locationId && locationId !== 'all') {
       whereClause.locationId = locationId
+      atCenterWhere.locationId = locationId
     }
 
-    const totalAssets = await Asset.count({ where: whereClause })
+    let totalAssets: number
+    if (locationId && locationId !== 'all') {
+      const locationOr = await buildOriginCenterAssetLocationOr(locationId)
+      totalAssets = await Asset.count({ where: { [Op.or]: locationOr } })
+    } else {
+      totalAssets = await Asset.count({ where: whereClause })
+    }
 
     const availableAssets = await Asset.count({
-      where: { ...whereClause, status: AssetStatus.AVAILABLE },
+      where: { ...atCenterWhere, status: AssetStatus.AVAILABLE },
     })
 
     const assignedAssets = await Asset.count({
-      where: { ...whereClause, status: AssetStatus.ASSIGNED },
+      where: { ...atCenterWhere, status: AssetStatus.ASSIGNED },
     })
 
     // "In Maintenance" card covers assets under repair/service workflows.
@@ -773,6 +905,24 @@ export const getAssetStats = async (req: AuthenticatedRequest, res: Response) =>
     const retiredAssets = await Asset.count({
       where: { ...whereClause, status: AssetStatus.RETIRED },
     })
+
+    // "Asset Transfer" card: assets moved out to another center (origin registry).
+    let transferredAssets = 0
+    if (locationId && locationId !== 'all') {
+      const transferredOr = await buildTransferredOutAssetLocationOr(locationId)
+      transferredAssets = await Asset.count({
+        where: { [Op.or]: transferredOr },
+      })
+    } else {
+      transferredAssets = await Asset.count({
+        where: {
+          transferOriginLocationId: { [Op.ne]: null },
+          [Op.and]: [
+            Sequelize.where(Sequelize.col('Asset.locationId'), Op.ne, Sequelize.col('Asset.transferOriginLocationId')),
+          ],
+        },
+      })
+    }
 
     // "Disposed" card covers permanently out-of-service assets (disposed + scrap).
     const disposedAssets = await Asset.count({
@@ -804,7 +954,9 @@ export const getAssetStats = async (req: AuthenticatedRequest, res: Response) =>
     }, 0)
 
     const today = new Date()
-    const startOfToday = new Date(today.getFullYear(), today.getMonth(), today.getDate())
+    const startOfToday = startOfDay(today)
+    const warrantyExpiringWindowEnd = new Date(startOfToday)
+    warrantyExpiringWindowEnd.setDate(warrantyExpiringWindowEnd.getDate() + 10)
 
     const assetsForWarrantyCount = await Asset.findAll({
       where: whereClause,
@@ -819,28 +971,30 @@ export const getAssetStats = async (req: AuthenticatedRequest, res: Response) =>
       ],
     })
 
-    const underWarranty = assetsForWarrantyCount.filter((asset) => {
+    let underWarranty = 0
+    let warrantyExpiringSoon = 0
+
+    for (const asset of assetsForWarrantyCount) {
       const plain = asset.get({ plain: true }) as {
         warrantyEndDate?: string | Date | null
         warranties?: { warrantyEndDate: string | Date }[]
       }
-      const warranties = plain.warranties || []
-      const effectiveWarrantyEndDate = warranties.length
-        ? warranties.reduce<string | Date | null>(
-            (latest, w) => (!latest || new Date(w.warrantyEndDate) > new Date(latest) ? w.warrantyEndDate : latest),
-            null,
-          )
-        : (plain.warrantyEndDate ?? null)
+      const effectiveWarrantyEndDate = getEffectiveWarrantyEndDate(plain)
+      if (!effectiveWarrantyEndDate) continue
 
-      if (!effectiveWarrantyEndDate) {
-        return false
+      const endDate = startOfDay(new Date(effectiveWarrantyEndDate))
+      if (endDate < startOfToday) continue
+
+      underWarranty += 1
+      if (endDate <= warrantyExpiringWindowEnd) {
+        warrantyExpiringSoon += 1
       }
+    }
 
-      return new Date(effectiveWarrantyEndDate) >= startOfToday
-    }).length
-
-    const firstDayOfMonth = new Date(today.getFullYear(), today.getMonth(), 1)
-    const recentAdditions = assets.filter((asset) => new Date(asset.createdAt) >= firstDayOfMonth).length
+    const thirtyDaysAgo = new Date(today)
+    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30)
+    thirtyDaysAgo.setHours(0, 0, 0, 0)
+    const recentAdditions = assets.filter((asset) => new Date(asset.createdAt) >= thirtyDaysAgo).length
 
     return res.status(200).json(
       successResponse('Asset stats retrieved successfully', {
@@ -849,18 +1003,167 @@ export const getAssetStats = async (req: AuthenticatedRequest, res: Response) =>
         assignedAssets,
         maintenanceAssets,
         retiredAssets,
+        transferredAssets,
         disposedAssets,
         scrapAssets,
         repairAssets,
         externalUseAssets,
         totalValue,
         underWarranty,
+        warrantyExpiringSoon,
         recentAdditions,
       }),
     )
   } catch (error) {
     console.error('Error retrieving asset stats:', error)
     return res.status(500).json(errorResponse('Failed to retrieve asset stats'))
+  }
+}
+
+/** Assets whose effective warranty ends within the next N days (default 10). */
+export const getExpiringWarranties = async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const days = Number(req.query.days || 10)
+    const locationId = req.params.locationId as string | undefined
+    const whereClause: Record<string, unknown> = {}
+
+    if (locationId && locationId !== 'all') {
+      whereClause.locationId = locationId
+    }
+
+    const startOfToday = startOfDay(new Date())
+    const windowEnd = new Date(startOfToday)
+    windowEnd.setDate(windowEnd.getDate() + days)
+
+    const assets = await Asset.findAll({
+      where: whereClause,
+      attributes: ['id', 'serialNumber', 'assetTag', 'status', 'condition', 'warrantyEndDate'],
+      include: [
+        {
+          model: AssetItem,
+          as: 'item',
+          attributes: ['id', 'name', 'model'],
+        },
+        {
+          model: Property,
+          as: 'location',
+          attributes: ['id', 'property_name'],
+        },
+        {
+          model: AssetWarranty,
+          as: 'warranties',
+          attributes: ['warrantyEndDate'],
+          required: false,
+        },
+      ],
+    })
+
+    const expiring = assets
+      .map((asset) => {
+        const plain = asset.get({ plain: true }) as {
+          id: string
+          serialNumber?: string | null
+          assetTag?: string | null
+          status?: string
+          condition?: string
+          warrantyEndDate?: string | Date | null
+          warranties?: { warrantyEndDate: string | Date }[]
+          item?: { id: string; name: string; model?: string | null } | null
+          location?: { id: string; property_name: string } | null
+        }
+        const effectiveWarrantyEndDate = getEffectiveWarrantyEndDate(plain)
+        if (!effectiveWarrantyEndDate) return null
+
+        const endDate = startOfDay(new Date(effectiveWarrantyEndDate))
+        if (endDate < startOfToday || endDate > windowEnd) return null
+
+        const { warranties, ...rest } = plain
+        void warranties
+        return {
+          ...rest,
+          warrantyEndDate: endDate.toISOString(),
+          daysRemaining: daysBetween(startOfToday, endDate),
+        }
+      })
+      .filter((row): row is NonNullable<typeof row> => row !== null)
+      .sort((a, b) => a.daysRemaining - b.daysRemaining)
+
+    return res.status(200).json(successResponse('Expiring warranties retrieved successfully', expiring))
+  } catch (error) {
+    console.error('Error retrieving expiring warranties:', error)
+    return res.status(500).json(errorResponse('Failed to retrieve expiring warranties'))
+  }
+}
+
+/** Assets transferred out from the current center (origin registry), for the Asset Transfer card. */
+export const getTransferredAssets = async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const locationId = req.params.locationId as string | undefined
+    const whereClause: Record<string, unknown> = {}
+
+    if (locationId && locationId !== 'all') {
+      const transferredOr = await buildTransferredOutAssetLocationOr(locationId)
+      whereClause[Op.or as unknown as string] = transferredOr
+    } else {
+      whereClause.transferOriginLocationId = { [Op.ne]: null }
+      whereClause[Op.and as unknown as string] = [
+        Sequelize.where(Sequelize.col('Asset.locationId'), Op.ne, Sequelize.col('Asset.transferOriginLocationId')),
+      ]
+    }
+
+    const assets = await Asset.findAll({
+      where: whereClause,
+      attributes: ['id', 'serialNumber', 'assetTag', 'status', 'condition', 'locationId', 'transferOriginLocationId'],
+      include: [
+        {
+          model: AssetItem,
+          as: 'item',
+          attributes: ['id', 'name', 'model'],
+        },
+        {
+          model: Property,
+          as: 'location',
+          attributes: ['id', 'property_name'],
+        },
+      ],
+      order: [['updatedAt', 'DESC']],
+    })
+
+    const plainAssets = assets.map((asset) => asset.get({ plain: true })) as unknown as Array<Record<string, unknown>>
+    const enriched = await enrichAssetsWithTransferFromName(
+      plainAssets,
+      locationId && locationId !== 'all' ? locationId : null,
+    )
+
+    const rows = enriched.map((asset) => ({
+      id: asset.id,
+      serialNumber: asset.serialNumber ?? null,
+      assetTag: asset.assetTag ?? null,
+      status: asset.status,
+      condition: asset.condition,
+      transferToCenterName:
+        (asset.transferToCenterName as string | undefined) ||
+        (asset.location as { property_name?: string } | undefined)?.property_name ||
+        null,
+      location: asset.location
+        ? {
+            id: (asset.location as { id?: string }).id,
+            property_name: (asset.location as { property_name?: string }).property_name,
+          }
+        : null,
+      item: asset.item
+        ? {
+            id: (asset.item as { id?: string }).id,
+            name: (asset.item as { name?: string }).name,
+            model: (asset.item as { model?: string | null }).model ?? null,
+          }
+        : null,
+    }))
+
+    return res.status(200).json(successResponse('Transferred assets retrieved successfully', rows))
+  } catch (error) {
+    console.error('Error retrieving transferred assets:', error)
+    return res.status(500).json(errorResponse('Failed to retrieve transferred assets'))
   }
 }
 
@@ -1377,7 +1680,8 @@ export const generateBulkAssetTemplate = async (req: AuthenticatedRequest, res: 
         'Current Value': 1000,
         'Warranty End Date (YYYY-MM-DD)': new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
         'Condition (excellent/good/fair/poor)': 'good',
-        'Status (available/assigned/maintenance/retired/disposed/scrap/repair/external_use)': 'available',
+        'Status (available/assigned/maintenance/retired/disposed/scrap/repair/external_use/pending_inspection)':
+          'available',
         Notes: `Bulk imported asset #${i}`,
       })
     }
@@ -1504,6 +1808,9 @@ export const processBulkAssetUpload = async (req: AuthenticatedRequest, res: Res
           ? String(row['Condition (excellent/good/fair/poor)']).trim().toLowerCase()
           : 'good'
         const statusRaw =
+          row[
+            'Status (available/assigned/maintenance/retired/disposed/scrap/repair/external_use/pending_inspection)'
+          ] ??
           row['Status (available/assigned/maintenance/retired/disposed/scrap/repair/external_use)'] ??
           row['Status (available/assigned/maintenance/retired/disposed/scrap/repair)'] ??
           row['Status (available/assigned/maintenance/retired/disposed)']
@@ -1528,6 +1835,7 @@ export const processBulkAssetUpload = async (req: AuthenticatedRequest, res: Res
           'scrap',
           'repair',
           'external_use',
+          'pending_inspection',
         ]
         if (!validStatuses.includes(status)) {
           errors.push({
@@ -1649,6 +1957,46 @@ export const createCategory = async (req: AuthenticatedRequest, res: Response) =
   }
 }
 
+const countVendorsForCategory = async (categoryId: string, locationId?: string) => {
+  if (!locationId || locationId === 'all') {
+    return AssetVendor.count({ where: { categoryId } })
+  }
+  return AssetVendor.count({
+    where: { categoryId },
+    include: [
+      {
+        model: Property,
+        as: 'locations',
+        attributes: [],
+        through: { attributes: [] },
+        where: { id: locationId },
+        required: true,
+      },
+    ],
+    distinct: true,
+  })
+}
+
+const countItemsForCategory = async (categoryId: string, locationId?: string) => {
+  if (!locationId || locationId === 'all') {
+    return AssetItem.count({ where: { categoryId } })
+  }
+  return AssetItem.count({
+    where: { categoryId },
+    include: [
+      {
+        model: Property,
+        as: 'locations',
+        attributes: [],
+        through: { attributes: [] },
+        where: { id: locationId },
+        required: true,
+      },
+    ],
+    distinct: true,
+  })
+}
+
 export const getCategories = async (req: AuthenticatedRequest, res: Response) => {
   try {
     const { page = 1, limit = 10, search = '' } = req.query
@@ -1704,13 +2052,8 @@ export const getCategories = async (req: AuthenticatedRequest, res: Response) =>
 
     const categoriesWithCounts = await Promise.all(
       categories.map(async (category) => {
-        const vendorCount = await AssetVendor.count({
-          where: { categoryId: category.id },
-        })
-
-        const itemCount = await AssetItem.count({
-          where: { categoryId: category.id },
-        })
+        const vendorCount = await countVendorsForCategory(category.id, locationId)
+        const itemCount = await countItemsForCategory(category.id, locationId)
 
         return {
           ...category.toJSON(),
@@ -1740,6 +2083,7 @@ export const getCategories = async (req: AuthenticatedRequest, res: Response) =>
 export const getCategoryById = async (req: AuthenticatedRequest, res: Response) => {
   try {
     const id = req.params.id as string
+    const locationId = req.params.locationId as string | undefined
 
     const category = await AssetCategory.findOne({
       where: { id },
@@ -1749,13 +2093,8 @@ export const getCategoryById = async (req: AuthenticatedRequest, res: Response) 
       throw new AppError('Category not found', 404)
     }
 
-    const vendorCount = await AssetVendor.count({
-      where: { categoryId: id },
-    })
-
-    const itemCount = await AssetItem.count({
-      where: { categoryId: id },
-    })
+    const vendorCount = await countVendorsForCategory(id, locationId)
+    const itemCount = await countItemsForCategory(id, locationId)
 
     const categoryWithCounts = {
       ...category.toJSON(),
@@ -2938,41 +3277,80 @@ export const getItemsDropdown = async (req: AuthenticatedRequest, res: Response)
 // ─── From maintenance.controller.ts ───────────────────────────────────────────
 // ==================== SERVICE LOG CONTROLLERS ====================
 
+const normalizeServiceLogAssetIds = (body: { assetId?: unknown; assetIds?: unknown }): string[] => {
+  if (Array.isArray(body.assetIds) && body.assetIds.length > 0) {
+    return [...new Set(body.assetIds.map((id) => String(id).trim()).filter(Boolean))]
+  }
+  if (body.assetId && String(body.assetId).trim()) {
+    return [String(body.assetId).trim()]
+  }
+  return []
+}
+
+const assertNoPendingServiceLogForAssets = async (assetIds: string[]) => {
+  for (const assetId of assetIds) {
+    const linkPending = await AssetServiceLogAsset.findOne({
+      where: { assetId },
+      include: [
+        {
+          model: AssetServiceLog,
+          as: 'serviceLog',
+          attributes: ['id', 'serviceType', 'completionStatus'],
+          required: true,
+          where: { completionStatus: 'pending' },
+        },
+      ],
+    })
+    const pendingFromLink = linkPending
+      ? ((linkPending as AssetServiceLogAsset & { serviceLog?: AssetServiceLog }).serviceLog ?? null)
+      : null
+    if (pendingFromLink) {
+      throw new AppError(
+        `Asset already has a pending ${pendingFromLink.serviceType} service log. Complete it before creating a new one.`,
+        400,
+      )
+    }
+
+    const legacyPending = await AssetServiceLog.findOne({
+      where: { assetId, completionStatus: 'pending' },
+      attributes: ['id', 'serviceType'],
+    })
+    if (legacyPending) {
+      throw new AppError(
+        `Asset already has a pending ${legacyPending.serviceType} service log. Complete it before creating a new one.`,
+        400,
+      )
+    }
+  }
+}
+
 export const createServiceLog = async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const { assetId, serviceDate, serviceType, performedBy, vendorId, cost, description, nextServiceDate } = req.body
+    const { serviceDate, serviceType, performedBy, vendorId, cost, description, nextServiceDate } = req.body
+    const selectedAssetIds = normalizeServiceLogAssetIds(req.body)
 
     if (!performedBy || !String(performedBy).trim()) {
       throw new AppError('Performed By is required', 400)
     }
-
-    const asset = await Asset.findByPk(assetId)
-    if (!asset) {
-      throw new AppError('Asset not found', 404)
+    if (selectedAssetIds.length === 0) {
+      throw new AppError('At least one asset must be selected', 400)
     }
 
-    const statusBeforeService = asset.status
-
-    if (asset.status !== 'available') {
-      throw new AppError(
-        `Cannot create a service log while asset status is '${asset.status}'. Asset must be available.`,
-        400,
-      )
+    const assets = await Asset.findAll({ where: { id: selectedAssetIds } })
+    if (assets.length !== selectedAssetIds.length) {
+      throw new AppError('One or more selected assets were not found', 404)
     }
 
-    const pendingServiceLog = await AssetServiceLog.findOne({
-      where: {
-        assetId,
-        completionStatus: 'pending',
-      },
-      attributes: ['id', 'serviceType'],
-    })
-    if (pendingServiceLog) {
-      throw new AppError(
-        `Asset already has a pending ${pendingServiceLog.serviceType} service log. Complete it before creating a new one.`,
-        400,
-      )
+    for (const asset of assets) {
+      if (asset.status !== 'available') {
+        throw new AppError(
+          `Cannot create a service log while asset '${asset.serialNumber || asset.assetTag || asset.id}' status is '${asset.status}'. Asset must be available.`,
+          400,
+        )
+      }
     }
+
+    await assertNoPendingServiceLogForAssets(selectedAssetIds)
 
     if (vendorId) {
       const vendor = await AssetVendor.findByPk(vendorId)
@@ -2981,65 +3359,118 @@ export const createServiceLog = async (req: AuthenticatedRequest, res: Response)
       }
     }
 
-    const serviceLog = await AssetServiceLog.create({
-      assetId,
-      serviceDate,
-      serviceType,
-      performedBy: String(performedBy).trim(),
-      vendorId: vendorId || null,
-      cost,
-      description,
-      nextServiceDate,
-      completionStatus: 'pending',
-      createdBy: req.user?.id || null,
-    })
-
+    const actorId = req.user?.id || null
     const locksAssetStatus = serviceType === 'scrap' || serviceType === 'repair'
-    if (locksAssetStatus) {
-      const fromStatus = statusBeforeService
-      const toStatus = serviceType === 'scrap' ? AssetStatus.SCRAP : AssetStatus.REPAIR
-      const actorId = req.user?.id || null
+    const toStatus = serviceType === 'scrap' ? AssetStatus.SCRAP : AssetStatus.REPAIR
+    const assetById = new Map(assets.map((a) => [a.id, a]))
 
-      await asset.update({
-        status: toStatus,
-        updatedBy: actorId,
-      })
+    const createdIds = await sequelize.transaction(async (transaction) => {
+      const ids: string[] = []
 
-      if (fromStatus !== toStatus) {
-        await AssetStatusLog.create({
-          assetId: asset.id,
-          fromStatus,
-          toStatus,
-          note:
-            serviceType === 'scrap' ? 'Asset marked as scrap via service log' : 'Asset sent for repair via service log',
-          createdBy: actorId,
-          updatedBy: actorId,
-        })
+      for (const assetId of selectedAssetIds) {
+        const asset = assetById.get(assetId)
+        if (!asset) continue
+
+        const created = await AssetServiceLog.create(
+          {
+            assetId,
+            serviceDate,
+            serviceType,
+            performedBy: String(performedBy).trim(),
+            vendorId: vendorId || null,
+            cost: cost ?? null,
+            description: description ?? null,
+            nextServiceDate: nextServiceDate ?? null,
+            completionStatus: 'pending',
+            createdBy: actorId,
+          },
+          { transaction },
+        )
+
+        await AssetServiceLogAsset.create(
+          {
+            assetServiceLogId: created.id,
+            assetId,
+            createdBy: actorId,
+          },
+          { transaction },
+        )
+
+        if (locksAssetStatus) {
+          const fromStatus = asset.status
+          await asset.update({ status: toStatus, updatedBy: actorId }, { transaction })
+          if (fromStatus !== toStatus) {
+            await AssetStatusLog.create(
+              {
+                assetId: asset.id,
+                fromStatus,
+                toStatus,
+                note:
+                  serviceType === 'scrap'
+                    ? 'Asset marked as scrap via service log'
+                    : 'Asset sent for repair via service log',
+                createdBy: actorId,
+                updatedBy: actorId,
+              },
+              { transaction },
+            )
+          }
+        }
+
+        ids.push(created.id)
       }
-    }
 
-    const createdLog = await AssetServiceLog.findByPk(serviceLog.id, {
-      include: [
-        {
-          model: Asset,
-          as: 'asset',
-          include: [
-            {
-              model: AssetItem,
-              as: 'item',
-              attributes: ['id', 'name', 'model'],
-            },
-          ],
-        },
-        {
-          model: AssetVendor,
-          as: 'vendor',
-          attributes: ['id', 'name'],
-        },
-      ],
+      return ids
     })
 
-    return res.status(201).json(successResponse('Service log created successfully', createdLog))
+    const includeCreated = [
+      {
+        model: Asset,
+        as: 'asset',
+        include: [
+          {
+            model: AssetItem,
+            as: 'item',
+            attributes: ['id', 'name', 'model', 'categoryId'],
+            include: [
+              {
+                model: AssetCategory,
+                as: 'category',
+                attributes: ['id', 'name'],
+              },
+            ],
+          },
+        ],
+      },
+      {
+        model: AssetVendor,
+        as: 'vendor',
+        attributes: ['id', 'name'],
+      },
+      {
+        model: AssetItemRequest,
+        as: 'gatePass',
+        required: false,
+      },
+    ]
+
+    const createdRows = await AssetServiceLog.findAll({
+      where: { id: createdIds },
+      include: includeCreated,
+    })
+    const enriched = await enrichServiceLogs(createdRows)
+
+    const message =
+      enriched.length === 1
+        ? 'Service log created successfully'
+        : `${enriched.length} service logs created successfully`
+
+    return res.status(201).json(
+      successResponse(message, {
+        serviceLogs: enriched,
+        count: enriched.length,
+      }),
+    )
   } catch (error) {
     if (error instanceof AppError) {
       return res.status(error.statusCode).json(errorResponse(error.message))
@@ -3056,10 +3487,6 @@ export const getServiceLogs = async (req: AuthenticatedRequest, res: Response) =
 
     const offset = (Number(page) - 1) * Number(limit)
     const whereClause: Record<string, unknown> = {}
-
-    if (assetId) {
-      whereClause.assetId = assetId
-    }
 
     if (serviceType) {
       whereClause.serviceType = serviceType
@@ -3093,10 +3520,40 @@ export const getServiceLogs = async (req: AuthenticatedRequest, res: Response) =
       assetInclude.where = { locationId }
     }
 
+    const logAssetInclude: IncludeOptions = {
+      model: AssetServiceLogAsset,
+      as: 'logAssets',
+      required: !!assetId,
+      ...(assetId ? { where: { assetId: String(assetId) } } : {}),
+      separate: !assetId,
+      include: [
+        {
+          model: Asset,
+          as: 'asset',
+          attributes: ['id', 'serialNumber', 'assetTag', 'status', 'itemId'],
+          include: [
+            {
+              model: AssetItem,
+              as: 'item',
+              attributes: ['id', 'name', 'categoryId'],
+              include: [
+                {
+                  model: AssetCategory,
+                  as: 'category',
+                  attributes: ['id', 'name'],
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    }
+
     const { rows: serviceLogs, count } = await AssetServiceLog.findAndCountAll({
       where: whereClause,
       include: [
         assetInclude,
+        logAssetInclude,
         {
           model: AssetVendor,
           as: 'vendor',
@@ -3106,17 +3563,43 @@ export const getServiceLogs = async (req: AuthenticatedRequest, res: Response) =
           model: AssetItemRequest,
           as: 'gatePass',
           required: false,
+          include: [
+            {
+              model: AssetItemRequestAsset,
+              as: 'requestAssets',
+              separate: true,
+              include: [
+                {
+                  model: Asset,
+                  as: 'asset',
+                  attributes: ['id', 'serialNumber', 'assetTag', 'itemId'],
+                  include: [
+                    {
+                      model: AssetItem,
+                      as: 'item',
+                      attributes: ['id', 'name'],
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
         },
       ],
       limit: Number(limit),
       offset,
-      order: [['serviceDate', 'DESC']],
+      order: [
+        ['createdAt', 'DESC'],
+        ['serviceDate', 'DESC'],
+      ],
       distinct: true,
     })
 
+    const enriched = await enrichServiceLogs(serviceLogs)
+
     return res.status(200).json(
       successResponse('Service logs retrieved successfully', {
-        serviceLogs,
+        serviceLogs: enriched,
         pagination: {
           total: count,
           page: Number(page),
@@ -3248,14 +3731,28 @@ export const completeServiceLog = async (req: AuthenticatedRequest, res: Respons
       updatedBy: req.user?.id || null,
     })
 
-    // Repair service logs release the asset back to available; scrap stays scrap.
+    // Repair service logs release linked assets back to available; scrap stays scrap.
     if (serviceLog.serviceType === 'repair') {
-      const asset = await Asset.findByPk(serviceLog.assetId)
-      if (asset) {
+      const actorId = req.user?.id || null
+      const linkedAssetIds = await resolveServiceLogAssetIds(serviceLog.id)
+      for (const assetId of linkedAssetIds) {
+        const asset = await Asset.findByPk(assetId)
+        if (!asset) continue
+        const fromStatus = asset.status
         await asset.update({
           status: AssetStatus.AVAILABLE,
-          updatedBy: req.user?.id || null,
+          updatedBy: actorId,
         })
+        if (fromStatus !== AssetStatus.AVAILABLE) {
+          await AssetStatusLog.create({
+            assetId: asset.id,
+            fromStatus,
+            toStatus: AssetStatus.AVAILABLE,
+            note: 'Repair service log completed; asset marked available',
+            createdBy: actorId,
+            updatedBy: actorId,
+          })
+        }
       }
     }
 
@@ -4278,6 +4775,11 @@ export const getVendorsDropdown = async (req: AuthenticatedRequest, res: Respons
 
 // ==================== ITEM REQUEST HANDLERS ====================
 
+const normalizeAssetIds = (raw: unknown): string[] => {
+  if (!Array.isArray(raw)) return []
+  return [...new Set(raw.map((id) => String(id).trim()).filter(Boolean))]
+}
+
 const resolveItemRequestImage = async (rawImage: unknown): Promise<string | null> => {
   if (!rawImage || typeof rawImage !== 'string') return null
   const raw = rawImage.trim()
@@ -4294,7 +4796,19 @@ const resolveItemRequestImage = async (rawImage: unknown): Promise<string | null
 
 export const createItemRequest = async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const { name, phone, assetIds, reason, problem, requestImage, image, expectedReturnDate, serviceLogId } = req.body
+    const {
+      name,
+      phone,
+      assetIds,
+      reason,
+      problem,
+      requestImage,
+      image,
+      expectedReturnDate,
+      serviceLogId,
+      toLocId,
+      transferSendCondition,
+    } = req.body
     const locationId = req.params.locationId as string
 
     const trimmedName = name ? String(name).trim() : ''
@@ -4310,7 +4824,8 @@ export const createItemRequest = async (req: AuthenticatedRequest, res: Response
     if (trimmedPhone && !/^\d{10}$/.test(trimmedPhone)) {
       return res.status(400).json(errorResponse('Phone must be exactly 10 digits'))
     }
-    if (!assetIds || !Array.isArray(assetIds) || assetIds.length === 0) {
+    const selectedAssetIds = normalizeAssetIds(assetIds)
+    if (selectedAssetIds.length === 0) {
       return res.status(400).json(errorResponse('At least one asset must be selected'))
     }
     if (!reason) {
@@ -4329,13 +4844,21 @@ export const createItemRequest = async (req: AuthenticatedRequest, res: Response
       if (existingGatePass) {
         return res.status(400).json(errorResponse('A gate pass has already been generated for this service log'))
       }
+
+      const logAssetIds = await resolveServiceLogAssetIds(linkedServiceLogId)
+      const logSet = new Set(logAssetIds)
+      const invalid = selectedAssetIds.find((id) => !logSet.has(id))
+      if (invalid) {
+        return res.status(400).json(errorResponse('Gate pass assets must belong to the linked service log'))
+      }
     }
 
-    if (reason === 'external_use') {
-      const assets = await Asset.findAll({ where: { id: assetIds } })
-      if (assets.length !== assetIds.length) {
-        return res.status(400).json(errorResponse('One or more selected assets were not found'))
-      }
+    const assets = await Asset.findAll({ where: { id: selectedAssetIds } })
+    if (assets.length !== selectedAssetIds.length) {
+      return res.status(400).json(errorResponse('One or more selected assets were not found'))
+    }
+
+    if (reason === ItemRequestReason.EXTERNAL_USE) {
       const invalid = assets.find((a) => a.status !== 'available' && a.status !== 'external_use')
       if (invalid) {
         return res
@@ -4345,6 +4868,35 @@ export const createItemRequest = async (req: AuthenticatedRequest, res: Response
               `Asset is not eligible for external use. Current status: ${invalid.status}. Only available or external_use assets are allowed.`,
             ),
           )
+      }
+    }
+
+    const destinationLocId = toLocId && String(toLocId).trim() ? String(toLocId).trim() : null
+
+    if (reason === ItemRequestReason.INTER_CENTER_TRANSFER) {
+      if (!destinationLocId) {
+        return res.status(400).json(errorResponse('Destination center is required for inter-center transfer'))
+      }
+      if (destinationLocId === locationId) {
+        return res.status(400).json(errorResponse('Destination center must be different from the originating center'))
+      }
+      const sendCondition = transferSendCondition ? String(transferSendCondition).trim() : ''
+      if (!Object.values(TransferSendCondition).includes(sendCondition as TransferSendCondition)) {
+        return res.status(400).json(errorResponse('Valid asset send condition is required'))
+      }
+      const invalid = assets.find((a) => a.status !== AssetStatus.AVAILABLE)
+      if (invalid) {
+        return res
+          .status(400)
+          .json(errorResponse(`Only available assets can be transferred. Asset status: ${invalid.status}`))
+      }
+      const wrongLoc = assets.find((a) => a.locationId !== locationId)
+      if (wrongLoc) {
+        return res.status(400).json(errorResponse('All assets must belong to the originating center'))
+      }
+      const destExists = await Property.findByPk(destinationLocId)
+      if (!destExists) {
+        return res.status(400).json(errorResponse('Destination center not found'))
       }
     }
 
@@ -4371,36 +4923,96 @@ export const createItemRequest = async (req: AuthenticatedRequest, res: Response
     const parsedExpectedReturnDate =
       expectedReturnDate && String(expectedReturnDate).trim() ? new Date(String(expectedReturnDate).trim()) : null
 
-    const itemRequest = await AssetItemRequest.create({
-      locId: locationId,
-      name: trimmedName,
-      phone: trimmedPhone,
-      assetIds,
-      reason,
-      problem: problem ? String(problem).trim() : null,
-      qrCode: qrHash,
-      qrCodeImage,
-      requestImage: uploadedRequestImage,
-      expectedReturnDate: parsedExpectedReturnDate,
-      serviceLogId: linkedServiceLogId,
-      status: ItemRequestStatus.PENDING,
-      createdBy: req.user?.id || null,
-    })
-
-    if (reason === 'external_use') {
-      await Asset.update(
+    const itemRequest = await sequelize.transaction(async (transaction) => {
+      const created = await AssetItemRequest.create(
         {
-          status: AssetStatus.EXTERNAL_USE,
-          updatedBy: req.user?.id || null,
+          locId: locationId,
+          name: trimmedName,
+          phone: trimmedPhone,
+          reason,
+          problem: problem ? String(problem).trim() : null,
+          qrCode: qrHash,
+          qrCodeImage,
+          requestImage: uploadedRequestImage,
+          expectedReturnDate: parsedExpectedReturnDate,
+          serviceLogId: linkedServiceLogId,
+          toLocId: reason === ItemRequestReason.INTER_CENTER_TRANSFER ? destinationLocId : null,
+          transferSendCondition:
+            reason === ItemRequestReason.INTER_CENTER_TRANSFER
+              ? (String(transferSendCondition).trim() as TransferSendCondition)
+              : null,
+          status: ItemRequestStatus.PENDING,
+          createdBy: req.user?.id || null,
         },
-        {
-          where: {
-            id: assetIds,
-            status: 'available',
-          },
-        },
+        { transaction },
       )
-    }
+
+      await AssetItemRequestAsset.bulkCreate(
+        selectedAssetIds.map((assetId) => ({
+          assetItemRequestId: created.id,
+          assetId,
+          createdBy: req.user?.id || null,
+        })),
+        { transaction },
+      )
+
+      if (reason === ItemRequestReason.EXTERNAL_USE) {
+        const actorId = req.user?.id || null
+        const toExternal = await Asset.findAll({
+          where: { id: selectedAssetIds, status: AssetStatus.AVAILABLE },
+          transaction,
+        })
+        await Asset.update(
+          {
+            status: AssetStatus.EXTERNAL_USE,
+            updatedBy: actorId,
+          },
+          {
+            where: {
+              id: selectedAssetIds,
+              status: 'available',
+            },
+            transaction,
+          },
+        )
+        for (const asset of toExternal) {
+          await AssetStatusLog.create(
+            {
+              assetId: asset.id,
+              fromStatus: AssetStatus.AVAILABLE,
+              toStatus: AssetStatus.EXTERNAL_USE,
+              note: 'Marked for external use via gate pass',
+              createdBy: actorId,
+              updatedBy: actorId,
+            },
+            { transaction },
+          )
+        }
+      }
+
+      if (reason === ItemRequestReason.INTER_CENTER_TRANSFER) {
+        const actorId = req.user?.id || null
+        for (const assetId of selectedAssetIds) {
+          const asset = await Asset.findByPk(assetId, { transaction })
+          if (!asset || asset.status !== AssetStatus.AVAILABLE) continue
+          const fromStatus = asset.status
+          await asset.update({ status: AssetStatus.INTER_CENTER_OUTBOUND_PENDING, updatedBy: actorId }, { transaction })
+          await AssetStatusLog.create(
+            {
+              assetId: asset.id,
+              fromStatus,
+              toStatus: AssetStatus.INTER_CENTER_OUTBOUND_PENDING,
+              note: 'Inter-center transfer gate pass created',
+              createdBy: actorId,
+              updatedBy: actorId,
+            },
+            { transaction },
+          )
+        }
+      }
+
+      return created
+    })
 
     return res
       .status(201)
@@ -4419,14 +5031,21 @@ export const getItemRequests = async (req: AuthenticatedRequest, res: Response) 
     const offset = (page - 1) * limit
     const search = typeof req.query.search === 'string' ? req.query.search.trim() : ''
 
-    const where: Record<string, unknown> = { locId: locationId }
+    const andConditions: Array<Record<string, unknown>> = [
+      {
+        [Op.or]: [{ locId: locationId }, { toLocId: locationId, reason: ItemRequestReason.INTER_CENTER_TRANSFER }],
+      },
+    ]
     if (search) {
-      where[Op.or as unknown as string] = [
-        { name: { [Op.like]: `%${search}%` } },
-        { phone: { [Op.like]: `%${search}%` } },
-        { problem: { [Op.like]: `%${search}%` } },
-      ]
+      andConditions.push({
+        [Op.or]: [
+          { name: { [Op.like]: `%${search}%` } },
+          { phone: { [Op.like]: `%${search}%` } },
+          { problem: { [Op.like]: `%${search}%` } },
+        ],
+      })
     }
+    const where = { [Op.and]: andConditions }
 
     const { count, rows } = await AssetItemRequest.findAndCountAll({
       where,
@@ -4494,17 +5113,22 @@ export const updateItemRequest = async (req: AuthenticatedRequest, res: Response
     if (trimmedPhone && !/^\d{10}$/.test(trimmedPhone)) {
       return res.status(400).json(errorResponse('Phone must be exactly 10 digits'))
     }
-    if (!assetIds || !Array.isArray(assetIds) || assetIds.length === 0) {
+    const selectedAssetIds = normalizeAssetIds(assetIds)
+    if (selectedAssetIds.length === 0) {
       return res.status(400).json(errorResponse('At least one asset must be selected'))
     }
     if (!reason) {
       return res.status(400).json(errorResponse('Reason is required'))
     }
 
+    const assets = await Asset.findAll({ where: { id: selectedAssetIds } })
+    if (assets.length !== selectedAssetIds.length) {
+      return res.status(400).json(errorResponse('One or more selected assets were not found'))
+    }
+
     const updates: Record<string, unknown> = {
       name: trimmedName,
       phone: trimmedPhone,
-      assetIds,
       reason,
       problem: problem ? String(problem).trim() : null,
       expectedReturnDate:
@@ -4522,7 +5146,21 @@ export const updateItemRequest = async (req: AuthenticatedRequest, res: Response
       updates.requestImage = nextImage === null || nextImage === '' ? null : await resolveItemRequestImage(nextImage)
     }
 
-    await itemRequest.update(updates)
+    await sequelize.transaction(async (transaction) => {
+      await itemRequest.update(updates, { transaction })
+      await AssetItemRequestAsset.destroy({
+        where: { assetItemRequestId: itemRequest.id },
+        transaction,
+      })
+      await AssetItemRequestAsset.bulkCreate(
+        selectedAssetIds.map((assetId) => ({
+          assetItemRequestId: itemRequest.id,
+          assetId,
+          createdBy: req.user?.id || null,
+        })),
+        { transaction },
+      )
+    })
 
     return res
       .status(200)
@@ -4567,7 +5205,7 @@ export const scanItemRequest = async (req: AuthenticatedRequest, res: Response) 
 
     return res
       .status(200)
-      .json(successResponse('Item request retrieved successfully', await enrichItemRequest(itemRequest)))
+      .json(successResponse('Item request retrieved successfully', await enrichItemRequest(itemRequest, locationId)))
   } catch (error) {
     console.error('Error scanning item request:', error)
     return res.status(500).json(errorResponse('Failed to scan item request'))
@@ -4577,13 +5215,17 @@ export const scanItemRequest = async (req: AuthenticatedRequest, res: Response) 
 export const approveItemRequest = async (req: AuthenticatedRequest, res: Response) => {
   try {
     const id = req.params.id as string
-    const result = await approveItemRequestById(id, req.user?.id || null)
+    const locationId = req.params.locationId as string
+    const { assetIds } = req.body
+    const result = await approveItemRequestById(id, req.user?.id || null, assetIds, locationId)
 
     if ('error' in result && result.error) {
       return res.status(result.status).json(errorResponse(result.error))
     }
 
-    return res.status(200).json(successResponse('Item request approved successfully', result.data))
+    return res
+      .status(200)
+      .json(successResponse('Item request approved successfully', 'data' in result ? result.data : null))
   } catch (error) {
     console.error('Error approving item request:', error)
     return res.status(500).json(errorResponse('Failed to approve item request'))
@@ -4593,16 +5235,75 @@ export const approveItemRequest = async (req: AuthenticatedRequest, res: Respons
 export const declineItemRequest = async (req: AuthenticatedRequest, res: Response) => {
   try {
     const id = req.params.id as string
-    const { comment, image } = req.body
-    const result = await declineItemRequestById(id, comment, image, req.user?.id || null)
+    const locationId = req.params.locationId as string
+    const { comment, image, assetIds } = req.body
+    const result = await declineItemRequestById(id, comment, image, req.user?.id || null, assetIds, locationId)
 
     if ('error' in result && result.error) {
       return res.status(result.status).json(errorResponse(result.error))
     }
 
-    return res.status(200).json(successResponse('Item request declined successfully', result.data))
+    return res
+      .status(200)
+      .json(successResponse('Item request declined successfully', 'data' in result ? result.data : null))
   } catch (error) {
     console.error('Error declining item request:', error)
     return res.status(500).json(errorResponse('Failed to decline item request'))
+  }
+}
+
+export const acceptInterCenterTransfer = async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const assetId = req.params.id as string
+    const locationId = req.params.locationId as string
+    const { receiveCondition, description, image, availability } = req.body
+
+    if (availability !== 'available' && availability !== 'not_available') {
+      return res.status(400).json(errorResponse('availability must be available or not_available'))
+    }
+
+    const result = await acceptAssetTransfer({
+      assetId,
+      locationId,
+      receiveCondition: String(receiveCondition || '').trim(),
+      description,
+      image,
+      availability,
+      actorId: req.user?.id || null,
+    })
+
+    if ('error' in result && result.error) {
+      return res.status(result.status).json(errorResponse(result.error))
+    }
+
+    return res.status(200).json(successResponse('Transfer accepted successfully', result.data))
+  } catch (error) {
+    console.error('Error accepting inter-center transfer:', error)
+    return res.status(500).json(errorResponse('Failed to accept transfer'))
+  }
+}
+
+export const rejectInterCenterTransfer = async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const assetId = req.params.id as string
+    const locationId = req.params.locationId as string
+    const { description, image } = req.body
+
+    const result = await rejectAssetTransfer({
+      assetId,
+      locationId,
+      description: String(description || ''),
+      image,
+      actorId: req.user?.id || null,
+    })
+
+    if ('error' in result && result.error) {
+      return res.status(result.status).json(errorResponse(result.error))
+    }
+
+    return res.status(200).json(successResponse('Transfer rejected successfully', result.data))
+  } catch (error) {
+    console.error('Error rejecting inter-center transfer:', error)
+    return res.status(500).json(errorResponse('Failed to reject transfer'))
   }
 }
