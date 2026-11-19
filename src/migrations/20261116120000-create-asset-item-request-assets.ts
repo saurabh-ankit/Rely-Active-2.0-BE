@@ -63,7 +63,7 @@ async function ensureColumn(
   definition: Record<string, unknown>,
 ): Promise<void> {
   if (!cols[name]) {
-    await queryInterface.addColumn(CHILD, name, definition as Parameters<QueryInterface['addColumn']>[2])
+    await queryInterface.addColumn(CHILD, name, definition as unknown as Parameters<QueryInterface['addColumn']>[2])
     console.log(`Added ${CHILD}.${name}`)
   }
 }
