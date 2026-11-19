@@ -9,6 +9,12 @@ export const ASSET_TIMELINE_EVENT_TYPES = [
   'scrap',
   'qr_generated',
   'made_available',
+  'transfer',
+  'gate_pass_approved',
+  'gate_pass_declined',
+  'gate_pass_cancelled',
+  'gate_return_approved',
+  'gate_return_declined',
 ] as const
 
 /** Comma-separated list, e.g. `types=assigned,repair`. */
@@ -28,6 +34,12 @@ const eventTypeList = z
 export const assetTimelineQuerySchema = z.object({
   page: z.coerce.number().int().min(1).default(1),
   limit: z.coerce.number().int().min(1).max(100).default(25),
+  /** Super admin: filter timeline to one center tab (uuid). */
+  centerScopeId: z
+    .string()
+    .uuid('Invalid center scope id')
+    .optional()
+    .or(z.literal('').transform(() => undefined)),
   type: z
     .enum(ASSET_TIMELINE_EVENT_TYPES, { message: 'Invalid timeline event type' })
     .optional()

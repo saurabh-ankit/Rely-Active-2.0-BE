@@ -39,6 +39,8 @@ import {
   getCertificationsValidation,
   getComplianceStatusValidation,
   getExpiringCertificationsValidation,
+  getExpiringWarrantiesValidation,
+  getTransferredAssetsValidation,
   getInspectionsValidation,
   getItemByIdValidation,
   getItemsValidation,
@@ -106,6 +108,8 @@ import {
   getComplianceStatus,
   getEmployeesForAssignment,
   getExpiringCertifications,
+  getExpiringWarranties,
+  getTransferredAssets,
   getInspections,
   getItemById,
   getItems,
@@ -124,6 +128,7 @@ import {
   returnAsset,
   updateAsset,
   makeAssetAvailable,
+  regenerateAssetQr,
   getAssetTimelineData,
   updateCalibration,
   updateCategory,
@@ -142,6 +147,8 @@ import {
   scanItemRequest,
   approveItemRequest,
   declineItemRequest,
+  acceptInterCenterTransfer,
+  rejectInterCenterTransfer,
 } from '../controllers/asset.controller.js'
 
 const router = express.Router({ mergeParams: true })
@@ -250,18 +257,19 @@ router.delete(
   deleteServiceLog,
 )
 
-router.put(
-  '/maintenance/service-logs/:id/complete',
-  authenticate,
-  completeServiceLogValidation,
-  validateRequest,
-  completeServiceLog,
-)
-
 const uploadDoc = upload.fields([
   { name: 'document', maxCount: 1 },
   { name: 'file', maxCount: 1 },
 ])
+
+router.put(
+  '/maintenance/service-logs/:id/complete',
+  authenticate,
+  uploadDoc,
+  completeServiceLogValidation,
+  validateRequest,
+  completeServiceLog,
+)
 
 router.post(
   '/maintenance/warranties',
@@ -430,15 +438,31 @@ router.delete('/item-requests/:id', authenticate, deleteItemRequestValidation, v
 // ==================== ASSET ROUTES ====================
 router.get('/stats', authenticate, getAssetStats)
 
+router.get(
+  '/stats/warranties-expiring',
+  authenticate,
+  getExpiringWarrantiesValidation,
+  validateRequest,
+  getExpiringWarranties,
+)
+
+router.get('/stats/transferred', authenticate, getTransferredAssetsValidation, validateRequest, getTransferredAssets)
+
 router.post('/', authenticate, upload.single('warrantyDocument'), createAssetValidation, validateRequest, createAsset)
 
 router.get('/', authenticate, getAssetsValidation, validateRequest, getAssets)
+
+router.post('/:id/transfer/accept', authenticate, acceptInterCenterTransfer)
+
+router.post('/:id/transfer/reject', authenticate, rejectInterCenterTransfer)
 
 router.get('/:id', authenticate, getAssetByIdValidation, validateRequest, getAssetById)
 
 router.get('/:id/timeline', authenticate, validateQuery(assetTimelineQuerySchema), getAssetTimelineData)
 
 router.put('/:id/make-available', authenticate, makeAssetAvailable)
+
+router.post('/:id/regenerate-qr', authenticate, regenerateAssetQr)
 
 router.put('/:id', authenticate, upload.single('warrantyDocument'), updateAssetValidation, validateRequest, updateAsset)
 

@@ -48,6 +48,8 @@ import { AssetComplianceInspection } from './assetComplianceInspection.model.js'
 import { AssetComplianceCertification } from './assetComplianceCertification.model.js'
 import { AssetComplianceTraining } from './assetComplianceTraining.model.js'
 import { AssetItemRequest } from './assetItemRequest.model.js'
+import { AssetItemRequestAsset } from './assetItemRequestAsset.model.js'
+import { AssetServiceLogAsset } from './assetServiceLogAsset.model.js'
 import { AssetStatusLog } from './assetStatusLog.model.js'
 import { FnbGlobalPackage } from './fnbGlobalPackage.model.js'
 import { FnbPropertyPackage } from './fnbPropertyPackage.model.js'
@@ -573,6 +575,18 @@ Asset.hasMany(AssetServiceLog, { foreignKey: 'assetId', as: 'serviceLogs' })
 AssetServiceLog.belongsTo(Asset, { foreignKey: 'assetId', as: 'asset' })
 AssetServiceLog.belongsTo(AssetVendor, { foreignKey: 'vendorId', as: 'vendor' })
 // Note: performedByUserId column does not exist in DB; performedBy is a plain text field
+AssetServiceLog.hasOne(AssetItemRequest, { foreignKey: 'serviceLogId', as: 'gatePass' })
+AssetItemRequest.belongsTo(AssetServiceLog, { foreignKey: 'serviceLogId', as: 'serviceLog' })
+
+AssetServiceLog.hasMany(AssetServiceLogAsset, { foreignKey: 'assetServiceLogId', as: 'logAssets' })
+AssetServiceLogAsset.belongsTo(AssetServiceLog, { foreignKey: 'assetServiceLogId', as: 'serviceLog' })
+AssetServiceLogAsset.belongsTo(Asset, { foreignKey: 'assetId', as: 'asset' })
+Asset.hasMany(AssetServiceLogAsset, { foreignKey: 'assetId', as: 'serviceLogAssets' })
+
+AssetItemRequest.hasMany(AssetItemRequestAsset, { foreignKey: 'assetItemRequestId', as: 'requestAssets' })
+AssetItemRequestAsset.belongsTo(AssetItemRequest, { foreignKey: 'assetItemRequestId', as: 'itemRequest' })
+AssetItemRequestAsset.belongsTo(Asset, { foreignKey: 'assetId', as: 'asset' })
+Asset.hasMany(AssetItemRequestAsset, { foreignKey: 'assetId', as: 'itemRequestAssets' })
 
 Asset.hasMany(AssetStatusLog, { foreignKey: 'assetId', as: 'statusLogs' })
 AssetStatusLog.belongsTo(Asset, { foreignKey: 'assetId', as: 'asset' })
@@ -1160,6 +1174,8 @@ export {
   AssetComplianceCertification,
   AssetComplianceTraining,
   AssetItemRequest,
+  AssetItemRequestAsset,
+  AssetServiceLogAsset,
   AssetStatusLog,
   FnbGlobalPackage,
   FnbPropertyPackage,

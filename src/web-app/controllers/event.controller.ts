@@ -1714,6 +1714,11 @@ async function resolveVenueImagesFromRequest(
     return undefined
   }
 
+  // Explicit empty array means clear all gallery images.
+  if (bodyImages.length === 0) {
+    return []
+  }
+
   if (bodyImages.some((img) => typeof img.url === 'string' && img.url.trim())) {
     return bodyImages
       .filter((img) => typeof img.url === 'string' && img.url.trim())
@@ -2028,6 +2033,8 @@ export const updateVenue = async (req: AuthenticatedRequest, res: Response) => {
     }
 
     const coverPhoto = await resolveVenueCoverPhotoFromRequest(req)
+    const removeCoverPhoto = req.body.removeCoverPhoto === true || req.body.removeCoverPhoto === 'true'
+    const finalCoverPhoto = coverPhoto !== undefined ? coverPhoto : removeCoverPhoto ? null : venue.coverPhoto
     const finalImages = await resolveVenueImagesFromRequest(req, images, venue.images)
 
     let validatedAddOnServices: AddOnService[] | null | undefined
@@ -2045,8 +2052,8 @@ export const updateVenue = async (req: AuthenticatedRequest, res: Response) => {
       price: price !== undefined ? Number(price) : venue.price,
       keyFeatures: keyFeatures || venue.keyFeatures,
       otherServices: otherServices !== undefined ? otherServices : venue.otherServices,
-      coverPhoto: coverPhoto !== undefined ? coverPhoto : venue.coverPhoto,
-      images: finalImages !== undefined ? finalImages : venue.images,
+      coverPhoto: finalCoverPhoto,
+      images: finalImages !== undefined ? (finalImages.length > 0 ? finalImages : null) : venue.images,
       addOnServices: validatedAddOnServices !== undefined ? validatedAddOnServices : venue.addOnServices,
       updatedBy,
     })

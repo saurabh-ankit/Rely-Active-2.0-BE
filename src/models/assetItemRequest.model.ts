@@ -1,13 +1,13 @@
 import { DataTypes, Optional } from 'sequelize'
 import sequelize from '../config/db/index.js'
 import { BaseAttributes, BaseModel, baseModelColumns } from './base.model.js'
-import { ItemRequestReason, ItemRequestStatus } from '../enums/asset.enum.js'
+import { ItemRequestReason, ItemRequestStatus, TransferSendCondition } from '../enums/asset.enum.js'
+import type { AssetItemRequestAsset } from './assetItemRequestAsset.model.js'
 
 export interface AssetItemRequestAttributes extends BaseAttributes {
   locId: string
   name: string
   phone: string
-  assetIds: string[]
   reason: ItemRequestReason
   problem?: string | null
   qrCode?: string | null
@@ -16,7 +16,17 @@ export interface AssetItemRequestAttributes extends BaseAttributes {
   requestImage?: string | null
   declineComment?: string | null
   declineImage?: string | null
+  returnDeclineComment?: string | null
+  returnDeclineImage?: string | null
   expectedReturnDate?: Date | string | null
+  serviceLogId?: string | null
+  toLocId?: string | null
+  transferSendCondition?: TransferSendCondition | null
+  transferReceiveCondition?: TransferSendCondition | null
+  transferReceiveDescription?: string | null
+  transferReceiveImage?: string | null
+  transferRejectDescription?: string | null
+  transferRejectImage?: string | null
 }
 
 export type AssetItemRequestCreationAttributes = Optional<
@@ -29,7 +39,17 @@ export type AssetItemRequestCreationAttributes = Optional<
   | 'requestImage'
   | 'declineComment'
   | 'declineImage'
+  | 'returnDeclineComment'
+  | 'returnDeclineImage'
   | 'expectedReturnDate'
+  | 'serviceLogId'
+  | 'toLocId'
+  | 'transferSendCondition'
+  | 'transferReceiveCondition'
+  | 'transferReceiveDescription'
+  | 'transferReceiveImage'
+  | 'transferRejectDescription'
+  | 'transferRejectImage'
   | 'createdBy'
   | 'updatedBy'
   | 'createdAt'
@@ -43,7 +63,6 @@ export class AssetItemRequest
   declare locId: string
   declare name: string
   declare phone: string
-  declare assetIds: string[]
   declare reason: ItemRequestReason
   declare problem: string | null
   declare qrCode: string | null
@@ -52,7 +71,18 @@ export class AssetItemRequest
   declare requestImage: string | null
   declare declineComment: string | null
   declare declineImage: string | null
+  declare returnDeclineComment: string | null
+  declare returnDeclineImage: string | null
   declare expectedReturnDate: Date | null
+  declare serviceLogId: string | null
+  declare toLocId: string | null
+  declare transferSendCondition: TransferSendCondition | null
+  declare transferReceiveCondition: TransferSendCondition | null
+  declare transferReceiveDescription: string | null
+  declare transferReceiveImage: string | null
+  declare transferRejectDescription: string | null
+  declare transferRejectImage: string | null
+  declare requestAssets?: AssetItemRequestAsset[]
 }
 
 AssetItemRequest.init(
@@ -70,13 +100,8 @@ AssetItemRequest.init(
       type: DataTypes.STRING(50),
       allowNull: false,
     },
-    assetIds: {
-      type: DataTypes.JSON,
-      allowNull: false,
-      defaultValue: [],
-    },
     reason: {
-      type: DataTypes.ENUM('scrap', 'repair', 'external_use'),
+      type: DataTypes.ENUM('scrap', 'repair', 'external_use', 'inter_center_transfer'),
       allowNull: false,
     },
     problem: {
@@ -92,7 +117,7 @@ AssetItemRequest.init(
       allowNull: true,
     },
     status: {
-      type: DataTypes.ENUM('pending', 'approved', 'declined'),
+      type: DataTypes.ENUM('pending', 'approved', 'declined', 'returned', 'return_declined', 'cancelled'),
       allowNull: false,
       defaultValue: 'pending',
     },
@@ -108,8 +133,48 @@ AssetItemRequest.init(
       type: DataTypes.TEXT('long'),
       allowNull: true,
     },
+    returnDeclineComment: {
+      type: DataTypes.TEXT,
+      allowNull: true,
+    },
+    returnDeclineImage: {
+      type: DataTypes.TEXT('long'),
+      allowNull: true,
+    },
     expectedReturnDate: {
       type: DataTypes.DATE,
+      allowNull: true,
+    },
+    serviceLogId: {
+      type: DataTypes.UUID,
+      allowNull: true,
+    },
+    toLocId: {
+      type: DataTypes.UUID,
+      allowNull: true,
+    },
+    transferSendCondition: {
+      type: DataTypes.ENUM('new', 'good', 'bad', 'partially_damage'),
+      allowNull: true,
+    },
+    transferReceiveCondition: {
+      type: DataTypes.ENUM('new', 'good', 'bad', 'partially_damage'),
+      allowNull: true,
+    },
+    transferReceiveDescription: {
+      type: DataTypes.TEXT,
+      allowNull: true,
+    },
+    transferReceiveImage: {
+      type: DataTypes.TEXT('long'),
+      allowNull: true,
+    },
+    transferRejectDescription: {
+      type: DataTypes.TEXT,
+      allowNull: true,
+    },
+    transferRejectImage: {
+      type: DataTypes.TEXT('long'),
       allowNull: true,
     },
   },

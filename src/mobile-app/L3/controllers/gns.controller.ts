@@ -517,7 +517,7 @@ export const scanItemRequestQr = async (req: Request, res: Response) => {
     return res.status(200).json({
       success: true,
       message: 'Item request retrieved successfully',
-      data: await enrichItemRequest(itemRequest),
+      data: await enrichItemRequest(itemRequest, resolvedLocId),
     })
   } catch (error) {
     console.error('Error scanning item request QR:', error)
@@ -527,13 +527,15 @@ export const scanItemRequestQr = async (req: Request, res: Response) => {
 
 export const approveItemRequestScan = async (req: Request, res: Response) => {
   try {
-    const { itemRequestId } = req.body
+    const { itemRequestId, assetIds, locId } = req.body
     if (!itemRequestId) {
       return res.status(400).json({ success: false, message: 'Provide itemRequestId' })
     }
 
     const userId = (req as Request & { user?: { id?: string } }).user?.id || null
-    const result = await approveItemRequestById(itemRequestId, userId)
+    const resolvedLocId =
+      locId || (req as Request & { user?: { defaultLocationId?: string } }).user?.defaultLocationId || null
+    const result = await approveItemRequestById(itemRequestId, userId, assetIds, resolvedLocId)
 
     if ('error' in result && result.error) {
       return res.status(result.status).json({ success: false, message: result.error })
@@ -542,7 +544,7 @@ export const approveItemRequestScan = async (req: Request, res: Response) => {
     return res.status(200).json({
       success: true,
       message: 'Item request approved successfully',
-      data: result.data,
+      data: 'data' in result ? result.data : null,
     })
   } catch (error) {
     console.error('Error approving item request:', error)
@@ -552,13 +554,15 @@ export const approveItemRequestScan = async (req: Request, res: Response) => {
 
 export const declineItemRequestScan = async (req: Request, res: Response) => {
   try {
-    const { itemRequestId, comment, image } = req.body
+    const { itemRequestId, comment, image, assetIds, locId } = req.body
     if (!itemRequestId) {
       return res.status(400).json({ success: false, message: 'Provide itemRequestId' })
     }
 
     const userId = (req as Request & { user?: { id?: string } }).user?.id || null
-    const result = await declineItemRequestById(itemRequestId, comment, image, userId)
+    const resolvedLocId =
+      locId || (req as Request & { user?: { defaultLocationId?: string } }).user?.defaultLocationId || null
+    const result = await declineItemRequestById(itemRequestId, comment, image, userId, assetIds, resolvedLocId)
 
     if ('error' in result && result.error) {
       return res.status(result.status).json({ success: false, message: result.error })
@@ -567,7 +571,7 @@ export const declineItemRequestScan = async (req: Request, res: Response) => {
     return res.status(200).json({
       success: true,
       message: 'Item request declined successfully',
-      data: result.data,
+      data: 'data' in result ? result.data : null,
     })
   } catch (error) {
     console.error('Error declining item request:', error)
