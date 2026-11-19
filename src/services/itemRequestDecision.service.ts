@@ -671,6 +671,7 @@ const declineReturn = async (
   }
 
   const actorId = updatedBy || null
+  const isTransfer = itemRequest.reason === ItemRequestReason.INTER_CENTER_TRANSFER
 
   await sequelize.transaction(async (transaction) => {
     const links = (await AssetItemRequestAsset.findAll({
@@ -695,6 +696,33 @@ const declineReturn = async (
       row.returnStatus = ItemRequestAssetGateStatus.DECLINED
       row.returnDecidedBy = actorId
       row.returnDecidedAt = decidedAt
+
+      if (isTransfer) {
+        const asset = await Asset.findByPk(row.assetId, { transaction })
+        if (!asset) continue
+        const fromStatus = asset.status
+        const originLocId = asset.transferOriginLocationId || itemRequest.locId
+        await asset.update(
+          {
+            locationId: originLocId,
+            transferOriginLocationId: originLocId,
+            status: AssetStatus.PENDING_INSPECTION,
+            updatedBy: actorId,
+          },
+          { transaction },
+        )
+        await AssetStatusLog.create(
+          {
+            assetId: asset.id,
+            fromStatus,
+            toStatus: AssetStatus.PENDING_INSPECTION,
+            note: 'Inter-center transfer inward declined — returned to origin',
+            createdBy: actorId,
+            updatedBy: actorId,
+          },
+          { transaction },
+        )
+      }
     }
 
     const refreshed = await AssetItemRequestAsset.findAll({

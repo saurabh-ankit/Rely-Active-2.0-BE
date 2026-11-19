@@ -102,9 +102,17 @@ async function buildAssetCenterSegments(asset: Asset): Promise<CenterSegment[]> 
     const req = link.itemRequest
     if (!req?.toLocId) continue
     if (String(link.outboundStatus) !== 'approved') continue
-    const at = toDate(link.updatedAt || req.updatedAt || req.createdAt)
-    if (!at) continue
-    segments.push({ startMs: at.getTime(), locationId: req.toLocId })
+    const outboundAt = toDate(link.outboundDecidedAt || link.updatedAt || req.updatedAt || req.createdAt)
+    if (!outboundAt) continue
+    segments.push({ startMs: outboundAt.getTime(), locationId: req.toLocId })
+
+    // Destination gate decline returns the asset to the origin center.
+    if (String(link.returnStatus) === 'declined') {
+      const returnAt = toDate(link.returnDecidedAt || link.updatedAt)
+      if (returnAt) {
+        segments.push({ startMs: returnAt.getTime(), locationId: req.locId })
+      }
+    }
   }
 
   segments.sort((a, b) => a.startMs - b.startMs)
@@ -582,6 +590,7 @@ async function loadItemRequests(assetId: string): Promise<PendingEvent[]> {
           `Reason: ${reasonLabel}`,
           decidedByName ? `By: ${decidedByName}` : null,
           row.returnDeclineComment || row.declineComment || null,
+          isTransfer ? 'Asset returned to origin for inspection' : null,
         ),
         at: returnStatus === 'declined' ? linkUpdatedAt : parentDecisionAt,
         createdAt: returnStatus === 'declined' ? linkUpdatedAt : parentDecisionAt,
@@ -674,6 +683,27 @@ async function loadStatusLogs(
         userId: row.createdBy || null,
         centerId,
         meta: { ...baseMeta, phase: 'rejected' },
+      })
+      continue
+    }
+
+    const isReturnedToOriginAfterInwardDecline =
+      note.includes('Inter-center transfer inward declined — returned to origin') ||
+      (row.toStatus === 'pending_inspection' &&
+        (row.fromStatus === 'inter_center_incoming' || row.fromStatus === 'pending_transfer_acceptance') &&
+        note.includes('returned to origin'))
+
+    if (isReturnedToOriginAfterInwardDecline) {
+      events.push({
+        id: `transfer:${row.id}:returned_to_origin`,
+        type: 'transfer',
+        title: 'Returned to origin after destination gate decline',
+        description: joinParts(`From ${row.fromStatus} to ${row.toStatus}`, row.note || null),
+        at,
+        createdAt: at,
+        userId: row.createdBy || null,
+        centerId,
+        meta: { ...baseMeta, phase: 'returned_to_origin' },
       })
       continue
     }
