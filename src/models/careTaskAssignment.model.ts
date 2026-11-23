@@ -37,6 +37,9 @@ export interface CareTaskAssignmentAttributes extends BaseAttributes {
   startDate: string | Date
   endDate?: string | Date | null | undefined
 
+  /** Task duration in minutes */
+  durationMinutes: number
+
   time?: string | null | undefined
 
   status: AssignmentStatus
@@ -70,6 +73,7 @@ export type CareTaskAssignmentCreationAttributes = Optional<
   | 'price'
   | 'frequency'
   | 'endDate'
+  | 'durationMinutes'
   | 'time'
   | 'status'
   | 'customInstructions'
@@ -109,6 +113,8 @@ export class CareTaskAssignment
 
   declare startDate: string | Date
   declare endDate: string | Date | null
+
+  declare durationMinutes: number
 
   declare time: string | null
 
@@ -212,6 +218,12 @@ CareTaskAssignment.init(
     endDate: {
       type: DataTypes.DATEONLY,
       allowNull: true,
+    },
+    durationMinutes: {
+      type: DataTypes.INTEGER,
+      allowNull: false,
+      defaultValue: 15,
+      comment: 'Task duration in minutes',
     },
     time: {
       type: DataTypes.STRING(50),

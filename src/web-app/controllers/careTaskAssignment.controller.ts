@@ -510,6 +510,7 @@ export async function getAllCareTaskAssignments(req: Request, res: Response): Pr
         'frequency',
         'startDate',
         'endDate',
+        'durationMinutes',
         'time',
         'status',
         'customInstructions',
@@ -740,6 +741,7 @@ export async function getAllCareTaskAssignments(req: Request, res: Response): Pr
       frequency: number
       startDate: string | Date
       endDate: string | Date | null
+      durationMinutes: number
       status: string
       isStopped: boolean
       source: string
@@ -911,6 +913,7 @@ export async function getAllCareTaskAssignments(req: Request, res: Response): Pr
         frequency: Number(item.frequency || 1),
         startDate: item.startDate as string | Date,
         endDate: (item.endDate as string | Date | null) || null,
+        durationMinutes: Number(item.durationMinutes || 15),
         status: String(item.status || 'ACTIVE'),
         isStopped: Boolean(item.isStopped),
         source: String(item.source || 'ADDON'),
@@ -921,6 +924,7 @@ export async function getAllCareTaskAssignments(req: Request, res: Response): Pr
           source: item.source,
           billingType: item.billingType || 'SESSION',
           price: Number(item.price || 0),
+          durationMinutes: Number(item.durationMinutes || 15),
           status: item.status || 'ACTIVE',
           isStopped: Boolean(item.isStopped),
           packageSubscriptionId: item.packageSubscriptionId || null,
@@ -1166,6 +1170,7 @@ export async function createCareTaskAssignment(req: Request, res: Response): Pro
       taskId,
       billingType,
       startDate,
+      durationMinutes,
       customInstructions,
       nurseId,
       source,
@@ -1278,6 +1283,7 @@ export async function createCareTaskAssignment(req: Request, res: Response): Pro
         frequency,
         startDate: (String(startDate).split('T')[0] as string) || String(startDate),
         endDate: body.endDate ? String(body.endDate).split('T')[0] : null,
+        durationMinutes: Number(durationMinutes),
         time: scheduledTime,
         status: 'ACTIVE',
         customInstructions: customInstructions ? String(customInstructions).trim() : null,
