@@ -14,6 +14,7 @@ import {
   blockAmenitySlot,
   cancelAmenitySlotBooking,
   createAmenitySlotBooking,
+  getAmenityBookablePeople,
   getAmenitySlotConfig,
   getAmenitySlotsForDate,
   unblockAmenitySlot,
@@ -38,6 +39,9 @@ router.get(
   validateQuery(amenitySlotQuerySchema),
   getAmenitySlotsForDate,
 )
+
+// Residents and residing family members who can be booked for.
+router.get('/:amenityId/bookable-people', validateParams(amenitySlotParamsSchema), getAmenityBookablePeople)
 
 router.post(
   '/:amenityId/bookings',

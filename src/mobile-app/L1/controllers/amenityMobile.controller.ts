@@ -9,6 +9,7 @@ import {
   AmenitySlotConfig,
   PropertyAmenity,
   Resident,
+  ResidentFamilyMember,
 } from '../../../models/index.js'
 import { AmenityBookingStatus } from '../../../models/amenitySlotBooking.model.js'
 import {
@@ -25,10 +26,16 @@ import {
 import { bookingCancelBlockedReason, bookingChargeFor } from '../../../services/amenityBookingCharge.js'
 import {
   bookedMessage,
+  type BookingHolder,
   bookingRangeView,
   createAmenityBooking,
+  familyMemberIdsOf,
   formatTimeLabel,
+  householdBookingWhere,
+  isSameHolder,
   occupyingWhere,
+  personName,
+  resolveBookingHolder,
   slotEndLabel,
   slotEndMinutes,
   unitNoun,
@@ -38,7 +45,12 @@ import { HttpError } from '../../../middlewares/error/http-error.js'
 import { AmenityBookingUnit } from '../../../models/amenitySlotConfig.model.js'
 
 interface ResidentContext {
+  /** The household's resident (for a family member, the resident they belong to). */
   residentId: string
+  /** Set when a family member is signed in; their bookings are theirs, not the resident's. */
+  familyMemberId: string | null
+  /** Who a booking made by the signed-in person is for. */
+  holder: BookingHolder
   locationId: string
 }
 
@@ -111,6 +123,10 @@ const getConfigSummary = (config: {
 const loadResidentContext = async (req: AuthenticatedRequest): Promise<ResidentContext | null> => {
   const residentId = req.user?.residentId || (req.user?.roles?.includes('RESIDENT') ? req.user?.id : null)
   if (!residentId) return null
+  const familyMemberId = req.user?.familyMemberId || null
+  const holder: BookingHolder = familyMemberId
+    ? { residentId: null, familyMemberId }
+    : { residentId, familyMemberId: null }
 
   const locationId =
     normalizeQueryString(req.query.locationId) ||
@@ -119,7 +135,7 @@ const loadResidentContext = async (req: AuthenticatedRequest): Promise<ResidentC
     req.locationId ||
     null
 
-  if (locationId) return { residentId, locationId }
+  if (locationId) return { residentId, familyMemberId, holder, locationId }
 
   const resident = await Resident.findOne({
     where: { id: residentId, isDeleted: false },
@@ -127,7 +143,7 @@ const loadResidentContext = async (req: AuthenticatedRequest): Promise<ResidentC
   })
   if (!resident?.locId) return null
 
-  return { residentId, locationId: resident.locId }
+  return { residentId, familyMemberId, holder, locationId: resident.locId }
 }
 
 const loadAmenityContext = async (locationId: string, amenityId: string): Promise<PropertyAmenityWithConfig | null> => {
@@ -320,7 +336,7 @@ export const getResidentAmenitySlotsByDate = async (req: AuthenticatedRequest, r
       const bookedCount = slotBookings.length
       const remainingCount = Math.max(config.capacity - bookedCount, 0)
       const past = isPastSlot(date, startMinutes)
-      const myBooking = slotBookings.find((booking) => booking.residentId === ctx.residentId) || null
+      const myBooking = slotBookings.find((booking) => isSameHolder(booking, ctx.holder)) || null
 
       let status: SlotStatus = SLOT_STATUSES.AVAILABLE
       if (past) status = SLOT_STATUSES.PAST
@@ -355,7 +371,7 @@ export const getResidentAmenitySlotsByDate = async (req: AuthenticatedRequest, r
     }
 
     const legacySlots = Array.from(legacyByStart.entries()).map(([startMinutes, slotBookings]) => {
-      const myBooking = slotBookings.find((booking) => booking.residentId === ctx.residentId) || null
+      const myBooking = slotBookings.find((booking) => isSameHolder(booking, ctx.holder)) || null
       return {
         startMinutes,
         startLabel: formatMinutesToAmPm(startMinutes),
@@ -444,23 +460,18 @@ export const createResidentAmenityBooking = async (req: AuthenticatedRequest, re
     }
     const config = context.slotConfig
 
-    const resident = await Resident.findOne({
-      where: {
-        id: ctx.residentId,
-        locId: ctx.locationId,
-        isDeleted: false,
-      },
+    // A family member books as themselves (residentId stays null); they must be residing.
+    const booker = await resolveBookingHolder({
+      residentId: ctx.familyMemberId ? null : ctx.residentId,
+      familyMemberId: ctx.familyMemberId,
+      locationId: ctx.locationId,
       transaction,
     })
-    if (!resident) {
-      await transaction.rollback()
-      return sendError(res, 'Resident not found for this location', 404)
-    }
 
     const booking = await createAmenityBooking({
       propertyAmenity: context,
       config,
-      residentId: ctx.residentId,
+      holder: booker.holder,
       input: { date, startMinutes, endDate, checkOutDate },
       notes,
       userId: resolveAuditUserId(req),
@@ -482,6 +493,7 @@ export const createResidentAmenityBooking = async (req: AuthenticatedRequest, re
           startLabel: formatMinutesToAmPm(booking.startMinutes),
           status: booking.status,
           residentId: booking.residentId,
+          familyMemberId: booking.familyMemberId,
           notes: booking.notes,
           ...bookingRangeView(booking, config),
         },
@@ -534,7 +546,13 @@ export const cancelResidentAmenityBooking = async (req: AuthenticatedRequest, re
       await transaction.rollback()
       return sendError(res, 'Booking not found', 404)
     }
-    if (booking.residentId !== ctx.residentId) {
+    // A family member cancels their own bookings; the resident can cancel any booking of the household.
+    const canCancel = ctx.familyMemberId
+      ? isSameHolder(booking, ctx.holder)
+      : booking.residentId === ctx.residentId ||
+        (!!booking.familyMemberId &&
+          (await familyMemberIdsOf(ctx.residentId, transaction)).includes(booking.familyMemberId))
+    if (!canCancel) {
       await transaction.rollback()
       return sendError(res, 'You can only cancel your own booking', 403)
     }
@@ -589,17 +607,31 @@ export const listResidentAmenityBookings = async (req: AuthenticatedRequest, res
       return sendError(res, 'status must be BOOKED, CANCELLED, or ALL', 400)
     }
 
-    const where: Record<string, unknown> = {
-      residentId: ctx.residentId,
+    // The resident sees the whole household's bookings (they're billed to the flat); a family member
+    // sees their own.
+    const ownerWhere = ctx.familyMemberId
+      ? { familyMemberId: ctx.familyMemberId }
+      : householdBookingWhere(ctx.residentId, await familyMemberIdsOf(ctx.residentId))
+    const where: Record<string | symbol, unknown> = {
       isDeleted: false,
-      // Includes stays that started earlier and are still running on `from`.
-      ...(to ? occupyingWhere(from, to) : { [Op.or]: [{ date: { [Op.gte]: from } }, { endDate: { [Op.gte]: from } }] }),
+      [Op.and]: [
+        ownerWhere,
+        // Includes stays that started earlier and are still running on `from`.
+        to ? occupyingWhere(from, to) : { [Op.or]: [{ date: { [Op.gte]: from } }, { endDate: { [Op.gte]: from } }] },
+      ],
     }
     if (statusInput !== 'ALL') where.status = statusInput
 
     const rows = (await AmenitySlotBooking.findAll({
       where,
       include: [
+        { model: Resident, as: 'resident', attributes: ['id', 'firstName', 'lastName'], required: false },
+        {
+          model: ResidentFamilyMember,
+          as: 'familyMember',
+          attributes: ['id', 'firstName', 'lastName', 'relation'],
+          required: false,
+        },
         {
           model: AmenitySlotConfig,
           as: 'slotConfig',
@@ -634,6 +666,8 @@ export const listResidentAmenityBookings = async (req: AuthenticatedRequest, res
       limit,
     })) as Array<
       AmenitySlotBooking & {
+        resident?: Resident | null
+        familyMember?: ResidentFamilyMember | null
         slotConfig?:
           | (AmenitySlotConfig & {
               propertyAmenity?: PropertyAmenityWithConfig | null
@@ -663,6 +697,13 @@ export const listResidentAmenityBookings = async (req: AuthenticatedRequest, res
         endMinutes,
         endLabel: formatTimeLabel(endMinutes),
         createdAt: booking.createdAt,
+        bookedBy: booking.familyMemberId ? 'FAMILY_MEMBER' : 'RESIDENT',
+        familyMemberId: booking.familyMemberId,
+        bookedForName: booking.familyMemberId
+          ? personName(booking.familyMember, 'Family member')
+          : personName(booking.resident, 'Resident'),
+        relation: booking.familyMember?.relation || null,
+        isMine: isSameHolder(booking, ctx.holder),
       }
     })
 

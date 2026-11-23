@@ -355,9 +355,10 @@ export const amenityBookingSource: UsageSource = {
   serviceType: ServiceType.AMENITY_BOOKING,
   async load(ctx, from, to) {
     if (!ctx.residentIds.length) return []
+    // Booked for the resident or one of their family members; both bill to the flat.
     const bookings = (await AmenitySlotBooking.findAll({
       where: {
-        residentId: ctx.residentIds,
+        ...residentOrFamily(ctx),
         isDeleted: false,
         status: AmenityBookingStatus.BOOKED,
         chargeAmount: { [Op.gt]: 0 },
@@ -404,7 +405,8 @@ export const amenityBookingSource: UsageSource = {
       }
       return usageLine(ServiceType.AMENITY_BOOKING, {
         sourceId: booking.id,
-        residentId: booking.residentId,
+        residentId: chargeResidentId(ctx, booking.residentId, booking.familyMemberId),
+        familyMemberId: flatFamilyMemberId(ctx, booking.familyMemberId),
         name: `Amenity – ${booking.slotConfig?.propertyAmenity?.amenity?.name || 'Booking'}`,
         description,
         quantity: count,

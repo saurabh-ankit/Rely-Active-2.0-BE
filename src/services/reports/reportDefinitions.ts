@@ -611,7 +611,8 @@ export const REPORTS: ReportDefinition[] = [
   {
     key: 'amenities',
     title: 'Amenities',
-    description: 'Amenity slot bookings with resident, amenity, timing, units booked, charge and status.',
+    description:
+      'Amenity slot bookings with resident or family member, amenity, timing, units booked, charge and status.',
     dateBasis: 'Booking date',
     flat: flatIs('rs.unitId'),
     filter: { label: 'Status', column: 'b.status', options: options('BOOKED', 'CANCELLED') },
@@ -631,14 +632,19 @@ export const REPORTS: ReportDefinition[] = [
     ],
     sql: (status) => `
       SELECT ${ymd('b.date')} AS date, ${ymd('b.endDate')} AS endDate, am.name AS amenity,
-        ${clockSql('b.startMinutes')} AS startTime, ${clockSql('b.endMinutes')} AS endTime, ${fullName('rs')} AS resident,
+        ${clockSql('b.startMinutes')} AS startTime, ${clockSql('b.endMinutes')} AS endTime,
+        CASE WHEN fm.id IS NULL THEN ${fullName('rs')}
+          ELSE CONCAT(${fullName('fm')}, ' (', CONCAT_WS(' of ', NULLIF(TRIM(fm.relation), ''), ${fullName('rs')}), ')')
+        END AS resident,
         ${unitSql('rs.unitId')} AS unit, b.unitCount, b.chargeAmount, b.status, b.notes,
         ${localDateTime('b.createdAt')} AS bookedAt
       FROM amenity_slot_bookings b
       JOIN amenity_slot_configs c ON c.id = b.slotConfigId
       JOIN property_amenities pa ON pa.id = c.propertyAmenityId
       LEFT JOIN amenities am ON am.id = pa.amenityId
-      LEFT JOIN residents rs ON rs.id = b.residentId
+      LEFT JOIN resident_family_members fm ON fm.id = b.familyMemberId
+      -- A family member's booking has no residentId: use their household's resident and flat.
+      LEFT JOIN residents rs ON rs.id = COALESCE(b.residentId, fm.residentId)
       WHERE pa.propertyId = :loc AND b.isDeleted = 0 AND b.date BETWEEN :from AND :to ${status}
       ORDER BY b.date, b.startMinutes`,
   },
