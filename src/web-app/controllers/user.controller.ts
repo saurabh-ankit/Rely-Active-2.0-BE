@@ -326,6 +326,25 @@ export async function getAllUsers(req: Request, res: Response): Promise<void> {
       }
     }
 
+    // ?search= matches name (first, last or full), username, email, phone or employee code.
+    const search = typeof req.query.search === 'string' ? req.query.search.trim() : ''
+    if (search) {
+      const like = `%${search}%`
+      userWhere[Op.or as unknown as string] = [
+        { username: { [Op.like]: like } },
+        { email: { [Op.like]: like } },
+        { phone: { [Op.like]: like } },
+        { '$profile.firstName$': { [Op.like]: like } },
+        { '$profile.lastName$': { [Op.like]: like } },
+        { '$profile.phone$': { [Op.like]: like } },
+        { '$profile.employeeCode$': { [Op.like]: like } },
+        sequelize.where(
+          sequelize.fn('CONCAT_WS', ' ', sequelize.col('profile.firstName'), sequelize.col('profile.lastName')),
+          { [Op.like]: like },
+        ),
+      ]
+    }
+
     const users = (await User.findAll({
       where: userWhere,
       include: [
@@ -357,7 +376,11 @@ export async function getAllUsers(req: Request, res: Response): Promise<void> {
       req.query.includeSuperAdmins === 'true' &&
       (await isUserSuperAdmin((req as AuthenticatedRequest).user?.id))
 
-    const listedUsers = includeSuperAdmins ? users : users.filter((u) => !isSuperAdminUser(u))
+    // ?limit= returns only the first N (newest first), e.g. for pickers that search for the rest.
+    const limitRaw = Number(req.query.limit)
+    const limit = Number.isInteger(limitRaw) && limitRaw > 0 ? Math.min(limitRaw, 200) : null
+    const visibleUsers = includeSuperAdmins ? users : users.filter((u) => !isSuperAdminUser(u))
+    const listedUsers = limit ? visibleUsers.slice(0, limit) : visibleUsers
 
     const specializationsByUser = await getSpecializationsForUsers(listedUsers.map((u) => u.id))
 
