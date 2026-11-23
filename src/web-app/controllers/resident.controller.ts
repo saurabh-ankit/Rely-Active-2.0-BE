@@ -53,6 +53,7 @@ import {
   UnitChangeError,
   type UnitChangeChoices,
 } from '../../services/residentUnitMove.service.js'
+import { ADULT_DOB_MESSAGE, isAtLeastAge } from '../../utils/age.util.js'
 
 export async function createResident(req: AuthenticatedRequest, res: Response): Promise<void> {
   try {
@@ -89,6 +90,11 @@ export async function createResident(req: AuthenticatedRequest, res: Response): 
         success: false,
         message: 'unitId, locId, firstName, residentType, email, and phone are required.',
       })
+      return
+    }
+
+    if (dob && !isAtLeastAge(String(dob))) {
+      res.status(400).json({ success: false, message: `Resident date of birth: ${ADULT_DOB_MESSAGE}.` })
       return
     }
 
@@ -595,6 +601,12 @@ export async function updateResident(req: Request, res: Response): Promise<void>
       unitId,
       unitChange: rawUnitChange,
     } = req.body
+
+    // Only a changed date of birth is checked, so older records can still be edited.
+    if (dob && String(dob).slice(0, 10) !== String(resident.dob || '').slice(0, 10) && !isAtLeastAge(String(dob))) {
+      res.status(400).json({ success: false, message: `Resident date of birth: ${ADULT_DOB_MESSAGE}.` })
+      return
+    }
 
     // Moving to another flat: check it before changing anything.
     const newUnitId = unitId && String(unitId) !== resident.unitId ? String(unitId) : null

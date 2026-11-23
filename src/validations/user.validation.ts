@@ -1,6 +1,7 @@
 import { z } from 'zod'
 import { WEEK_DAYS } from '../enums/roster.enum.js'
 import { EMAIL_REGEX, PHONE_REGEX } from './company.validation.js'
+import { ADULT_DOB_MESSAGE, isAtLeastAge } from '../utils/age.util.js'
 
 const NAME_REGEX = /^[a-zA-Z\s]+$/
 // Any visible characters (special characters allowed), no spaces.
@@ -44,6 +45,7 @@ const optionalDateOfBirth = z
   .refine((val) => !val || val.trim() <= todayYmdLocal(), {
     message: 'Date of birth cannot be a future date',
   })
+  .refine((val) => !val || isAtLeastAge(val), { message: ADULT_DOB_MESSAGE })
 
 const optionalDateOfJoining = z
   .string()
