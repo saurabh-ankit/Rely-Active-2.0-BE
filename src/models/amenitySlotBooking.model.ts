@@ -20,7 +20,10 @@ export interface AmenitySlotBookingAttributes extends BaseAttributes {
   /** Slots, days or nights booked, and the price of each when booked. */
   unitCount?: number | null
   unitPrice?: number | null
-  residentId: string
+  /** The resident it was booked for; null when booked for a family member. */
+  residentId: string | null
+  /** The family member it was booked for; null when booked for the resident. Exactly one is set. */
+  familyMemberId?: string | null
   status: AmenityBookingStatusType
   /** The amenity's price when booked (null or 0 when free); billed on the flat's invoice. */
   chargeAmount?: number | null
@@ -36,6 +39,7 @@ export type AmenitySlotBookingCreationAttributes = Optional<
   | 'endMinutes'
   | 'unitCount'
   | 'unitPrice'
+  | 'familyMemberId'
   | 'status'
   | 'chargeAmount'
   | 'notes'
@@ -58,7 +62,8 @@ export class AmenitySlotBooking
   declare endMinutes: number | null
   declare unitCount: number | null
   declare unitPrice: number | null
-  declare residentId: string
+  declare residentId: string | null
+  declare familyMemberId: string | null
   declare status: AmenityBookingStatusType
   declare chargeAmount: number | null
   declare notes: string | null
@@ -99,7 +104,11 @@ AmenitySlotBooking.init(
     },
     residentId: {
       type: DataTypes.UUID,
-      allowNull: false,
+      allowNull: true,
+    },
+    familyMemberId: {
+      type: DataTypes.UUID,
+      allowNull: true,
     },
     status: {
       type: DataTypes.ENUM(...Object.values(AmenityBookingStatus)),
@@ -135,6 +144,7 @@ AmenitySlotBooking.init(
         name: 'amenity_slot_bookings_lookup_idx',
       },
       { fields: ['residentId', 'date', 'isDeleted'], name: 'amenity_slot_bookings_resident_idx' },
+      { fields: ['familyMemberId', 'date', 'isDeleted'], name: 'amenity_slot_bookings_family_member_idx' },
     ],
   },
 )

@@ -11,6 +11,7 @@ import {
   PropertyFloor,
   PropertyUnit,
   Resident,
+  ResidentFamilyMember,
 } from '../../models/index.js'
 import { bookingCancelBlockedReason } from '../../services/amenityBookingCharge.js'
 import {
@@ -18,6 +19,8 @@ import {
   bookingRangeView,
   createAmenityBooking,
   occupyingWhere,
+  personName,
+  resolveBookingHolder,
   slotEndLabel,
   slotEndMinutes,
   unitOf,
@@ -84,17 +87,34 @@ const loadAmenityContext = async (locationId: string, amenityId: string): Promis
   })) as PropertyAmenityWithConfig | null
 }
 
-const bookingResidentInclude = [
+/** A fresh include each time: Sequelize mutates include objects, so they can't be shared. */
+const unitWithFloorInclude = () => ({
+  model: PropertyUnit,
+  as: 'unit',
+  attributes: ['id', 'unit_number'],
+  include: [{ model: PropertyFloor, as: 'floor', attributes: ['id', 'floor_number'], required: false }],
+  required: false,
+})
+
+/** The resident or family member a booking is for, with the household's flat. */
+const bookingResidentInclude = () => [
   {
     model: Resident,
     as: 'resident',
     attributes: ['id', 'firstName', 'lastName', 'phone', 'email'],
+    include: [unitWithFloorInclude()],
+    required: false,
+  },
+  {
+    model: ResidentFamilyMember,
+    as: 'familyMember',
+    attributes: ['id', 'firstName', 'lastName', 'relation', 'residentId'],
     include: [
       {
-        model: PropertyUnit,
-        as: 'unit',
-        attributes: ['id', 'unit_number'],
-        include: [{ model: PropertyFloor, as: 'floor', attributes: ['id', 'floor_number'], required: false }],
+        model: Resident,
+        as: 'resident',
+        attributes: ['id', 'firstName', 'lastName'],
+        include: [unitWithFloorInclude()],
         required: false,
       },
     ],
@@ -109,28 +129,38 @@ const formatBooking = (
   id: string
   date: string
   startMinutes: number
-  residentId: string
+  /** The household's resident (the booker, or the family member's resident). */
+  residentId: string | null
+  familyMemberId: string | null
+  bookedBy: 'RESIDENT' | 'FAMILY_MEMBER'
+  /** Name of the person the booking is for. */
   residentName: string
+  relation: string | null
+  householdResidentName: string | null
   floorNumber: number | null
   unitNumber: string | null
   status: AmenitySlotBookingAttributes['status']
   createdAt?: Date
 } => {
+  type ResidentWithUnit = Resident & { unit?: (PropertyUnit & { floor?: PropertyFloor | null }) | null }
   const raw = booking.toJSON() as AmenitySlotBookingAttributes & {
-    resident?: Resident & {
-      unit?: (PropertyUnit & { floor?: PropertyFloor | null }) | null
-    }
+    resident?: ResidentWithUnit | null
+    familyMember?: (ResidentFamilyMember & { resident?: ResidentWithUnit | null }) | null
   }
-  const resident = raw.resident
-  const residentName = `${resident?.firstName || ''} ${resident?.lastName || ''}`.trim() || 'Resident'
-  const floorNumber = resident?.unit?.floor?.floor_number ?? null
-  const unitNumber = resident?.unit?.unit_number || null
+  const familyMember = raw.familyMemberId ? raw.familyMember : null
+  const household = familyMember ? familyMember.resident : raw.resident
+  const floorNumber = household?.unit?.floor?.floor_number ?? null
+  const unitNumber = household?.unit?.unit_number || null
   const formatted = {
     id: raw.id,
     date: raw.date,
     startMinutes: raw.startMinutes,
-    residentId: raw.residentId,
-    residentName,
+    residentId: household?.id ?? raw.residentId ?? null,
+    familyMemberId: raw.familyMemberId ?? null,
+    bookedBy: (raw.familyMemberId ? 'FAMILY_MEMBER' : 'RESIDENT') as 'RESIDENT' | 'FAMILY_MEMBER',
+    residentName: familyMember ? personName(familyMember, 'Family member') : personName(raw.resident, 'Resident'),
+    relation: familyMember?.relation || null,
+    householdResidentName: familyMember ? personName(household, 'Resident') : null,
     floorNumber,
     unitNumber,
     status: raw.status,
@@ -309,7 +339,7 @@ export const updateAmenitySlotConfig = async (req: AuthenticatedRequest, res: Re
         status: AmenityBookingStatus.BOOKED,
         date: { [Op.gte]: toYmdLocal() },
       },
-      include: bookingResidentInclude,
+      include: bookingResidentInclude(),
       order: [
         ['date', 'ASC'],
         ['startMinutes', 'ASC'],
@@ -424,7 +454,7 @@ export const getAmenitySlotsForDate = async (req: AuthenticatedRequest, res: Res
         isDeleted: false,
         ...occupyingWhere(date, date),
       },
-      include: bookingResidentInclude,
+      include: bookingResidentInclude(),
       order: [['createdAt', 'ASC']],
     })) as AmenitySlotBooking[]
 
@@ -522,17 +552,128 @@ export const getAmenitySlotsForDate = async (req: AuthenticatedRequest, res: Res
   }
 }
 
+const BOOKABLE_PEOPLE_LIMIT = 200
+
+/**
+ * Residents of the property and their residing family members, for the booking search. Matches
+ * name, phone, username or flat number (a family member also matches on their household's flat).
+ */
+export const getAmenityBookablePeople = async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const locationId = req.params.locationId as string
+    const search = typeof req.query.search === 'string' ? req.query.search.trim() : ''
+    const like = search ? `%${search}%` : null
+    const flatMatch = like ? [{ '$unit.unit_number$': { [Op.like]: like } }] : []
+
+    const residents = await Resident.findAll({
+      where: {
+        locId: locationId,
+        isDeleted: false,
+        ...(like
+          ? {
+              [Op.or]: [
+                { firstName: { [Op.like]: like } },
+                { lastName: { [Op.like]: like } },
+                { username: { [Op.like]: like } },
+                { phone: { [Op.like]: like } },
+                ...flatMatch,
+              ],
+            }
+          : {}),
+      },
+      attributes: ['id', 'firstName', 'lastName', 'phone'],
+      include: [unitWithFloorInclude()],
+      order: [
+        ['firstName', 'ASC'],
+        ['lastName', 'ASC'],
+      ],
+      limit: BOOKABLE_PEOPLE_LIMIT,
+      subQuery: false,
+    })
+
+    const familyMembers = await ResidentFamilyMember.findAll({
+      where: {
+        isDeleted: false,
+        isResiding: true,
+        ...(like
+          ? {
+              [Op.or]: [
+                { firstName: { [Op.like]: like } },
+                { lastName: { [Op.like]: like } },
+                { username: { [Op.like]: like } },
+                { phone: { [Op.like]: like } },
+                { '$resident.unit.unit_number$': { [Op.like]: like } },
+              ],
+            }
+          : {}),
+      },
+      attributes: ['id', 'firstName', 'lastName', 'relation', 'phone', 'residentId'],
+      include: [
+        {
+          model: Resident,
+          as: 'resident',
+          attributes: ['id', 'firstName', 'lastName'],
+          where: { locId: locationId, isDeleted: false },
+          required: true,
+          include: [unitWithFloorInclude()],
+        },
+      ],
+      order: [
+        ['firstName', 'ASC'],
+        ['lastName', 'ASC'],
+      ],
+      limit: BOOKABLE_PEOPLE_LIMIT,
+      subQuery: false,
+    })
+
+    type WithUnit = { unit?: (PropertyUnit & { floor?: PropertyFloor | null }) | null }
+    const flatOf = (r: WithUnit | null | undefined) => ({
+      floorNumber: r?.unit?.floor?.floor_number ?? null,
+      unitNumber: r?.unit?.unit_number || null,
+    })
+
+    const people = [
+      ...residents.map((r) => ({
+        type: 'RESIDENT' as const,
+        residentId: r.id,
+        familyMemberId: null,
+        name: personName(r, 'Resident'),
+        relation: null,
+        householdResidentName: null,
+        phone: r.phone || null,
+        ...flatOf(r as Resident & WithUnit),
+      })),
+      ...familyMembers.map((f) => ({
+        type: 'FAMILY_MEMBER' as const,
+        residentId: f.residentId,
+        familyMemberId: f.id,
+        name: personName(f, 'Family member'),
+        relation: f.relation || null,
+        householdResidentName: personName(f.resident, 'Resident'),
+        phone: f.phone || null,
+        ...flatOf(f.resident as (Resident & WithUnit) | undefined),
+      })),
+    ].sort((a, b) => a.name.localeCompare(b.name))
+
+    return res.status(200).json({ success: true, data: { people } })
+  } catch (error) {
+    console.error('Get Amenity Bookable People Error:', error)
+    return sendError(res, 'Failed to load residents', 500)
+  }
+}
+
 export const createAmenitySlotBooking = async (req: AuthenticatedRequest, res: Response) => {
   const transaction = await sequelize.transaction()
   try {
     const locationId = req.params.locationId as string
     const amenityId = req.params.amenityId as string
-    const { date, startMinutes, endDate, checkOutDate, residentId, notes } = req.body as {
+    const { date, startMinutes, endDate, checkOutDate, residentId, familyMemberId, notes } = req.body as {
       date: string
       startMinutes?: number
       endDate?: string
       checkOutDate?: string
-      residentId: string
+      residentId?: string
+      familyMemberId?: string
       notes?: string
     }
 
@@ -552,23 +693,13 @@ export const createAmenitySlotBooking = async (req: AuthenticatedRequest, res: R
       return sendError(res, 'Slot setup not found for this amenity', 400)
     }
 
-    const resident = await Resident.findOne({
-      where: {
-        id: residentId,
-        locId: locationId,
-        isDeleted: false,
-      },
-      transaction,
-    })
-    if (!resident) {
-      await transaction.rollback()
-      return sendError(res, 'Resident not found for this property', 404)
-    }
+    // A resident, or a residing family member (then residentId is stored as null).
+    const booker = await resolveBookingHolder({ residentId, familyMemberId, locationId, transaction })
 
     const booking = await createAmenityBooking({
       propertyAmenity: context,
       config,
-      residentId,
+      holder: booker.holder,
       input: { date, startMinutes, endDate, checkOutDate },
       notes,
       userId: req.user?.id || null,
@@ -577,7 +708,6 @@ export const createAmenitySlotBooking = async (req: AuthenticatedRequest, res: R
 
     await transaction.commit()
 
-    const residentName = `${resident.firstName || ''} ${resident.lastName || ''}`.trim() || 'Resident'
     const amenityName = context.amenity?.name || 'Amenity'
     await publishAmenitySlotBookedNotificationSafe({
       locationId,
@@ -585,8 +715,9 @@ export const createAmenitySlotBooking = async (req: AuthenticatedRequest, res: R
       amenityName,
       date: booking.date,
       startMinutes: booking.startMinutes,
-      residentId: resident.id,
-      residentName,
+      residentId: booker.resident.id,
+      familyMemberId: booker.holder.familyMemberId,
+      residentName: booker.name,
       adminUserId: req.user?.id || null,
       actor: resolveNotificationActor(req, req.user?.email || 'Admin'),
     })
@@ -600,6 +731,7 @@ export const createAmenitySlotBooking = async (req: AuthenticatedRequest, res: R
           date: booking.date,
           startMinutes: booking.startMinutes,
           residentId: booking.residentId,
+          familyMemberId: booking.familyMemberId,
           status: booking.status,
           ...bookingRangeView(booking, config),
         },

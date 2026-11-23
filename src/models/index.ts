@@ -304,6 +304,8 @@ AmenitySlotBlock.belongsTo(AmenitySlotConfig, { foreignKey: 'slotConfigId', as: 
 
 Resident.hasMany(AmenitySlotBooking, { foreignKey: 'residentId', as: 'amenitySlotBookings' })
 AmenitySlotBooking.belongsTo(Resident, { foreignKey: 'residentId', as: 'resident' })
+ResidentFamilyMember.hasMany(AmenitySlotBooking, { foreignKey: 'familyMemberId', as: 'amenitySlotBookings' })
+AmenitySlotBooking.belongsTo(ResidentFamilyMember, { foreignKey: 'familyMemberId', as: 'familyMember' })
 
 // ── Property → Entity → Block → Floor → Unit ────────────────────────────────
 Property.hasMany(PropertyEntity, { foreignKey: 'propertyId', as: 'entities' })

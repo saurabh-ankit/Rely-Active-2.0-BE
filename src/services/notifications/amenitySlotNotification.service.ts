@@ -9,7 +9,11 @@ export interface PublishAmenitySlotBookedNotificationInput {
   amenityName: string
   date: string
   startMinutes: number
+  /** The household's resident (notified, and billed for the booking). */
   residentId: string
+  /** Set when the booking is for a family member, who is notified too. */
+  familyMemberId?: string | null
+  /** Name of the person the booking is for. */
   residentName: string
   adminUserId?: string | null
   actor?: NotificationActorInput | null
@@ -24,6 +28,12 @@ function collectAmenityBookingRecipients(
       recipientResidentId: input.residentId,
     },
   ]
+  if (input.familyMemberId) {
+    recipients.push({
+      recipientType: NotificationRecipientType.FAMILY_MEMBER,
+      recipientFamilyMemberId: input.familyMemberId,
+    })
+  }
 
   if (input.adminUserId) {
     recipients.push({
@@ -42,11 +52,12 @@ export async function publishAmenitySlotBookedNotification(
   if (recipients.length === 0) return
 
   const slotLabel = formatMinutesToAmPm(input.startMinutes)
+  const bookerKey = input.familyMemberId || input.residentId
   await createNotificationEvent({
     module: NotificationModule.AMENITIES,
     eventCode: 'AMENITY_SLOT_BOOKED',
     entityType: 'AMENITY_SLOT_BOOKING',
-    entityId: `${input.amenityId}:${input.date}:${input.startMinutes}:${input.residentId}`,
+    entityId: `${input.amenityId}:${input.date}:${input.startMinutes}:${bookerKey}`,
     entityLabel: input.amenityName,
     locationId: input.locationId,
     actor: input.actor || null,
@@ -58,12 +69,13 @@ export async function publishAmenitySlotBookedNotification(
       amenityId: input.amenityId,
       amenityName: input.amenityName,
       residentId: input.residentId,
+      familyMemberId: input.familyMemberId ?? null,
       residentName: input.residentName,
       date: input.date,
       startMinutes: input.startMinutes,
       startLabel: slotLabel,
     },
-    dedupeKey: `amenity-slot-booked:${input.amenityId}:${input.date}:${input.startMinutes}:${input.residentId}`,
+    dedupeKey: `amenity-slot-booked:${input.amenityId}:${input.date}:${input.startMinutes}:${bookerKey}`,
     recipients,
     createdBy: input.actor?.actorUserId || input.adminUserId || null,
   })

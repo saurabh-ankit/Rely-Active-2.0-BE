@@ -31,17 +31,24 @@ export const updateAmenitySlotConfigSchema = z
     }
   })
 
-export const createAmenitySlotBookingSchema = z.object({
-  date: z.string().regex(YMD_REGEX, 'date must be in YYYY-MM-DD format'),
-  /** Timed slots only; day and overnight bookings start at the opening / check-in time. */
-  startMinutes: z.coerce.number().int().min(0).max(1439).optional(),
-  /** Full day: last day booked (inclusive). */
-  endDate: z.string().regex(YMD_REGEX, 'endDate must be in YYYY-MM-DD format').optional(),
-  /** Overnight stay: the check-out date. */
-  checkOutDate: z.string().regex(YMD_REGEX, 'checkOutDate must be in YYYY-MM-DD format').optional(),
-  residentId: z.string().uuid('Valid residentId is required'),
-  notes: z.string().trim().max(500).optional(),
-})
+export const createAmenitySlotBookingSchema = z
+  .object({
+    date: z.string().regex(YMD_REGEX, 'date must be in YYYY-MM-DD format'),
+    /** Timed slots only; day and overnight bookings start at the opening / check-in time. */
+    startMinutes: z.coerce.number().int().min(0).max(1439).optional(),
+    /** Full day: last day booked (inclusive). */
+    endDate: z.string().regex(YMD_REGEX, 'endDate must be in YYYY-MM-DD format').optional(),
+    /** Overnight stay: the check-out date. */
+    checkOutDate: z.string().regex(YMD_REGEX, 'checkOutDate must be in YYYY-MM-DD format').optional(),
+    /** Exactly one: the resident, or a residing family member it is booked for. */
+    residentId: z.string().uuid('Valid residentId is required').optional(),
+    familyMemberId: z.string().uuid('Valid familyMemberId is required').optional(),
+    notes: z.string().trim().max(500).optional(),
+  })
+  .refine((body) => !!body.residentId !== !!body.familyMemberId, {
+    message: 'Choose either a resident or a family member for the booking',
+    path: ['residentId'],
+  })
 
 export const createAmenitySlotBlockSchema = z.object({
   date: z.string().regex(YMD_REGEX, 'date must be in YYYY-MM-DD format'),

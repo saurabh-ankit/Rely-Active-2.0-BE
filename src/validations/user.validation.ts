@@ -1,9 +1,11 @@
 import { z } from 'zod'
 import { WEEK_DAYS } from '../enums/roster.enum.js'
 import { EMAIL_REGEX, PHONE_REGEX } from './company.validation.js'
+import { ADULT_DOB_MESSAGE, isAtLeastAge } from '../utils/age.util.js'
 
 const NAME_REGEX = /^[a-zA-Z\s]+$/
-const USERNAME_REGEX = /^[a-zA-Z0-9_]{3,30}$/
+// Any visible characters (special characters allowed), no spaces.
+const USERNAME_REGEX = /^\S{3,30}$/
 const EXPERIENCE_REGEX = /^\d{1,2}$/
 const BLOOD_GROUP_VALUES = ['A+', 'A-', 'B+', 'B-', 'O+', 'O-', 'AB+', 'AB-'] as const
 const GENDER_VALUES = ['MALE', 'FEMALE', 'OTHER'] as const
@@ -43,6 +45,7 @@ const optionalDateOfBirth = z
   .refine((val) => !val || val.trim() <= todayYmdLocal(), {
     message: 'Date of birth cannot be a future date',
   })
+  .refine((val) => !val || isAtLeastAge(val), { message: ADULT_DOB_MESSAGE })
 
 const optionalDateOfJoining = z
   .string()
@@ -118,7 +121,7 @@ export const createUserSchema = z
       .string()
       .optional()
       .refine((val) => !val || USERNAME_REGEX.test(val.trim()), {
-        message: 'Username must be 3–30 characters and contain only letters, numbers, or underscore',
+        message: 'Username must be 3–30 characters with no spaces',
       }),
     email: z
       .string()
@@ -220,7 +223,7 @@ export const updateUserSchema = z
       .string()
       .optional()
       .refine((val) => !val || USERNAME_REGEX.test(val.trim()), {
-        message: 'Username must be 3–30 characters and contain only letters, numbers, or underscore',
+        message: 'Username must be 3–30 characters with no spaces',
       }),
     email: z
       .string()

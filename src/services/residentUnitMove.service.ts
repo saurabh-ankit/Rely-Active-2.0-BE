@@ -217,7 +217,12 @@ export async function getUnitChangeImpact(residentId: string, toUnitId: string) 
         order: [['startDate', 'ASC']],
       }),
       AmenitySlotBooking.findAll({
-        where: { residentId: resident.id, isDeleted: false, status: 'BOOKED', date: { [Op.gte]: moveDate } },
+        where: {
+          ...byResidentOrFamily(resident.id, familyIds),
+          isDeleted: false,
+          status: 'BOOKED',
+          date: { [Op.gte]: moveDate },
+        },
         include: [
           {
             model: AmenitySlotConfig,
@@ -359,6 +364,7 @@ export async function getUnitChangeImpact(residentId: string, toUnitId: string) 
         amenity: cfg?.propertyAmenity?.amenity?.name ?? 'Amenity',
         date: b.date,
         startMinutes: b.startMinutes,
+        consumerName: who(b.familyMemberId),
       }
     }),
     tickets: {
