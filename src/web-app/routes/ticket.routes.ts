@@ -1,9 +1,19 @@
 import { Router } from 'express'
 import { authenticate } from '../../middlewares/authenticate.js'
 import { upload } from '../../middlewares/upload.js'
+import { validateBody } from '../../middlewares/validate/index.js'
+import { handleWorkDetailsUpload } from '../../middlewares/workDetailsUpload.js'
+import {
+  adminCompleteTicketSchema,
+  closeTicketSchema,
+  editTicketWorkDetailsSchema,
+} from '../../validations/ticketStaff.validation.js'
 import {
   addTicketComment,
   assignTicket,
+  closeTicketWithoutCompletion,
+  completeTicketWork,
+  editTicketWorkDetails,
   createTicket,
   deleteTicket,
   getAssignableEmployees,
@@ -13,6 +23,7 @@ import {
   getTicketAutoAssignSettings,
   getTicketById,
   getTickets,
+  startTicketWork,
   getTicketStats,
   updateTicketAutoAssignSettings,
   updateTicketOptions,
@@ -45,6 +56,18 @@ ticketRouter.get('/:id/auto-assign-log', getTicketAutoAssignLog)
 ticketRouter.patch('/:id/options', updateTicketOptions)
 ticketRouter.patch('/:id/assign', assignTicket)
 ticketRouter.patch('/:id/verify', verifyTicket)
+// The admin doing the work themselves, or completing it for the assigned staff member
+ticketRouter.post('/:id/start-work', startTicketWork)
+// Close an Open / In Progress ticket without completing it (raised by mistake, duplicate, …)
+ticketRouter.post('/:id/close', validateBody(closeTicketSchema), closeTicketWithoutCompletion)
+ticketRouter.post('/:id/complete', handleWorkDetailsUpload, validateBody(adminCompleteTicketSchema), completeTicketWork)
+// Correct the invoice amount / photos of a completed ticket
+ticketRouter.patch(
+  '/:id/work-details',
+  handleWorkDetailsUpload,
+  validateBody(editTicketWorkDetailsSchema),
+  editTicketWorkDetails,
+)
 ticketRouter.post('/:id/comments', upload.single('attachment'), addTicketComment)
 ticketRouter.delete('/:id', deleteTicket)
 

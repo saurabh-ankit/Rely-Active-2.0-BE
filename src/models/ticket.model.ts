@@ -42,6 +42,9 @@ export interface TicketAttributes extends BaseAttributes {
   verifiedAt?: Date | null
   verifiedByUserId?: string | null
   verificationNotes?: string | null
+  /** Why an admin closed it without completion (status CANCELLED). */
+  closeReason?: string | null
+  closedByUserId?: string | null
   escalatedAt?: Date | null
   escalatedByUserId?: string | null
   escalatedByName?: string | null
@@ -82,6 +85,8 @@ export type TicketCreationAttributes = Optional<
   | 'verifiedAt'
   | 'verifiedByUserId'
   | 'verificationNotes'
+  | 'closeReason'
+  | 'closedByUserId'
   | 'escalatedAt'
   | 'escalatedByUserId'
   | 'escalatedByName'
@@ -131,6 +136,8 @@ export class Ticket extends BaseModel<TicketAttributes, TicketCreationAttributes
   declare verifiedAt: Date | null
   declare verifiedByUserId: string | null
   declare verificationNotes: string | null
+  declare closeReason: string | null
+  declare closedByUserId: string | null
   declare escalatedAt: Date | null
   declare escalatedByUserId: string | null
   declare escalatedByName: string | null
@@ -285,6 +292,14 @@ Ticket.init(
     },
     verificationNotes: {
       type: DataTypes.TEXT,
+      allowNull: true,
+    },
+    closeReason: {
+      type: DataTypes.TEXT,
+      allowNull: true,
+    },
+    closedByUserId: {
+      type: DataTypes.UUID,
       allowNull: true,
     },
     escalatedAt: {

@@ -572,16 +572,20 @@ export async function expireOffers(): Promise<number> {
 }
 
 /**
- * An admin assigned the ticket (or gave it to a vendor) by hand: the open offer is withdrawn.
+ * An admin assigned the ticket (or gave it to a vendor) by hand, or closed it: the open offer is withdrawn.
  * The log keeps the earlier offers.
  */
-export async function endAutoAssignOnManualAssignSafe(ticketId: string, userId: string | null): Promise<void> {
+export async function endAutoAssignOnManualAssignSafe(
+  ticketId: string,
+  userId: string | null,
+  reason = 'Assigned manually',
+): Promise<void> {
   try {
     await sequelize.transaction(async (transaction) => {
       const ticket = await lockTicket(ticketId, transaction)
       if (!ticket?.autoAssignStatus) return
       const [count] = await TicketAutoAssignAttempt.update(
-        { status: 'CANCELLED', reason: 'Assigned manually', respondedAt: new Date(), updatedBy: userId },
+        { status: 'CANCELLED', reason, respondedAt: new Date(), updatedBy: userId },
         { where: { ticketId, status: { [Op.in]: ['OFFERED', 'WAITING'] } }, transaction },
       )
       if (count > 0 || ticket.offeredToUserId) {
