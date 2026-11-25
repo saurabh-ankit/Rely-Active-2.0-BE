@@ -23,6 +23,8 @@ import {
   Asset,
 } from '../../models/index.js'
 import { NotificationRecipientType } from '../../enums/notification.enum.js'
+import { ServiceType } from '../../enums/billing.enum.js'
+import { invoicedSourceIds } from '../../services/billing/invoicedSources.js'
 import { TicketActivityType, TicketPriority, TicketStatus } from '../../enums/ticket.enum.js'
 import { uploadFileToS3 } from '../../middlewares/s3/index.js'
 import { resolveNotificationActor } from '../../services/notifications/notificationAudience.service.js'
@@ -34,11 +36,38 @@ import {
   saveAutoAssignSettings,
 } from '../../services/ticketAutoAssign.service.js'
 import { HttpError } from '../../middlewares/error/http-error.js'
+import {
+  applyWorkDetails,
+  getWorkDetailFiles,
+  getWorkDetails,
+  normalizeAttachments,
+  toAmount,
+  uploadWorkFiles,
+} from '../../services/ticketWork.service.js'
+import type {
+  AdminCompleteTicketInput,
+  CloseTicketInput,
+  EditTicketWorkDetailsInput,
+} from '../../validations/ticketStaff.validation.js'
 import { buildTatUpdatedNotificationContent } from '../../services/notifications/ticketNotificationContent.service.js'
 import {
   publishTicketNotificationSafe,
   requestTicketFeedbackSafe,
 } from '../../services/notifications/ticketNotification.service.js'
+
+/** A ticket's amount is billed once it is on a live invoice; after that the amount is locked. */
+const INVOICED_AMOUNT_MESSAGE = 'An invoice has been generated for this ticket, so its amount cannot be changed'
+
+async function isTicketInvoiced(ticketId: string): Promise<boolean> {
+  return (await invoicedSourceIds(ServiceType.MAINTENANCE, [ticketId])).size > 0
+}
+
+/** Adds `isInvoiced` to each ticket, so the UI can lock the amount. */
+async function withInvoicedFlag(tickets: Ticket[]): Promise<Array<Record<string, unknown>>> {
+  const billable = tickets.filter((t) => Number(t.invoiceAmount) > 0).map((t) => t.id)
+  const invoiced = await invoicedSourceIds(ServiceType.MAINTENANCE, billable)
+  return tickets.map((t) => ({ ...t.toJSON(), isInvoiced: invoiced.has(t.id) }))
+}
 
 /**
  * Fetch master ticket categories and sub-categories
@@ -415,6 +444,28 @@ export async function getTickets(req: Request, res: Response): Promise<void> {
           include: [{ model: UserDetail, as: 'profile', attributes: ['firstName', 'lastName'] }],
           required: false,
         },
+        {
+          model: User,
+          as: 'closedByUser',
+          attributes: ['id', 'email', 'username'],
+          include: [{ model: UserDetail, as: 'profile', attributes: ['firstName', 'lastName'] }],
+          required: false,
+        },
+        // Who completed / verified it, for the list's "Completed by" line
+        {
+          model: User,
+          as: 'completedByUser',
+          attributes: ['id', 'email', 'username'],
+          include: [{ model: UserDetail, as: 'profile', attributes: ['firstName', 'lastName'] }],
+          required: false,
+        },
+        {
+          model: User,
+          as: 'verifiedByUser',
+          attributes: ['id', 'email', 'username'],
+          include: [{ model: UserDetail, as: 'profile', attributes: ['firstName', 'lastName'] }],
+          required: false,
+        },
         { model: AssetVendor, as: 'vendor', required: false },
         { model: Asset, as: 'asset', required: false },
         { model: TicketFeedback, as: 'feedback', required: false },
@@ -432,7 +483,7 @@ export async function getTickets(req: Request, res: Response): Promise<void> {
 
     res.status(200).json({
       success: true,
-      data: tickets,
+      data: await withInvoicedFlag(tickets),
       pagination: {
         total: count,
         page: pageNum,
@@ -551,6 +602,13 @@ export async function getTicketById(req: Request, res: Response): Promise<void> 
         },
         {
           model: User,
+          as: 'closedByUser',
+          attributes: ['id', 'email', 'username'],
+          include: [{ model: UserDetail, as: 'profile', attributes: ['firstName', 'lastName'] }],
+          required: false,
+        },
+        {
+          model: User,
           as: 'completedByUser',
           attributes: ['id', 'email', 'username'],
           include: [{ model: UserDetail, as: 'profile', attributes: ['firstName', 'lastName'] }],
@@ -601,9 +659,10 @@ export async function getTicketById(req: Request, res: Response): Promise<void> 
       return
     }
 
+    const [data] = await withInvoicedFlag([ticket])
     res.status(200).json({
       success: true,
-      data: ticket,
+      data,
     })
   } catch (error) {
     console.error('Error fetching ticket details:', error)
@@ -858,8 +917,30 @@ export async function updateTicketOptions(req: AuthenticatedRequest, res: Respon
       }
     }
     if (priority !== undefined) updatePayload.priority = priority
+    // In Progress needs a person on the ticket; that goes through /assign, not a bare status change.
+    if (status === TicketStatus.IN_PROGRESS && status !== previousStatus && !ticket.assignedToUserId) {
+      res.status(400).json({ success: false, message: 'Assign a staff member to move the ticket to In Progress' })
+      return
+    }
+    // Completing needs the work details (notes, photos, invoice): that goes through /complete.
+    const skipsCompletion =
+      (status === TicketStatus.RESOLVED && previousStatus !== TicketStatus.RESOLVED) ||
+      (status === TicketStatus.CLOSED &&
+        previousStatus !== TicketStatus.CLOSED &&
+        previousStatus !== TicketStatus.RESOLVED)
+    if (skipsCompletion) {
+      res.status(400).json({ success: false, message: 'Use Complete Ticket to add the work details first' })
+      return
+    }
     if (status !== undefined) updatePayload.status = status
-    if (invoiceAmount !== undefined) updatePayload.invoiceAmount = Number(invoiceAmount) || null
+    if (invoiceAmount !== undefined) {
+      const nextAmount = Number(invoiceAmount) || null
+      if (nextAmount !== toAmount(ticket.invoiceAmount) && (await isTicketInvoiced(ticket.id))) {
+        res.status(409).json({ success: false, message: INVOICED_AMOUNT_MESSAGE })
+        return
+      }
+      updatePayload.invoiceAmount = nextAmount
+    }
     if (resolutionNotes !== undefined) updatePayload.resolutionNotes = resolutionNotes
 
     await ticket.update(updatePayload)
@@ -1277,5 +1358,416 @@ export async function getTicketAutoAssignLog(req: Request, res: Response): Promi
     res.status(200).json({ success: true, data: await getAutoAssignLog(id) })
   } catch (error) {
     sendAutoAssignError(res, error, 'Error fetching ticket auto-assign log:')
+  }
+}
+
+// ── Admin doing the work (self-assigned) or completing it for staff ─────────
+
+/** Statuses a ticket can be started or completed from on the web. */
+const WEB_WORK_FROM: TicketStatus[] = [TicketStatus.OPEN, TicketStatus.IN_PROGRESS, TicketStatus.ON_HOLD]
+
+/** Profile name of a user, falling back to their username / email. */
+async function getUserDisplayName(userId: string | null | undefined, fallback: string): Promise<string> {
+  if (!userId) return fallback
+  const user = (await User.findByPk(userId, {
+    attributes: ['id', 'username', 'email'],
+    include: [{ model: UserDetail, as: 'profile', attributes: ['firstName', 'lastName'], required: false }],
+  })) as (User & { profile?: UserDetail | null }) | null
+  if (!user) return fallback
+  return (
+    `${user.profile?.firstName || ''} ${user.profile?.lastName || ''}`.trim() || user.username || user.email || fallback
+  )
+}
+
+function sendTicketError(res: Response, err: unknown, logLabel: string): void {
+  if (err instanceof HttpError) {
+    res.status(err.status).json({ success: false, message: err.message })
+    return
+  }
+  console.error(logLabel, err)
+  res.status(500).json({ success: false, message: 'Something went wrong. Please try again.' })
+}
+
+function assertWorkableStatus(ticket: Ticket, action: string): void {
+  if (!WEB_WORK_FROM.includes(ticket.status)) {
+    throw new HttpError(409, `Cannot ${action} a ticket that is ${ticket.status}`)
+  }
+}
+
+/**
+ * POST /tickets/:id/start-work
+ * The admin starts work on a ticket assigned to themselves, the same step staff
+ * take with "Start Work" in the L3 app.
+ */
+export async function startTicketWork(req: AuthenticatedRequest, res: Response): Promise<void> {
+  try {
+    const userId = req.user?.id
+    if (!userId) throw new HttpError(401, 'Authentication required')
+    const id = req.params.id as string
+    const actorName = await getUserDisplayName(userId, req.user?.email || 'Admin')
+
+    const { ticket, previousStatus } = await sequelize.transaction(async (transaction) => {
+      const t = await Ticket.findByPk(id, { transaction, lock: transaction.LOCK.UPDATE })
+      if (!t) throw new HttpError(404, 'Ticket not found')
+      if (t.assignedToUserId !== userId) {
+        throw new HttpError(403, 'Only the assigned person can start work on this ticket')
+      }
+      if (t.workStartedAt) throw new HttpError(409, 'Work has already started on this ticket')
+      assertWorkableStatus(t, 'start work on')
+
+      const fromStatus = t.status
+      t.status = TicketStatus.IN_PROGRESS
+      t.workStartedAt = new Date()
+      t.workStartedByUserId = userId
+      t.updatedBy = userId
+      await t.save({ transaction })
+
+      await TicketActivityLog.create(
+        {
+          ticketId: t.id,
+          performedByUserId: userId,
+          performedByName: actorName,
+          activityType: TicketActivityType.STATUS_CHANGE,
+          fromStatus,
+          toStatus: TicketStatus.IN_PROGRESS,
+          comment: `Work started by ${actorName}`,
+          createdBy: userId,
+        },
+        { transaction },
+      )
+      return { ticket: t, previousStatus: fromStatus }
+    })
+
+    await publishTicketNotificationSafe({
+      ticket,
+      eventCode: 'TICKET_WORK_STARTED',
+      title: 'Ticket work started',
+      message: `${ticket.title || 'Ticket'} (${ticket.ticketNumber}) work has started.`,
+      actor: resolveNotificationActor(req, actorName),
+      payload: {
+        previousStatus,
+        status: ticket.status,
+        workStartedAt: ticket.workStartedAt,
+        workStartedByUserId: userId,
+      },
+    })
+
+    res.status(200).json({ success: true, message: 'Work started', data: ticket })
+  } catch (err: unknown) {
+    sendTicketError(res, err, 'Error starting ticket work:')
+  }
+}
+
+/**
+ * POST /tickets/:id/complete  (JSON or multipart/form-data)
+ * Fields: notes (required), invoiceAmount?, close?; files: photos[] (max 10), voiceNotes[] (max 5).
+ * The same details staff submit from L3.
+ * - Own ticket: closed straight away (no point verifying your own work).
+ * - Someone else's ticket: Completed, logged as done on their behalf, and still needs
+ *   Verify & Close, unless `close` is set (the admin picked "Closed").
+ * Work that was never started is marked started at completion.
+ */
+export async function completeTicketWork(req: AuthenticatedRequest, res: Response): Promise<void> {
+  try {
+    const userId = req.user?.id
+    if (!userId) throw new HttpError(401, 'Authentication required')
+    const id = req.params.id as string
+    const { notes, invoiceAmount, close } = req.body as AdminCompleteTicketInput
+    const actorName = await getUserDisplayName(userId, req.user?.email || 'Admin')
+    const actor = { userId, staffName: actorName }
+
+    // Check before uploading, so a rejected request never reaches S3
+    const existing = await Ticket.findByPk(id)
+    if (!existing) throw new HttpError(404, 'Ticket not found')
+    if (!existing.assignedToUserId) throw new HttpError(400, 'Assign the ticket to someone before completing it')
+    assertWorkableStatus(existing, 'complete')
+
+    const { photoFiles, voiceNoteFiles } = getWorkDetailFiles(req)
+    const [photos, voiceNotes] = await Promise.all([
+      uploadWorkFiles(photoFiles, `tickets/${id}/photos`, actor),
+      uploadWorkFiles(voiceNoteFiles, `tickets/${id}/voice-notes`, actor),
+    ])
+
+    const result = await sequelize.transaction(async (transaction) => {
+      const t = await Ticket.findByPk(id, { transaction, lock: transaction.LOCK.UPDATE })
+      if (!t) throw new HttpError(404, 'Ticket not found')
+      if (!t.assignedToUserId) throw new HttpError(400, 'Assign the ticket to someone before completing it')
+      assertWorkableStatus(t, 'complete')
+
+      const isSelf = t.assignedToUserId === userId
+      const assigneeName = isSelf ? actorName : await getUserDisplayName(t.assignedToUserId, 'the assigned staff')
+      const closeNow = isSelf || close === true
+      const fromStatus = t.status
+      const now = new Date()
+
+      if (!t.workStartedAt) {
+        t.workStartedAt = now
+        t.workStartedByUserId = userId
+        await TicketActivityLog.create(
+          {
+            ticketId: t.id,
+            performedByUserId: userId,
+            performedByName: actorName,
+            activityType: TicketActivityType.STATUS_CHANGE,
+            fromStatus,
+            toStatus: TicketStatus.IN_PROGRESS,
+            comment: `Work start recorded by ${actorName} while completing the ticket`,
+            createdBy: userId,
+          },
+          { transaction },
+        )
+      }
+
+      await applyWorkDetails(t, actor, { invoiceAmount, photos, voiceNotes }, transaction)
+
+      t.status = closeNow ? TicketStatus.CLOSED : TicketStatus.RESOLVED
+      t.completedAt = now
+      t.completedByUserId = userId
+      t.resolvedAt = now
+      t.resolutionNotes = notes
+      if (closeNow) {
+        t.closedAt = now
+        t.verifiedAt = now
+        t.verifiedByUserId = userId
+      }
+      t.updatedBy = userId
+      await t.save({ transaction })
+
+      const who = isSelf ? actorName : `${actorName} on behalf of ${assigneeName}`
+      await TicketActivityLog.create(
+        {
+          ticketId: t.id,
+          performedByUserId: userId,
+          performedByName: actorName,
+          activityType: TicketActivityType.STATUS_CHANGE,
+          fromStatus,
+          toStatus: t.status,
+          comment: `Work completed${closeNow ? ' and closed' : ''} by ${who}: ${notes}`,
+          createdBy: userId,
+        },
+        { transaction },
+      )
+      return { ticket: t, closeNow, fromStatus }
+    })
+
+    const { ticket, closeNow, fromStatus } = result
+    await publishTicketNotificationSafe({
+      ticket,
+      eventCode: closeNow ? 'TICKET_VERIFIED' : 'TICKET_RESOLVED',
+      title: closeNow ? 'Ticket completed and closed' : 'Ticket resolved',
+      message: `${ticket.title || 'Ticket'} (${ticket.ticketNumber}) was ${closeNow ? 'completed and closed' : 'marked completed'} by ${actorName}.`,
+      actor: resolveNotificationActor(req, actorName),
+      payload: {
+        previousStatus: fromStatus,
+        status: ticket.status,
+        completedAt: ticket.completedAt,
+        completedByUserId: userId,
+        notes,
+      },
+    })
+    if (closeNow) {
+      await requestTicketFeedbackSafe({
+        ticket,
+        actor: resolveNotificationActor(req, actorName),
+        closedByName: actorName,
+      })
+    }
+
+    res.status(200).json({
+      success: true,
+      message: closeNow ? 'Ticket completed and closed' : 'Ticket completed',
+      data: ticket,
+    })
+  } catch (err: unknown) {
+    sendTicketError(res, err, 'Error completing ticket:')
+  }
+}
+
+/** Most files a ticket's work details can hold (same as one L3 upload). */
+const MAX_WORK_PHOTOS = 10
+const MAX_WORK_VOICE_NOTES = 5
+
+/**
+ * PATCH /tickets/:id/work-details  (multipart/form-data)
+ * Fields: notes?, invoiceAmount? (blank clears it), removePhotoUrls[]?, removeVoiceNoteUrls[]?;
+ * files: photos[], voiceNotes[].
+ * Lets an admin correct a completed ticket's report (the same fields as completing it)
+ * before it is verified. Removed files stay in storage; the activity log keeps the trail.
+ */
+export async function editTicketWorkDetails(req: AuthenticatedRequest, res: Response): Promise<void> {
+  try {
+    const userId = req.user?.id
+    if (!userId) throw new HttpError(401, 'Authentication required')
+    const id = req.params.id as string
+    const {
+      notes,
+      invoiceAmount,
+      removePhotoUrls = [],
+      removeVoiceNoteUrls = [],
+    } = req.body as EditTicketWorkDetailsInput
+    const actorName = await getUserDisplayName(userId, req.user?.email || 'Admin')
+    const actor = { userId, staffName: actorName }
+    const { photoFiles, voiceNoteFiles } = getWorkDetailFiles(req)
+
+    const assertEditable = (t: Ticket) => {
+      if (t.status !== TicketStatus.RESOLVED) {
+        throw new HttpError(409, 'Work details can only be edited on completed tickets')
+      }
+      const current = getWorkDetails(t.attachments)
+      const keptPhotos = current.photos.filter((p) => !removePhotoUrls.includes(p.url))
+      if (keptPhotos.length + photoFiles.length > MAX_WORK_PHOTOS) {
+        throw new HttpError(400, `A ticket can have up to ${MAX_WORK_PHOTOS} photos`)
+      }
+      const keptVoice = current.voiceNotes.filter((v) => !removeVoiceNoteUrls.includes(v.url))
+      if (keptVoice.length + voiceNoteFiles.length > MAX_WORK_VOICE_NOTES) {
+        throw new HttpError(400, `A ticket can have up to ${MAX_WORK_VOICE_NOTES} voice notes`)
+      }
+    }
+
+    // Check before uploading, so a rejected request never reaches S3
+    const existing = await Ticket.findByPk(id)
+    if (!existing) throw new HttpError(404, 'Ticket not found')
+    assertEditable(existing)
+    const changesAmount = invoiceAmount !== undefined && invoiceAmount !== toAmount(existing.invoiceAmount)
+    if (changesAmount && (await isTicketInvoiced(id))) throw new HttpError(409, INVOICED_AMOUNT_MESSAGE)
+
+    const [photos, voiceNotes] = await Promise.all([
+      uploadWorkFiles(photoFiles, `tickets/${id}/photos`, actor),
+      uploadWorkFiles(voiceNoteFiles, `tickets/${id}/voice-notes`, actor),
+    ])
+
+    const ticket = await sequelize.transaction(async (transaction) => {
+      const t = await Ticket.findByPk(id, { transaction, lock: transaction.LOCK.UPDATE })
+      if (!t) throw new HttpError(404, 'Ticket not found')
+      assertEditable(t)
+
+      const changes: string[] = []
+      const current = getWorkDetails(t.attachments)
+      const removedPhotos = current.photos.filter((p) => removePhotoUrls.includes(p.url))
+      const removedVoiceNotes = current.voiceNotes.filter((v) => removeVoiceNoteUrls.includes(v.url))
+      if (removedPhotos.length || photos.length || removedVoiceNotes.length || voiceNotes.length) {
+        // New arrays, so Sequelize sees the JSON column as changed
+        t.attachments = {
+          ...normalizeAttachments(t.attachments),
+          workDetails: {
+            photos: [...current.photos.filter((p) => !removePhotoUrls.includes(p.url)), ...photos],
+            voiceNotes: [...current.voiceNotes.filter((v) => !removeVoiceNoteUrls.includes(v.url)), ...voiceNotes],
+          },
+        }
+        t.changed('attachments', true)
+        if (photos.length) changes.push(`${photos.length} photo(s) added`)
+        if (removedPhotos.length) changes.push(`${removedPhotos.length} photo(s) removed`)
+        if (voiceNotes.length) changes.push(`${voiceNotes.length} voice note(s) added`)
+        if (removedVoiceNotes.length) changes.push(`${removedVoiceNotes.length} voice note(s) removed`)
+      }
+
+      const previousNotes = t.resolutionNotes || null
+      if (notes !== undefined && notes !== previousNotes) {
+        t.resolutionNotes = notes
+        changes.push('resolution notes updated')
+      }
+
+      const previousAmount = toAmount(t.invoiceAmount)
+      if (invoiceAmount !== undefined && invoiceAmount !== previousAmount) {
+        t.invoiceAmount = invoiceAmount
+        changes.push(
+          `invoice amount ${previousAmount === null ? 'none' : previousAmount} → ${invoiceAmount === null ? 'none' : invoiceAmount}`,
+        )
+      }
+
+      if (!changes.length) throw new HttpError(400, 'Nothing to update')
+
+      t.updatedBy = userId
+      await t.save({ transaction })
+      await TicketActivityLog.create(
+        {
+          ticketId: t.id,
+          performedByUserId: userId,
+          performedByName: actorName,
+          activityType:
+            photos.length || voiceNotes.length ? TicketActivityType.ATTACHMENT_ADDED : TicketActivityType.UPDATED,
+          comment: `Work details edited by ${actorName}: ${changes.join(', ')}`,
+          attachments: {
+            ...(invoiceAmount !== undefined ? { previousInvoiceAmount: previousAmount, invoiceAmount } : {}),
+            ...(notes !== undefined && notes !== previousNotes ? { previousNotes, notes } : {}),
+            photosAdded: photos,
+            photosRemoved: removedPhotos,
+            voiceNotesAdded: voiceNotes,
+            voiceNotesRemoved: removedVoiceNotes,
+          },
+          createdBy: userId,
+        },
+        { transaction },
+      )
+      return t
+    })
+
+    res.status(200).json({ success: true, message: 'Work details updated', data: ticket })
+  } catch (err: unknown) {
+    sendTicketError(res, err, 'Error editing ticket work details:')
+  }
+}
+
+/**
+ * POST /tickets/:id/close   Body: { reason }
+ * Closes an Open / In Progress ticket without completing it, e.g. raised by mistake or a
+ * duplicate. Saved as CANCELLED (shown as "Closed"), so it is never billed and the resident
+ * is not asked for feedback. The timeline shows only the steps that happened, then Closed.
+ */
+export async function closeTicketWithoutCompletion(req: AuthenticatedRequest, res: Response): Promise<void> {
+  try {
+    const userId = req.user?.id
+    if (!userId) throw new HttpError(401, 'Authentication required')
+    const id = req.params.id as string
+    const { reason } = req.body as CloseTicketInput
+    const actorName = await getUserDisplayName(userId, req.user?.email || 'Admin')
+
+    const { ticket, previousStatus } = await sequelize.transaction(async (transaction) => {
+      const t = await Ticket.findByPk(id, { transaction, lock: transaction.LOCK.UPDATE })
+      if (!t) throw new HttpError(404, 'Ticket not found')
+      if (!WEB_WORK_FROM.includes(t.status)) {
+        throw new HttpError(409, 'Only Open or In Progress tickets can be closed this way')
+      }
+
+      const fromStatus = t.status
+      const now = new Date()
+      t.status = TicketStatus.CANCELLED
+      t.closedAt = now
+      t.closedByUserId = userId
+      t.closeReason = reason
+      t.updatedBy = userId
+      await t.save({ transaction })
+
+      await TicketActivityLog.create(
+        {
+          ticketId: t.id,
+          performedByUserId: userId,
+          performedByName: actorName,
+          activityType: TicketActivityType.STATUS_CHANGE,
+          fromStatus,
+          toStatus: TicketStatus.CANCELLED,
+          comment: `Closed without completion by ${actorName}: ${reason}`,
+          createdBy: userId,
+        },
+        { transaction },
+      )
+      return { ticket: t, previousStatus: fromStatus }
+    })
+
+    // A pending auto-assign offer no longer applies
+    await endAutoAssignOnManualAssignSafe(ticket.id, userId, 'Ticket closed')
+
+    await publishTicketNotificationSafe({
+      ticket,
+      eventCode: 'TICKET_CLOSED',
+      title: 'Ticket closed',
+      message: `${ticket.title || 'Ticket'} (${ticket.ticketNumber}) was closed by ${actorName}: ${reason}`,
+      actor: resolveNotificationActor(req, actorName),
+      payload: { previousStatus, status: ticket.status, closeReason: reason, closedByUserId: userId },
+    })
+
+    res.status(200).json({ success: true, message: 'Ticket closed', data: ticket })
+  } catch (err: unknown) {
+    sendTicketError(res, err, 'Error closing ticket:')
   }
 }
