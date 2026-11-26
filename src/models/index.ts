@@ -101,6 +101,14 @@ import { ShiftResidentPool } from './shiftResidentPool.model.js'
 import { ShiftSetting, RosterSetting } from './shiftSetting.model.js'
 import { ShiftRolePolicy, RosterRolePolicy } from './shiftRolePolicy.model.js'
 import { ShiftArea, RosterArea } from './shiftArea.model.js'
+import {
+  HousekeepingTaskCompletion,
+  type HousekeepingTaskCompletionAttributes,
+  type HousekeepingTaskCompletionCreationAttributes,
+  type HousekeepingTaskStatus,
+  type HousekeepingTaskAttachments,
+  type HousekeepingPhotoAttachment,
+} from './housekeepingTaskCompletion.model.js'
 import { FnbFoodAttendance } from './fnbFoodAttendance.model.js'
 import { CompanyDashboardSetting } from './companyDashboardSetting.model.js'
 import {
@@ -910,6 +918,13 @@ ShiftResidentPool.belongsTo(PropertyUnit, { foreignKey: 'unitId', as: 'unit' })
 PropertyUnit.hasMany(ShiftResidentPool, { foreignKey: 'unitId', as: 'shiftResidentPools' })
 ShiftResidentPool.belongsTo(Property, { foreignKey: 'locationId', as: 'location' })
 
+// Housekeeping task completions (L3 staff evidence against roster days)
+ShiftDate.hasOne(HousekeepingTaskCompletion, { foreignKey: 'shiftDateId', as: 'housekeepingCompletion' })
+HousekeepingTaskCompletion.belongsTo(ShiftDate, { foreignKey: 'shiftDateId', as: 'shiftDate' })
+HousekeepingTaskCompletion.belongsTo(User, { foreignKey: 'employeeId', as: 'employee' })
+HousekeepingTaskCompletion.belongsTo(Property, { foreignKey: 'locationId', as: 'location' })
+User.hasMany(HousekeepingTaskCompletion, { foreignKey: 'employeeId', as: 'housekeepingCompletions' })
+
 // Doctor appointments (visiting-doctor shift day bookings)
 ShiftDate.hasMany(DoctorAppointment, { foreignKey: 'shiftEmployeeDateId', as: 'appointments' })
 DoctorAppointment.belongsTo(ShiftDate, { foreignKey: 'shiftEmployeeDateId', as: 'shiftEmployeeDate' })
@@ -1226,6 +1241,12 @@ export {
   EmployeeShiftAssignmentV2,
   ShiftDate,
   ShiftEmployeeDate,
+  HousekeepingTaskCompletion,
+  type HousekeepingTaskCompletionAttributes,
+  type HousekeepingTaskCompletionCreationAttributes,
+  type HousekeepingTaskStatus,
+  type HousekeepingTaskAttachments,
+  type HousekeepingPhotoAttachment,
   DoctorAppointment,
   ShiftResidentPool,
   ShiftSetting,

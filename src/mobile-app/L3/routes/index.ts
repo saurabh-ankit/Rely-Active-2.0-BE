@@ -7,6 +7,7 @@ import attendanceRouter from './attendance.routes.js'
 import medicalRouter from './medical.routes.js'
 import notificationRouter from '../../../web-app/routes/notification.routes.js'
 import feedbackStaffRouter, { advertisementStaffRouter } from './feedbackStaff.routes.js'
+import housekeepingRouter from './housekeeping.routes.js'
 
 export const l3MobileRouter = Router()
 
@@ -36,6 +37,9 @@ l3MobileRouter.use('/gate', gnsRouter)
 
 // Medical / Nurse Care Tasks (/api/v1/mobile/l3/medical)
 l3MobileRouter.use('/medical', medicalRouter)
+
+// ── Housekeeping staff tasks & roster (/api/v1/mobile/l3/housekeeping) ──
+l3MobileRouter.use('/housekeeping', housekeepingRouter)
 
 // ── In-app notifications & push devices (/api/v1/mobile/l3/notifications), same API as the web ──
 l3MobileRouter.use('/notifications', notificationRouter)

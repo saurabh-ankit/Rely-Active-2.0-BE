@@ -9,6 +9,53 @@ export function parseTimeToMinutes(hhmm: string | null | undefined): number | nu
   return h * 60 + m
 }
 
+/** Format minutes-from-midnight (may be >= 1440) back to "HH:mm". */
+export function minutesToHHmm(totalMinutes: number): string {
+  const m = ((Math.floor(totalMinutes) % 1440) + 1440) % 1440
+  const h = Math.floor(m / 60)
+  const min = m % 60
+  return `${String(h).padStart(2, '0')}:${String(min).padStart(2, '0')}`
+}
+
+/**
+ * Absolute duty window on a roster day. Overnight ends (end <= start) spill past 1440.
+ */
+export function toAbsoluteDutyWindow(
+  startHHmm: string | null | undefined,
+  endHHmm: string | null | undefined,
+): { startAbs: number; endAbs: number } | null {
+  const start = parseTimeToMinutes(startHHmm)
+  const end = parseTimeToMinutes(endHHmm)
+  if (start === null || end === null) return null
+  return { startAbs: start, endAbs: end <= start ? end + 1440 : end }
+}
+
+/**
+ * Break between two consecutive duties, overnight-aware.
+ * Prevents false gaps like Night 20:00–01:00 → next Night 20:00–01:00 becoming "01:00–20:00".
+ */
+export function resolveBreakBetweenDuties(
+  prevStartHHmm: string | null | undefined,
+  prevEndHHmm: string | null | undefined,
+  nextStartHHmm: string | null | undefined,
+): { startTime: string; endTime: string; timeRange: string } | null {
+  const prev = toAbsoluteDutyWindow(prevStartHHmm, prevEndHHmm)
+  const nextStart = parseTimeToMinutes(nextStartHHmm)
+  if (!prev || nextStart === null) return null
+
+  // If next clock time is earlier than previous start, it belongs after midnight on the same roster day.
+  const nextStartAbs = nextStart < prev.startAbs ? nextStart + 1440 : nextStart
+  if (nextStartAbs <= prev.endAbs) return null
+
+  const startTime = minutesToHHmm(prev.endAbs)
+  const endTime = minutesToHHmm(nextStartAbs)
+  return {
+    startTime,
+    endTime,
+    timeRange: `${startTime} - ${endTime}`,
+  }
+}
+
 function intervalsFor(start: string | null | undefined, end: string | null | undefined): [number, number][] {
   const s = parseTimeToMinutes(start)
   const e = parseTimeToMinutes(end)
@@ -182,6 +229,51 @@ export function hasWindowStartPassedOnDate(dateYmd: string, startHHmm: string, n
   return businessClock(now).minutes >= startMin
 }
 
+/** Day number for comparing calendar dates without timezone drift. */
+function ymdToDayNumber(ymd: string): number {
+  const parts = ymd.split('-').map(Number)
+  const y = parts[0]
+  const m = parts[1]
+  const d = parts[2]
+  if (y === undefined || m === undefined || d === undefined) return 0
+  return Math.floor(Date.UTC(y, m - 1, d) / 86_400_000)
+}
+
+/**
+ * True when the duty/slot window has ended for dateYmd (overnight-aware) in business time.
+ */
+export function hasWindowEndPassedOnDate(
+  dateYmd: string,
+  startHHmm: string | null | undefined,
+  endHHmm: string | null | undefined,
+  now = new Date(),
+): boolean {
+  if (!endHHmm) return dateYmd < todayYmdLocal(now)
+  if (!startHHmm) return hasWindowStartPassedOnDate(dateYmd, endHHmm, now)
+  return resolveTimeBasedShiftStatus(dateYmd, startHHmm, endHHmm, now) === 'completed'
+}
+
+/**
+ * Minutes past the scheduled window end at `at` (0 if still before/at end). Overnight-aware.
+ */
+export function minutesPastWindowEnd(
+  dateYmd: string,
+  startHHmm: string | null | undefined,
+  endHHmm: string | null | undefined,
+  at: Date = new Date(),
+): number {
+  if (!endHHmm) return 0
+  const endMin = parseTimeToMinutes(endHHmm)
+  if (endMin === null) return 0
+  const startMin = startHHmm ? parseTimeToMinutes(startHHmm) : null
+  const overnight = startMin !== null && endMin <= startMin
+  const endDateYmd = overnight ? addDaysYmd(dateYmd, 1) : dateYmd
+  const clock = businessClock(at)
+  const atTotal = ymdToDayNumber(clock.ymd) * 1440 + clock.minutes
+  const endTotal = ymdToDayNumber(endDateYmd) * 1440 + endMin
+  return Math.max(0, atTotal - endTotal)
+}
+
 /** Add (or subtract) whole days from a YYYY-MM-DD local calendar date. */
 export function addDaysYmd(dateYmd: string, days: number): string {
   const parts = dateYmd.split('-').map(Number)
@@ -236,7 +328,9 @@ export function resolveTimeBasedShiftStatus(
 }
 
 /**
- * Advance only time-driven statuses (upcoming / on_duty). Leaves covered, day_off, absent alone.
+ * Advance only time-driven statuses (upcoming / on_duty).
+ * Leaves covered, day_off, absent alone.
+ * Housekeeping task status can force completed / on_duty / overdue.
  */
 export function resolveLifecycleRosterStatus(
   currentStatus: string,
@@ -244,13 +338,31 @@ export function resolveLifecycleRosterStatus(
   startHHmm: string | null | undefined,
   endHHmm: string | null | undefined,
   now = new Date(),
+  taskStatus?: string | null,
 ): string {
-  if (currentStatus !== 'upcoming' && currentStatus !== 'on_duty') return currentStatus
-  if (!startHHmm || !endHHmm) {
-    if (dateYmd < todayYmdLocal(now)) return 'completed'
+  if (taskStatus === 'COMPLETED') return 'completed'
+  if (taskStatus === 'OVERDUE') return 'overdue'
+  if (currentStatus === 'overdue') return 'overdue'
+  if (currentStatus !== 'upcoming' && currentStatus !== 'on_duty' && taskStatus !== 'IN_PROGRESS') {
     return currentStatus
   }
-  return resolveTimeBasedShiftStatus(dateYmd, startHHmm, endHHmm, now)
+  if (!startHHmm || !endHHmm) {
+    if (dateYmd < todayYmdLocal(now)) {
+      if (taskStatus === 'PENDING' || taskStatus === 'IN_PROGRESS') return 'overdue'
+      return 'completed'
+    }
+    if (taskStatus === 'IN_PROGRESS') return 'on_duty'
+    return currentStatus
+  }
+  const next = resolveTimeBasedShiftStatus(dateYmd, startHHmm, endHHmm, now)
+  if (taskStatus === 'IN_PROGRESS') {
+    // Past end without completion → overdue; otherwise stay on_duty (even before window start).
+    return next === 'completed' ? 'overdue' : 'on_duty'
+  }
+  if (next === 'completed' && taskStatus === 'PENDING') {
+    return 'overdue'
+  }
+  return next
 }
 
 import type { WeekDay } from '../enums/roster.enum.js'
