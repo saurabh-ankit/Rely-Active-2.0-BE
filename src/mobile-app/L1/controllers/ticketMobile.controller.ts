@@ -349,7 +349,10 @@ export async function getResidentTickets(req: AuthenticatedRequest, res: Respons
         jobCategoryId: t.jobCategoryId || null,
         subCategory: t.subCategoryId || 'General Service',
         priority: t.priority,
-        status: t.status,
+        // Closed without completion is CANCELLED internally; residents just see it closed, with the reason
+        status: t.status === TicketStatus.CANCELLED ? TicketStatus.CLOSED : t.status,
+        closedWithoutCompletion: t.status === TicketStatus.CANCELLED,
+        closeReason: t.closeReason || null,
         createdAt: t.createdAt,
         assignedAt: assignedAtByTicket[t.id] || null,
         tatUpdatedAt: tatUpdatesByTicket[t.id]?.at || null,
@@ -739,6 +742,9 @@ export async function getResidentTicketById(req: AuthenticatedRequest, res: Resp
       success: true,
       data: {
         ...(typeof ticket.toJSON === 'function' ? ticket.toJSON() : ticket),
+        status: ticket.status === TicketStatus.CANCELLED ? TicketStatus.CLOSED : ticket.status,
+        closedWithoutCompletion: ticket.status === TicketStatus.CANCELLED,
+        closeReason: ticket.closeReason || null,
         assignedAt: assignedAtByTicket[ticket.id] || null,
         tatUpdatedAt: tatUpdatesByTicket[ticket.id]?.at || null,
         tatUpdatedBy: tatUpdatesByTicket[ticket.id]?.by || null,

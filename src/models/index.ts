@@ -744,6 +744,7 @@ Ticket.belongsTo(User, { foreignKey: 'offeredToUserId', as: 'offeredToUser' })
 Ticket.belongsTo(User, { foreignKey: 'workStartedByUserId', as: 'workStartedByUser' })
 Ticket.belongsTo(User, { foreignKey: 'completedByUserId', as: 'completedByUser' })
 Ticket.belongsTo(User, { foreignKey: 'verifiedByUserId', as: 'verifiedByUser' })
+Ticket.belongsTo(User, { foreignKey: 'closedByUserId', as: 'closedByUser' })
 
 // ── Notifications (module-agnostic, in-app inbox) ──────────────────────────
 NotificationEvent.hasMany(NotificationInbox, { foreignKey: 'eventId', as: 'recipients' })
