@@ -30,7 +30,12 @@ import { AuthorizationService } from '../../../services/authorization.service.js
 import { resolveNotificationActor } from '../../../services/notifications/notificationAudience.service.js'
 import { buildTatUpdatedNotificationContent } from '../../../services/notifications/ticketNotificationContent.service.js'
 import { publishTicketNotificationSafe } from '../../../services/notifications/ticketNotification.service.js'
-import { acceptOffer, listOffersForStaff, rejectOffer } from '../../../services/ticketAutoAssign.service.js'
+import {
+  acceptOffer,
+  findOpenOfferForStaff,
+  listOffersForStaff,
+  rejectOffer,
+} from '../../../services/ticketAutoAssign.service.js'
 import {
   type AcceptTicketOfferInput,
   type RejectTicketOfferInput,
@@ -176,6 +181,10 @@ function assertTicketAccess(ticket: Ticket, ctx: StaffTicketContext): void {
   if (ticket.assignedToUserId !== ctx.userId) {
     throw new HttpError(403, 'This ticket is not assigned to you')
   }
+  assertTicketDepartment(ticket, ctx)
+}
+
+function assertTicketDepartment(ticket: Ticket, ctx: StaffTicketContext): void {
   const inDepartment = ticket.departmentId
     ? ctx.departmentIds.includes(ticket.departmentId)
     : ctx.categories.includes(String(ticket.category))
@@ -446,7 +455,8 @@ export async function getStaffTickets(req: AuthenticatedRequest, res: Response):
 
 /**
  * GET /api/v1/mobile/l3/tickets/:id
- * Ticket details with TAT history and activity log. Only the assigned staff member can view it.
+ * Ticket details with TAT history and activity log. Only the assigned staff member can view it,
+ * or the staff member an auto-assign offer is waiting on (the response then carries `offer`).
  */
 export async function getStaffTicketById(req: AuthenticatedRequest, res: Response): Promise<void> {
   try {
@@ -457,7 +467,17 @@ export async function getStaffTicketById(req: AuthenticatedRequest, res: Respons
     if (!ticket) {
       throw new HttpError(404, 'Ticket not found')
     }
-    assertTicketAccess(ticket, ctx)
+
+    // A ticket auto-assign is offering to this staff member: they can view it before accepting
+    const offer =
+      ticket.assignedToUserId !== ctx.userId && ticket.offeredToUserId === ctx.userId
+        ? await findOpenOfferForStaff(ticket.id, ctx.userId)
+        : null
+    if (offer) {
+      assertTicketDepartment(ticket, ctx)
+    } else {
+      assertTicketAccess(ticket, ctx)
+    }
 
     const [tatHistory, activityLogs] = await Promise.all([
       TicketTatHistory.findAll({ where: { ticketId: id }, order: [['changedAt', 'DESC']] }),
@@ -470,7 +490,10 @@ export async function getStaffTicketById(req: AuthenticatedRequest, res: Respons
         ...formatStaffTicket(ticket),
         tatHistory: tatHistory.map(formatTatHistory),
         activityLogs,
+        // Set while the ticket is waiting for this staff member to accept (with a TAT) or reject
+        offer: offer ? { attemptId: offer.id, offeredAt: offer.offeredAt, expiresAt: offer.expiresAt } : null,
       },
+      serverTime: new Date().toISOString(),
     })
   } catch (err: unknown) {
     sendError(res, err, 'Error fetching L3 staff ticket details:')

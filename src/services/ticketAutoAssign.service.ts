@@ -607,6 +607,14 @@ export async function endAutoAssignOnManualAssignSafe(
 
 /* ---------------------------------------------------------------------- reads */
 
+/** The open offer of this ticket to this staff member, if there is one (lets them view it before accepting). */
+export async function findOpenOfferForStaff(ticketId: string, userId: string) {
+  return TicketAutoAssignAttempt.findOne({
+    where: { ticketId, userId, status: 'OFFERED', expiresAt: { [Op.gt]: new Date() } },
+    order: [['offeredAt', 'DESC']],
+  })
+}
+
 /** Offers waiting for this staff member (the Staff App's "Waiting for you"). */
 export async function listOffersForStaff(userId: string) {
   const attempts = await TicketAutoAssignAttempt.findAll({

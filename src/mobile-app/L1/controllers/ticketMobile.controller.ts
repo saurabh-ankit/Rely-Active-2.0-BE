@@ -24,7 +24,7 @@ import {
   publishTicketNotificationSafe,
 } from '../../../services/notifications/ticketNotification.service.js'
 import { resolveHousehold } from '../../../utils/household.util.js'
-import { startAutoAssignSafe } from '../../../services/ticketAutoAssign.service.js'
+import { getAutoAssignSetting, startAutoAssignSafe } from '../../../services/ticketAutoAssign.service.js'
 
 /**
  * Tickets have no `assignedAt` column, so the moment a ticket was handed to a
@@ -638,6 +638,9 @@ export async function createResidentTicket(req: AuthenticatedRequest, res: Respo
     })
 
     const locationUserRecipients = await listLocationStaffRecipients(resident.locId)
+    // Auto-assigned tickets reach staff as an Accept / Reject offer, so the Staff App skips its "View Ticket" popup
+    const autoAssignSetting = await getAutoAssignSetting(resident.locId, newTicket.departmentId).catch(() => null)
+    const isAutoAssign = Boolean(autoAssignSetting?.isEnabled)
 
     await publishTicketNotificationSafe({
       ticket: newTicket,
@@ -651,6 +654,7 @@ export async function createResidentTicket(req: AuthenticatedRequest, res: Respo
         priority: newTicket.priority,
         category: newTicket.category,
         areaType: isCommonArea ? 'COMMON_AREA' : 'IN_FLAT',
+        autoAssign: isAutoAssign,
       },
       extraRecipients: locationUserRecipients,
     })
