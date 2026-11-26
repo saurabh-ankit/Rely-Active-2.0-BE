@@ -191,7 +191,7 @@ export const REPORTS: ReportDefinition[] = [
     filter: {
       label: 'Status',
       column: 'sd.status',
-      options: options('upcoming', 'on_duty', 'completed', 'absent', 'covered', 'day_off'),
+      options: options('upcoming', 'on_duty', 'completed', 'overdue', 'absent', 'covered', 'day_off'),
     },
     columns: [
       { key: 'date', header: 'Date', type: 'date' },

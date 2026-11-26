@@ -34,6 +34,46 @@ export function isAllowedL3Department(deptName?: string | null, deptCode?: strin
   )
 }
 
+export function isHousekeepingDepartment(deptName?: string | null, deptCode?: string | null): boolean {
+  const code = (deptCode || '').toUpperCase()
+  if (code === 'HK' || code === 'HOUSEKEEPING') return true
+  const nameUpper = (deptName || '').toUpperCase()
+  return nameUpper.includes('HOUSEKEEPING') || nameUpper.includes('CLEANING')
+}
+
+/** Role code/name for Department Manager (admin web), not L3 field staff. */
+export function isDepartmentManagerRole(roleCode?: string | null, roleName?: string | null): boolean {
+  const code = (roleCode || '').toUpperCase()
+  if (code === 'MANAGER') return true
+  const name = (roleName || '').toUpperCase()
+  return name.includes('DEPARTMENT MANAGER') || name === 'MANAGER'
+}
+
+/** Role code/name for Operational Staff (L3 field staff). */
+export function isOperationalStaffRole(roleCode?: string | null, roleName?: string | null): boolean {
+  const code = (roleCode || '').toUpperCase()
+  if (code === 'EMPLOYEE') return true
+  const name = (roleName || '').toUpperCase()
+  return name.includes('OPERATIONAL STAFF') || name.includes('EMPLOYEE')
+}
+
+/**
+ * Housekeeping Department Managers use the admin web app (Shift & Roster),
+ * not the L3 mobile staff app. Only Operational Staff may use L3 for HK.
+ */
+export function isL3EligibleUserLocation(ul: {
+  department?: { name?: string | null; code?: string | null } | null
+  role?: { name?: string | null; code?: string | null } | null
+}): boolean {
+  const dept = ul.department
+  if (!dept || !isAllowedL3Department(dept.name, dept.code)) return false
+  if (isHousekeepingDepartment(dept.name, dept.code)) {
+    if (isDepartmentManagerRole(ul.role?.code, ul.role?.name)) return false
+    return isOperationalStaffRole(ul.role?.code, ul.role?.name)
+  }
+  return true
+}
+
 /**
  * POST /api/v1/mobile/l3/auth/login
  * Staff mobile app login for L3 staff replica.
@@ -127,20 +167,54 @@ export async function staffLogin(req: Request, res: Response): Promise<void> {
           /NURSE|MED/i.test(ul.jobCategory?.code || ''),
       )
 
+    // L3-eligible locations (HK Department Managers are excluded — they use admin web)
+    const eligibleLocs = userLocs.filter((ul) => isL3EligibleUserLocation(ul))
+    const eligibleDepts = eligibleLocs
+      .map((ul) => ul.department)
+      .filter((d): d is Department => Boolean(d && d.isActive !== false))
+
+    const isHkManagerOnly =
+      !authCtx.isSuperAdmin &&
+      !isNurseOrMedical &&
+      eligibleLocs.length === 0 &&
+      userLocs.some(
+        (ul) =>
+          isHousekeepingDepartment(ul.department?.name, ul.department?.code) &&
+          isDepartmentManagerRole(ul.role?.code, ul.role?.name),
+      )
+
+    if (isHkManagerOnly) {
+      res.status(403).json({
+        success: false,
+        message:
+          'Access restricted: Housekeeping Department Managers use the admin web app. Only Housekeeping Operational Staff can log in to the L3 Mobile App.',
+      })
+      return
+    }
+
     const hasAllowedDept =
-      authCtx.isSuperAdmin || isNurseOrMedical || userDepts.some((d) => isAllowedL3Department(d.name, d.code))
+      authCtx.isSuperAdmin || isNurseOrMedical || eligibleDepts.some((d) => isAllowedL3Department(d.name, d.code))
 
     if (!hasAllowedDept) {
       res.status(403).json({
         success: false,
         message:
-          'Access restricted: Only staff members assigned to Food & Beverage, Gate & Security, Concierge, Repair & Maintenance, Housekeeping, Event, Attendance, or Medical/Nursing departments can log in to the L3 Mobile App.',
+          'Access restricted: Only staff members assigned to Food & Beverage, Gate & Security, Concierge, Repair & Maintenance, Housekeeping (Operational Staff), Event, Attendance, or Medical/Nursing departments can log in to the L3 Mobile App.',
       })
       return
     }
 
-    const primaryDept = userDepts.find((d) => isAllowedL3Department(d.name, d.code)) || userDepts[0] || null
-    const primaryUserLoc = userLocs.find((ul) => ul.departmentId === primaryDept?.id) || userLocs[0]
+    const primaryDept =
+      eligibleDepts.find((d) => isAllowedL3Department(d.name, d.code)) ||
+      userDepts.find((d) => isAllowedL3Department(d.name, d.code)) ||
+      eligibleDepts[0] ||
+      userDepts[0] ||
+      null
+    const primaryUserLoc =
+      eligibleLocs.find((ul) => ul.departmentId === primaryDept?.id) ||
+      eligibleLocs[0] ||
+      userLocs.find((ul) => ul.departmentId === primaryDept?.id) ||
+      userLocs[0]
 
     const token = generateToken({
       userId: user.id,
@@ -195,6 +269,7 @@ export async function staffLogin(req: Request, res: Response): Promise<void> {
               }
             : null,
           role: primaryUserLoc?.role?.name || authCtx.roles[0] || 'STAFF',
+          roleCode: primaryUserLoc?.role?.code || null,
           profile: userWithAssoc.profile || null,
           assignedDepartments: userDepts.map((d) => ({ id: d.id, code: d.code, name: d.name })),
           assignedLocations: userLocList,
@@ -260,8 +335,22 @@ export async function getStaffProfile(req: Request, res: Response): Promise<void
       .filter((d): d is Department => Boolean(d && d.isActive !== false))
 
     const authCtx = await AuthorizationService.getUserAuthorizationContext(user.id)
-    const primaryDept = userDepts.find((d) => isAllowedL3Department(d.name, d.code)) || userDepts[0] || null
-    const primaryUserLoc = userLocs.find((ul) => ul.departmentId === primaryDept?.id) || userLocs[0]
+    const eligibleLocs = userLocs.filter((ul) => isL3EligibleUserLocation(ul))
+    const eligibleDepts = eligibleLocs
+      .map((ul) => ul.department)
+      .filter((d): d is Department => Boolean(d && d.isActive !== false))
+
+    const primaryDept =
+      eligibleDepts.find((d) => isAllowedL3Department(d.name, d.code)) ||
+      userDepts.find((d) => isAllowedL3Department(d.name, d.code)) ||
+      eligibleDepts[0] ||
+      userDepts[0] ||
+      null
+    const primaryUserLoc =
+      eligibleLocs.find((ul) => ul.departmentId === primaryDept?.id) ||
+      eligibleLocs[0] ||
+      userLocs.find((ul) => ul.departmentId === primaryDept?.id) ||
+      userLocs[0]
 
     const userLocList = userLocs
       .map((ul) => ({
@@ -294,6 +383,7 @@ export async function getStaffProfile(req: Request, res: Response): Promise<void
             }
           : null,
         role: primaryUserLoc?.role?.name || authCtx.roles[0] || 'STAFF',
+        roleCode: primaryUserLoc?.role?.code || null,
         profile: userWithAssoc.profile || null,
         assignedDepartments: userDepts.map((d) => ({ id: d.id, code: d.code, name: d.name })),
         assignedLocations: userLocList,

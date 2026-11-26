@@ -2,6 +2,7 @@ export enum ShiftEmployeeDateStatus {
   UPCOMING = 'upcoming',
   ON_DUTY = 'on_duty',
   COMPLETED = 'completed',
+  OVERDUE = 'overdue',
   ABSENT = 'absent',
   COVERED = 'covered',
   DAY_OFF = 'day_off',

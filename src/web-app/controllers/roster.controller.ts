@@ -14,6 +14,7 @@ import {
 import type { AuthenticatedRequest } from '../../middlewares/authenticate.js'
 import {
   Amenity,
+  HousekeepingTaskCompletion,
   Property,
   PropertyAmenity,
   PropertyBlock,
@@ -2054,7 +2055,13 @@ async function syncShiftDateLifecycleStatuses(locationId: string, now = new Date
       locationId,
       isDeleted: false,
       status: {
-        [Op.in]: [ShiftEmployeeDateStatus.UPCOMING, ShiftEmployeeDateStatus.ON_DUTY],
+        [Op.in]: [
+          ShiftEmployeeDateStatus.UPCOMING,
+          ShiftEmployeeDateStatus.ON_DUTY,
+          // Allow correcting time-completed rows that are actually HK overdue, and vice versa.
+          ShiftEmployeeDateStatus.COMPLETED,
+          ShiftEmployeeDateStatus.OVERDUE,
+        ],
       },
     },
     include: [
@@ -2071,6 +2078,12 @@ async function syncShiftDateLifecycleStatuses(locationId: string, now = new Date
           },
         ],
       },
+      {
+        model: HousekeepingTaskCompletion,
+        as: 'housekeepingCompletion',
+        required: false,
+        attributes: ['id', 'status', 'completedAt', 'extraMinutes', 'isDeleted'],
+      },
     ],
   })
 
@@ -2078,18 +2091,42 @@ async function syncShiftDateLifecycleStatuses(locationId: string, now = new Date
     [ShiftEmployeeDateStatus.UPCOMING]: [],
     [ShiftEmployeeDateStatus.ON_DUTY]: [],
     [ShiftEmployeeDateStatus.COMPLETED]: [],
+    [ShiftEmployeeDateStatus.OVERDUE]: [],
   }
 
   for (const row of rows) {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const data = row.toJSON() as any
+    const hk =
+      data.housekeepingCompletion && !data.housekeepingCompletion.isDeleted ? data.housekeepingCompletion : null
     const window = resolveDateWindow({
       slotTimeRange: data.shiftAssignment?.slotTimeRange,
       shift: data.shiftAssignment?.shift,
     })
-    const next = resolveLifecycleRosterStatus(data.status, data.date, window?.start, window?.end, now)
+    const next = resolveLifecycleRosterStatus(
+      data.status,
+      data.date,
+      window?.start,
+      window?.end,
+      now,
+      hk?.status || null,
+    )
     if (next !== data.status && idsByStatus[next]) {
       idsByStatus[next].push(data.id)
+    }
+
+    // Keep housekeeping completion in sync when roster becomes overdue.
+    if (next === ShiftEmployeeDateStatus.OVERDUE && hk && (hk.status === 'PENDING' || hk.status === 'IN_PROGRESS')) {
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const completion = (row as any).housekeepingCompletion as HousekeepingTaskCompletion | null
+        if (completion) {
+          completion.status = 'OVERDUE'
+          await completion.save()
+        }
+      } catch (err) {
+        logger.error({ err }, 'Failed to mark housekeeping completion overdue during roster sync')
+      }
     }
   }
 
@@ -2340,11 +2377,37 @@ export const listShiftEmployeeDates = async (req: AuthenticatedRequest, res: Res
           as: 'area',
           attributes: ['id', 'areaName'],
         },
+        {
+          model: HousekeepingTaskCompletion,
+          as: 'housekeepingCompletion',
+          required: false,
+          attributes: [
+            'id',
+            'status',
+            'comment',
+            'startedAt',
+            'completedAt',
+            'extraMinutes',
+            'attachments',
+            'isDeleted',
+          ],
+          // Keep required:false without a where-clause so missing completions stay LEFT JOINed.
+          // Soft-deleted rows are filtered after fetch.
+        },
       ],
       order: [['date', 'ASC']],
     })
 
-    return res.status(200).json(successResponse('Shift employee dates fetched', shiftDates))
+    const sanitized = shiftDates.map((row) => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const json = row.toJSON() as any
+      if (json.housekeepingCompletion?.isDeleted) {
+        json.housekeepingCompletion = null
+      }
+      return json
+    })
+
+    return res.status(200).json(successResponse('Shift employee dates fetched', sanitized))
   } catch (error) {
     logger.error({ err: error }, 'listShiftEmployeeDates failed')
     return res.status(500).json(errorResponse('Failed to fetch shift employee dates'))
