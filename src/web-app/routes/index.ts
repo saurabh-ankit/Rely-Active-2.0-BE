@@ -36,6 +36,7 @@ import feedbackFormRouter from './feedback.routes.js'
 import notificationRouter from './notification.routes.js'
 import amenityRouter from './amenity.routes.js'
 import amenitySlotRouter from './amenitySlot.routes.js'
+import activityCalendarRouter from './activityCalendar.routes.js'
 
 export const apiRouter = Router()
 
@@ -95,6 +96,7 @@ apiRouter.use('/location/:locationId/billing', billingRouter)
 
 apiRouter.use('/dashboard', dashboardRouter)
 apiRouter.use('/location/:locationId/dashboard', dashboardRouter)
+apiRouter.use('/location/:locationId/activity-calendar', activityCalendarRouter)
 apiRouter.use('/location/:locationId/reports', reportRouter)
 
 // Feedback & Advertisements

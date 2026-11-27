@@ -148,6 +148,12 @@ export const RESOURCE_CATALOG = [
     ],
   },
   {
+    key: 'ACTIVITY_CALENDAR',
+    name: 'Task Calendar',
+    description:
+      'Read-only calendar of every activity at the property. Each category also needs view on its own module. Never shown to Department Managers.',
+  },
+  {
     key: 'SETTINGS',
     name: 'Settings',
     description: 'Property settings, feedback forms & advertisements',
